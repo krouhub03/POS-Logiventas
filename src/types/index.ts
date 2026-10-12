@@ -85,3 +85,64 @@ export interface PairLoginResult {
   cajasDisponibles?: ErpCajaOption[];
   terminalStatus?: TerminalStatus;
 }
+
+/* ==============================================================
+   Modelos de Venta y Cobro (Eleventa-Style)
+   ============================================================== */
+
+export interface CartItemInput {
+  productId?: number | null;
+  sku?: string;
+  barcode?: string;
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  taxRateBp?: number;
+  discountCents?: number;
+}
+
+export interface PaymentInput {
+  method: "cash" | "card" | "transfer" | "other";
+  amountCents: number;
+  reference?: string;
+}
+
+export interface CreateSaleInput {
+  userId?: number;
+  customerId?: number;
+  items: CartItemInput[];
+  payments: PaymentInput[];
+}
+
+export interface SaleItemDto {
+  id: number;
+  productId: number | null;
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+}
+
+export interface SaleReceipt {
+  id: number;
+  folio: string;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  paidCents: number;
+  changeCents: number;
+  itemsCount: number;
+  items: SaleItemDto[];
+  createdAt: string;
+}
+
+export interface TodaySalesSummary {
+  totalSalesCount: number;
+  totalCents: number;
+  cashCents: number;
+  cardCents: number;
+  transferCents: number;
+}

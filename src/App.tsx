@@ -1,31 +1,27 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./services/api";
 import { ProductsPage } from "./pages/ProductsPage";
+import { SalesStationPage } from "./pages/SalesStationPage";
 import { PairingScreen } from "./components/PairingScreen";
 import { CashierLockScreen } from "./components/CashierLockScreen";
-import type { AppInfo, CashierUser, TerminalStatus } from "./types";
+import type { CashierUser, TerminalStatus } from "./types";
 import "./App.css";
 
 function App() {
-  const [info, setInfo] = useState<AppInfo | null>(null);
   const [terminalStatus, setTerminalStatus] = useState<TerminalStatus | null>(null);
   const [activeCashier, setActiveCashier] = useState<CashierUser | null>(null);
+  const [currentView, setCurrentView] = useState<"sales" | "products">("sales");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const cargarEstado = useCallback(async () => {
     try {
-      const [appInfo, termStatus] = await Promise.all([
-        api.appInfo(),
-        api.auth.getTerminalStatus(),
-      ]);
-      setInfo(appInfo);
+      const termStatus = await api.auth.getTerminalStatus();
       setTerminalStatus(termStatus);
       if (termStatus.activeCashier) {
         setActiveCashier(termStatus.activeCashier);
       }
     } catch (e: unknown) {
-      setError(String(e));
+      console.error("Error al cargar estado de terminal:", e);
     } finally {
       setLoading(false);
     }
@@ -35,9 +31,25 @@ function App() {
     cargarEstado();
   }, [cargarEstado]);
 
+  // Atajo global para cambiar de vista (F1 = Ventas, F3 = Productos)
+  useEffect(() => {
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (!activeCashier) return;
+      if (e.key === "F1") {
+        e.preventDefault();
+        setCurrentView("sales");
+      } else if (e.key === "F3") {
+        e.preventDefault();
+        setCurrentView("products");
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKey);
+    return () => window.removeEventListener("keydown", handleGlobalKey);
+  }, [activeCashier]);
+
   if (loading) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f172a", color: "#f8fafc" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#020617", color: "#f8fafc" }}>
         <span>Iniciando Logiventa POS…</span>
       </div>
     );
@@ -70,7 +82,19 @@ function App() {
     );
   }
 
-  // 3. Terminal desbloqueada con cajero activo
+  // 3. Estación de Ventas principal (Eleventa-Style)
+  if (currentView === "sales") {
+    return (
+      <SalesStationPage
+        cashier={activeCashier}
+        terminalStatus={terminalStatus}
+        onLockTerminal={() => setActiveCashier(null)}
+        onNavigateToProducts={() => setCurrentView("products")}
+      />
+    );
+  }
+
+  // 4. Catálogo de productos (F3)
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -81,11 +105,15 @@ function App() {
         </div>
 
         <nav>
-          <a className="nav-item active">Productos</a>
-          <a className="nav-item disabled">Ventas</a>
-          <a className="nav-item disabled">Caja</a>
-          <a className="nav-item disabled">Clientes</a>
-          <a className="nav-item disabled">Reportes</a>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => setCurrentView("sales")}
+            style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer" }}
+          >
+            ← Volver a Ventas (F1)
+          </button>
+          <a className="nav-item active">Productos (F3)</a>
         </nav>
 
         <div style={{ marginTop: "auto", paddingTop: "1rem", borderTop: "1px solid #374151" }}>
@@ -109,7 +137,7 @@ function App() {
               cursor: "pointer",
             }}
           >
-            🔒 Bloquear Caja
+            🔒 Bloquear Caja (Esc)
           </button>
         </div>
       </aside>
@@ -117,18 +145,6 @@ function App() {
       <main className="content">
         <ProductsPage />
       </main>
-
-      <footer className="statusbar">
-        {error ? (
-          <span className="error">Backend no disponible: {error}</span>
-        ) : info ? (
-          <span>
-            v{info.version} · BD esquema v{info.schemaVersion} · Caja: {terminalStatus.cajaCodigo} · Empresa: {terminalStatus.empresaNombre}
-          </span>
-        ) : (
-          <span>Conectando…</span>
-        )}
-      </footer>
     </div>
   );
 }

@@ -32,6 +32,9 @@ pub fn run() {
             commands::auth::list_local_cashiers,
             commands::auth::login_cashier_pin,
             commands::auth::unpair_terminal,
+            commands::sales::create_sale,
+            commands::sales::get_last_sale,
+            commands::sales::get_today_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

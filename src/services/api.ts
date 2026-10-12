@@ -2,12 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppInfo,
   CashierUser,
+  CreateSaleInput,
   NewProduct,
   PairCodeInput,
   PairLoginInput,
   PairLoginResult,
   Product,
+  SaleReceipt,
   TerminalStatus,
+  TodaySalesSummary,
 } from "../types";
 
 /**
@@ -34,5 +37,12 @@ export const api = {
     findByBarcode: (barcode: string) =>
       invoke<Product | null>("find_product_by_barcode", { barcode }),
     create: (input: NewProduct) => invoke<Product>("create_product", { input }),
+  },
+
+  sales: {
+    create: (input: CreateSaleInput) =>
+      invoke<SaleReceipt>("create_sale", { input }),
+    getLast: () => invoke<SaleReceipt | null>("get_last_sale"),
+    getTodaySummary: () => invoke<TodaySalesSummary>("get_today_summary"),
   },
 };
