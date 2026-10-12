@@ -1,0 +1,38 @@
+use rusqlite::Connection;
+
+use crate::error::AppResult;
+
+/// Migraciones en orden. El índice + 1 es la versión del esquema (`PRAGMA user_version`).
+/// Para agregar una nueva: crear `migrations/000N_nombre.sql` y añadirla al final.
+/// NUNCA modificar una migración ya publicada.
+const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_initial.sql")];
+
+pub fn run(conn: &mut Connection) -> AppResult<()> {
+    let current: usize = conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? as usize;
+
+    for (idx, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+        let version = idx + 1;
+        let tx = conn.transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", version as i64)?;
+        tx.commit()?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrations_apply_on_empty_db() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        run(&mut conn).unwrap();
+        let v: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(v as usize, MIGRATIONS.len());
+        // Idempotente: correr de nuevo no falla
+        run(&mut conn).unwrap();
+    }
+}
