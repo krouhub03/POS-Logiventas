@@ -5,7 +5,10 @@ use crate::error::AppResult;
 /// Migraciones en orden. El índice + 1 es la versión del esquema (`PRAGMA user_version`).
 /// Para agregar una nueva: crear `migrations/000N_nombre.sql` y añadirla al final.
 /// NUNCA modificar una migración ya publicada.
-const MIGRATIONS: &[&str] = &[include_str!("../../migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/0001_initial.sql"),
+    include_str!("../../migrations/0002_terminal_settings.sql"),
+];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {
     let current: usize = conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? as usize;

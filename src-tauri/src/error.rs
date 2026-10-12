@@ -13,6 +13,12 @@ pub enum AppError {
     #[error("Error de Tauri: {0}")]
     Tauri(#[from] tauri::Error),
 
+    #[error("Error de red / HTTP: {0}")]
+    Network(#[from] reqwest::Error),
+
+    #[error("Error de autenticación: {0}")]
+    Auth(String),
+
     #[error("{0}")]
     Validation(String),
 

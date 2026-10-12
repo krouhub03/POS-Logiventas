@@ -33,3 +33,55 @@ export interface AppInfo {
   dbPath: string;
   schemaVersion: number;
 }
+
+/** Operador / Cajero sincronizado con ERP y disponible en SQLite local */
+export interface CashierUser {
+  id: number;
+  erpUserId: string | null;
+  username: string;
+  fullName: string;
+  email: string | null;
+  role: string;
+  active: boolean;
+}
+
+/** Estado de vinculación M2M de la terminal física con el ERP */
+export interface TerminalStatus {
+  isPaired: boolean;
+  erpUrl: string;
+  cajaId: string | null;
+  cajaNombre: string | null;
+  cajaCodigo: string | null;
+  empresaId: string | null;
+  empresaNombre: string | null;
+  empresaNit: string | null;
+  activeCashier: CashierUser | null;
+}
+
+export interface PairCodeInput {
+  erpUrl: string;
+  code: string;
+}
+
+export interface PairLoginInput {
+  erpUrl: string;
+  email: string;
+  password: string;
+  cajaId?: string;
+  nuevoNombreCaja?: string;
+  nuevoCodigoCaja?: string;
+}
+
+export interface ErpCajaOption {
+  id: string;
+  nombre: string;
+  codigo: string;
+  estado: string;
+}
+
+export interface PairLoginResult {
+  success: boolean;
+  requiereSeleccionCaja: boolean;
+  cajasDisponibles?: ErpCajaOption[];
+  terminalStatus?: TerminalStatus;
+}

@@ -25,6 +25,13 @@ pub fn run() {
             commands::products::list_products,
             commands::products::find_product_by_barcode,
             commands::products::create_product,
+            commands::auth::get_terminal_status,
+            commands::auth::pair_terminal_code,
+            commands::auth::pair_terminal_login,
+            commands::auth::sync_users_from_erp,
+            commands::auth::list_local_cashiers,
+            commands::auth::login_cashier_pin,
+            commands::auth::unpair_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
