@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "./services/api";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SalesStationPage } from "./pages/SalesStationPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { PairingScreen } from "./components/PairingScreen";
 import { CashierLockScreen } from "./components/CashierLockScreen";
 import type { CashierUser, TerminalStatus } from "./types";
@@ -10,7 +11,7 @@ import "./App.css";
 function App() {
   const [terminalStatus, setTerminalStatus] = useState<TerminalStatus | null>(null);
   const [activeCashier, setActiveCashier] = useState<CashierUser | null>(null);
-  const [currentView, setCurrentView] = useState<"sales" | "products">("sales");
+  const [currentView, setCurrentView] = useState<"sales" | "products" | "settings">("sales");
   const [loading, setLoading] = useState(true);
 
   const cargarEstado = useCallback(async () => {
@@ -31,7 +32,7 @@ function App() {
     cargarEstado();
   }, [cargarEstado]);
 
-  // Atajo global para cambiar de vista (F1 = Ventas, F3 = Productos)
+  // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F7 = Configuración)
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (!activeCashier) return;
@@ -41,6 +42,9 @@ function App() {
       } else if (e.key === "F3") {
         e.preventDefault();
         setCurrentView("products");
+      } else if (e.key === "F7") {
+        e.preventDefault();
+        setCurrentView("settings");
       }
     };
     window.addEventListener("keydown", handleGlobalKey);
@@ -82,7 +86,21 @@ function App() {
     );
   }
 
-  // 3. Estación de Ventas principal (Eleventa-Style)
+  // 3. Pantalla de Configuración del Sistema (F7)
+  if (currentView === "settings") {
+    return (
+      <SettingsPage
+        terminalStatus={terminalStatus}
+        onBackToSales={() => setCurrentView("sales")}
+        onUnpaired={() => {
+          setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
+          setActiveCashier(null);
+        }}
+      />
+    );
+  }
+
+  // 4. Estación de Ventas principal (Eleventa-Style) (F1)
   if (currentView === "sales") {
     return (
       <SalesStationPage
@@ -90,11 +108,12 @@ function App() {
         terminalStatus={terminalStatus}
         onLockTerminal={() => setActiveCashier(null)}
         onNavigateToProducts={() => setCurrentView("products")}
+        onNavigateToSettings={() => setCurrentView("settings")}
       />
     );
   }
 
-  // 4. Catálogo de productos (F3)
+  // 5. Catálogo de productos (F3)
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -114,6 +133,14 @@ function App() {
             ← Volver a Ventas (F1)
           </button>
           <a className="nav-item active">Productos (F3)</a>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => setCurrentView("settings")}
+            style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer" }}
+          >
+            Configuración (F7)
+          </button>
         </nav>
 
         <div style={{ marginTop: "auto", paddingTop: "1rem", borderTop: "1px solid #374151" }}>

@@ -32,6 +32,7 @@ interface SalesStationPageProps {
   terminalStatus: TerminalStatus;
   onLockTerminal: () => void;
   onNavigateToProducts?: () => void;
+  onNavigateToSettings?: () => void;
 }
 
 export function SalesStationPage({
@@ -39,6 +40,7 @@ export function SalesStationPage({
   terminalStatus,
   onLockTerminal,
   onNavigateToProducts,
+  onNavigateToSettings,
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
 
@@ -338,7 +340,10 @@ export function SalesStationPage({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isSearchOpen || isCobroOpen || isVariosOpen) return;
 
-      if (e.key === "F10") {
+      if (e.key === "F7") {
+        e.preventDefault();
+        onNavigateToSettings?.();
+      } else if (e.key === "F10") {
         e.preventDefault();
         setIsSearchOpen(true);
       } else if (e.key === "F12" || (e.code === "Space" && e.ctrlKey)) {
@@ -421,6 +426,15 @@ export function SalesStationPage({
           >
             <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F4</span>
             <span>Inventario</span>
+          </button>
+
+          <button
+            onClick={onNavigateToSettings}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors"
+            title="Configuración de periféricos y hardware (F7)"
+          >
+            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F7</span>
+            <span>Configuración</span>
           </button>
         </div>
 

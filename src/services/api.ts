@@ -45,4 +45,12 @@ export const api = {
     getLast: () => invoke<SaleReceipt | null>("get_last_sale"),
     getTodaySummary: () => invoke<TodaySalesSummary>("get_today_summary"),
   },
+
+  settings: {
+    getAll: () => invoke<Record<string, string>>("get_all_settings"),
+    update: (settings: Record<string, string>) =>
+      invoke<void>("update_settings", { settings }),
+    testPrintTicket: () => invoke<string>("test_print_ticket"),
+    testOpenDrawer: () => invoke<string>("test_open_drawer"),
+  },
 };

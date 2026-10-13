@@ -146,3 +146,6 @@ export interface TodaySalesSummary {
   cardCents: number;
   transferCents: number;
 }
+
+export type PosSettings = Record<string, string>;
+
