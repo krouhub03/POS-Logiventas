@@ -278,4 +278,5 @@ npm install
 
 ## 📄 Licencia
 
-Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.
+Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.#   P O S - L o g i v e n t a s  
+ 
