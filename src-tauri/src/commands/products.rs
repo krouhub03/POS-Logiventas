@@ -93,13 +93,21 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
+    let barcode_clean = input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(bc) = barcode_clean {
+        let _ = tx.execute(
+            "UPDATE products SET barcode = NULL WHERE barcode = ?1 AND active = 0",
+            params![bc],
+        );
+    }
+
     tx.execute(
         "INSERT INTO products (sku, barcode, name, category_id, unit, price_cents, cost_cents, \
          tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1)",
         params![
             input.sku.trim(),
-            input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            barcode_clean,
             input.name.trim(),
             input.category_id,
             unit,
@@ -158,6 +166,14 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
+    let barcode_clean = input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(bc) = barcode_clean {
+        let _ = tx.execute(
+            "UPDATE products SET barcode = NULL WHERE barcode = ?1 AND active = 0 AND id != ?2",
+            params![bc, input.id],
+        );
+    }
+
     tx.execute(
         "UPDATE products SET \
          sku = ?1, barcode = ?2, name = ?3, category_id = ?4, unit = ?5, \
@@ -166,7 +182,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
          WHERE id = ?13",
         params![
             input.sku.trim(),
-            input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            barcode_clean,
             input.name.trim(),
             input.category_id,
             unit,

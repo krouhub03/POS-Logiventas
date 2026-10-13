@@ -348,10 +348,15 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     let tx = conn.transaction()?;
     let mut total_synced = 0;
 
-    for p in products_array {
+    let mut sorted_products = products_array.clone();
+    sorted_products.sort_by_key(|p| if p["active"].as_i64().unwrap_or(1) == 1 { 0 } else { 1 });
+
+    let mut used_barcodes = std::collections::HashSet::<String>::new();
+
+    for p in &sorted_products {
         let erp_id = p["id"].as_str().unwrap_or_default();
         let sku = p["sku"].as_str().unwrap_or_default();
-        let barcode = p["barcode"].as_str();
+        let raw_barcode = p["barcode"].as_str().map(str::trim).filter(|s| !s.is_empty());
         let name = p["name"].as_str().unwrap_or("Sin Nombre");
         let unit = p["unit"].as_str().unwrap_or("pza");
         let is_service = p["is_service"].as_i64().unwrap_or(0);
@@ -366,38 +371,129 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             continue;
         }
 
-        tx.execute(
-            "INSERT INTO products (erp_id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)
-             ON CONFLICT(sku) DO UPDATE SET
-                erp_id = excluded.erp_id,
-                barcode = COALESCE(excluded.barcode, products.barcode),
-                name = excluded.name,
-                unit = excluded.unit,
-                is_service = excluded.is_service,
-                price_cents = excluded.price_cents,
-                cost_cents = excluded.cost_cents,
-                tax_rate_bp = excluded.tax_rate_bp,
-                stock = excluded.stock,
-                min_stock = excluded.min_stock,
-                active = excluded.active,
-                needs_erp_upload = 0,
-                updated_at = datetime('now')",
-            params![
-                erp_id,
-                sku,
-                barcode,
-                name,
-                unit,
-                is_service,
-                price_cents,
-                cost_cents,
-                tax_rate_bp,
-                stock,
-                min_stock,
-                active
-            ],
-        )?;
+        // Buscar si ya existe localmente por erp_id o sku
+        let local_match: Option<i64> = if !erp_id.is_empty() {
+            tx.query_row(
+                "SELECT id FROM products WHERE erp_id = ?1",
+                params![erp_id],
+                |r| r.get(0),
+            )
+            .ok()
+        } else {
+            None
+        }
+        .or_else(|| {
+            tx.query_row(
+                "SELECT id FROM products WHERE sku = ?1",
+                params![sku],
+                |r| r.get(0),
+            )
+            .ok()
+        });
+
+        // Resolución segura de código de barras para evitar violación de UNIQUE constraint
+        let mut resolved_barcode: Option<String> = None;
+        if let Some(bc) = raw_barcode {
+            if used_barcodes.contains(bc) {
+                // Ya asignado a otro producto prioritario en este lote
+                resolved_barcode = None;
+            } else {
+                // Verificar si otro producto en SQLite tiene este código de barras
+                let other_row: Option<(i64, i64)> = tx
+                    .query_row(
+                        "SELECT id, active FROM products WHERE barcode = ?1",
+                        params![bc],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .ok();
+
+                match other_row {
+                    Some((other_id, other_active)) => {
+                        if Some(other_id) == local_match {
+                            // Es el mismo producto
+                            resolved_barcode = Some(bc.to_string());
+                            used_barcodes.insert(bc.to_string());
+                        } else if other_active == 0 {
+                            // El otro producto está inactivo: liberamos su código de barras
+                            let _ = tx.execute(
+                                "UPDATE products SET barcode = NULL WHERE id = ?1",
+                                params![other_id],
+                            );
+                            if active == 1 {
+                                resolved_barcode = Some(bc.to_string());
+                                used_barcodes.insert(bc.to_string());
+                            } else {
+                                resolved_barcode = None;
+                            }
+                        } else {
+                            // El otro producto está activo: si este es inactivo o colisiona, se asigna None
+                            resolved_barcode = None;
+                        }
+                    }
+                    None => {
+                        resolved_barcode = Some(bc.to_string());
+                        used_barcodes.insert(bc.to_string());
+                    }
+                }
+            }
+        }
+
+        if let Some(local_id) = local_match {
+            tx.execute(
+                "UPDATE products SET
+                    erp_id = ?1,
+                    sku = ?2,
+                    barcode = ?3,
+                    name = ?4,
+                    unit = ?5,
+                    is_service = ?6,
+                    price_cents = ?7,
+                    cost_cents = ?8,
+                    tax_rate_bp = ?9,
+                    stock = ?10,
+                    min_stock = ?11,
+                    active = ?12,
+                    needs_erp_upload = 0,
+                    updated_at = datetime('now')
+                 WHERE id = ?13",
+                params![
+                    erp_id,
+                    sku,
+                    resolved_barcode,
+                    name,
+                    unit,
+                    is_service,
+                    price_cents,
+                    cost_cents,
+                    tax_rate_bp,
+                    stock,
+                    min_stock,
+                    active,
+                    local_id
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO products (
+                    erp_id, sku, barcode, name, unit, is_service,
+                    price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)",
+                params![
+                    erp_id,
+                    sku,
+                    resolved_barcode,
+                    name,
+                    unit,
+                    is_service,
+                    price_cents,
+                    cost_cents,
+                    tax_rate_bp,
+                    stock,
+                    min_stock,
+                    active
+                ],
+            )?;
+        }
 
         total_synced += 1;
     }
