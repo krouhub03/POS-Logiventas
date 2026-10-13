@@ -409,7 +409,15 @@ export function SalesStationPage({
         modifyQuantity(-1);
       } else if (e.key === "Escape") {
         e.preventDefault();
-        onLockTerminal();
+        if (barcodeInput.trim().length > 0) {
+          // 1. Si hay código escrito/escaneado: limpiarlo inmediatamente
+          setBarcodeInput("");
+          focusInput();
+          showFeedback("Código limpiado", "info");
+        } else {
+          // 2. Si el input ya está vacío: cancelar o eliminar el ticket
+          handleCancelOrDeleteTicket();
+        }
       } else if (e.key === "ArrowDown") {
         if (document.activeElement !== barcodeInputRef.current) {
           e.preventDefault();
@@ -548,10 +556,9 @@ export function SalesStationPage({
           <button
             onClick={onLockTerminal}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-semibold transition-colors"
-            title="Bloquear Terminal (Esc)"
+            title="Bloquear Terminal de Caja"
           >
             <span>🔒 Bloquear</span>
-            <span className="text-[10px] font-mono bg-rose-200/80 dark:bg-rose-900/80 px-1 rounded text-rose-800 dark:text-rose-300">Esc</span>
           </button>
         </div>
       </header>
