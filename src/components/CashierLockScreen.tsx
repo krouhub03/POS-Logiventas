@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../services/api";
+import { useModals } from "../contexts/ModalContext";
 import type { CashierUser, TerminalStatus } from "../types";
 
 interface CashierLockScreenProps {
@@ -13,6 +14,7 @@ export function CashierLockScreen({
   onUnlocked,
   onUnpaired,
 }: CashierLockScreenProps) {
+  const { confirm } = useModals();
   const [pin, setPin] = useState("");
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [loading, setLoading] = useState(false);
@@ -99,7 +101,14 @@ export function CashierLockScreen({
   };
 
   const handleDesvincular = async () => {
-    if (confirm("¿Estás seguro de desvincular esta terminal de caja? Deberás emparejarla nuevamente.")) {
+    const ok = await confirm({
+      title: "Desvincular Terminal",
+      message: "¿Estás seguro de desvincular esta terminal de caja? Deberás emparejarla nuevamente para volver a operar.",
+      variant: "danger",
+      confirmText: "Sí, Desvincular",
+      cancelText: "Cancelar",
+    });
+    if (ok) {
       try {
         await api.auth.unpair();
         onUnpaired();

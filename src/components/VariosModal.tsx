@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { toCents } from "../lib/money";
+import { useModals } from "../contexts/ModalContext";
 
 interface VariosModalProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface VariosModalProps {
 }
 
 export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
+  const { alert: modalAlert } = useModals();
   const [desc, setDesc] = useState("Artículo común / Varios");
   const [priceInput, setPriceInput] = useState("");
   const [qtyInput, setQtyInput] = useState("1");
@@ -33,7 +35,11 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
     const qtyNum = parseFloat(qtyInput) || 1;
 
     if (isNaN(priceNum) || priceNum <= 0) {
-      alert("Por favor ingrese un precio válido");
+      modalAlert({
+        title: "Precio Inválido",
+        message: "Por favor ingrese un precio numérico válido mayor a 0.",
+        variant: "warning",
+      });
       return;
     }
 

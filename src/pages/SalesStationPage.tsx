@@ -3,6 +3,7 @@ import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput } fro
 import { api } from "../services/api";
 import { formatCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
+import { useModals } from "../contexts/ModalContext";
 import { playScanSuccess, playStockWarning, playScanError } from "../lib/sound";
 import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
@@ -81,6 +82,7 @@ export function SalesStationPage({
   onNavigateToSettings,
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
+  const { confirm, alert: modalAlert } = useModals();
 
   // Tabs de Tickets: Persistidos permanentemente en localStorage (mínimo 1 ticket siempre)
   const [tickets, setTickets] = useState<TicketTab[]>(getInitialTickets);
@@ -170,7 +172,7 @@ export function SalesStationPage({
   };
 
   // Cancelar o eliminar ticket (mínimo 1 siempre)
-  const handleCancelOrDeleteTicket = (targetId = activeTicketId) => {
+  const handleCancelOrDeleteTicket = async (targetId = activeTicketId) => {
     const target = tickets.find((t) => t.id === targetId);
     if (!target) return;
 
@@ -180,7 +182,14 @@ export function SalesStationPage({
         showFeedback("El ticket ya está vacío. Siempre debe haber al menos 1 ticket activo.");
         return;
       }
-      if (confirm(`¿Desea vaciar los productos de ${target.name}?`)) {
+      const ok = await confirm({
+        title: "Vaciar Ticket Actual",
+        message: `¿Desea vaciar los productos de ${target.name}? Esta acción no se puede deshacer.`,
+        variant: "warning",
+        confirmText: "Sí, Vaciar Ticket",
+        cancelText: "Mantener Productos",
+      });
+      if (ok) {
         updateCurrentTicketLines([]);
         setSelectedLineIndex(-1);
         showFeedback(`${target.name} vaciado`);
@@ -190,12 +199,18 @@ export function SalesStationPage({
     }
 
     // Si hay más de 1 ticket: se descarta y elimina
-    const msg =
-      target.lines.length > 0
+    const hasItems = target.lines.length > 0;
+    const ok = await confirm({
+      title: hasItems ? "Cancelar y Eliminar Ticket" : "Cerrar Pestaña de Ticket",
+      message: hasItems
         ? `¿Desea cancelar y eliminar ${target.name} con sus ${target.lines.length} producto(s)?`
-        : `¿Desea cerrar ${target.name}?`;
+        : `¿Desea cerrar la pestaña de ${target.name}?`,
+      variant: hasItems ? "danger" : "primary",
+      confirmText: hasItems ? "Sí, Cancelar y Eliminar" : "Cerrar Ticket",
+      cancelText: "Volver",
+    });
 
-    if (confirm(msg)) {
+    if (ok) {
       const remaining = tickets.filter((t) => t.id !== targetId);
       setTickets(remaining);
       if (activeTicketId === targetId) {
@@ -427,7 +442,11 @@ export function SalesStationPage({
       focusInput();
     } catch (err: unknown) {
       console.error("Error registrando venta:", err);
-      alert(`Error al registrar la venta: ${err instanceof Error ? err.message : String(err)}`);
+      modalAlert({
+        title: "Error al Procesar Venta",
+        message: err instanceof Error ? err.message : String(err),
+        variant: "error",
+      });
     }
   };
 

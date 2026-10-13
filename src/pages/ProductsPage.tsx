@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
+import { useModals } from "../contexts/ModalContext";
 import type {
   Product,
   NewProduct,
@@ -24,11 +25,12 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  const { confirm, alert: modalAlert } = useModals();
+
   // Modales
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
-  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
 
   // Estado del formulario de creación/edición
   const [formIsService, setFormIsService] = useState(false);
@@ -137,7 +139,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formSku.trim() || !formName.trim()) {
-      alert("El código/SKU y el nombre son obligatorios.");
+      modalAlert({
+        title: "Campos Requeridos",
+        message: "El código/SKU y el nombre son obligatorios para guardar.",
+        variant: "warning",
+      });
       return;
     }
 
@@ -145,7 +151,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     const costCents = toCents(formCostStr);
 
     if (priceCents < 0) {
-      alert("El precio de venta no puede ser negativo.");
+      modalAlert({
+        title: "Precio Inválido",
+        message: "El precio de venta no puede ser negativo.",
+        variant: "warning",
+      });
       return;
     }
 
@@ -190,7 +200,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       setIsFormOpen(false);
       loadProducts();
     } catch (err: unknown) {
-      alert(`Error al guardar: ${String(err)}`);
+      modalAlert({
+        title: "Error al Guardar",
+        message: String(err),
+        variant: "error",
+      });
     } finally {
       setFormSubmitting(false);
     }
@@ -208,7 +222,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     e.preventDefault();
     if (!adjustingProduct) return;
     if (adjustNewStock < 0) {
-      alert("La existencia no puede ser negativa.");
+      modalAlert({
+        title: "Existencia Inválida",
+        message: "La existencia contada no puede ser menor a 0.",
+        variant: "warning",
+      });
       return;
     }
 
@@ -225,22 +243,37 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       loadProducts();
       if (activeTab === "kardex") loadMovements();
     } catch (err: unknown) {
-      alert(`Error al ajustar stock: ${String(err)}`);
+      modalAlert({
+        title: "Error al Ajustar Stock",
+        message: String(err),
+        variant: "error",
+      });
     } finally {
       setAdjustSubmitting(false);
     }
   };
 
-  // Eliminar producto (soft delete)
-  const handleConfirmDelete = async () => {
-    if (!deletingProduct) return;
+  // Eliminar producto (soft delete con ConfirmModal estándar)
+  const handleDeleteProduct = async (p: Product) => {
+    const ok = await confirm({
+      title: `¿Eliminar ${p.isService ? "Servicio" : "Producto"}?`,
+      message: `¿Estás seguro de desactivar "${p.name}"? Esta acción lo ocultará del catálogo sin afectar ventas históricas.`,
+      variant: "danger",
+      confirmText: "Sí, Eliminar",
+      cancelText: "Cancelar",
+    });
+    if (!ok) return;
+
     try {
-      await api.products.delete(deletingProduct.id);
-      showNotification(`✓ "${deletingProduct.name}" eliminado del catálogo.`);
-      setDeletingProduct(null);
+      await api.products.delete(p.id);
+      showNotification(`✓ "${p.name}" eliminado del catálogo.`);
       loadProducts();
     } catch (err: unknown) {
-      alert(`Error al eliminar: ${String(err)}`);
+      modalAlert({
+        title: "Error al Eliminar",
+        message: String(err),
+        variant: "error",
+      });
     }
   };
 
@@ -252,8 +285,6 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           setIsFormOpen(false);
         } else if (adjustingProduct) {
           setAdjustingProduct(null);
-        } else if (deletingProduct) {
-          setDeletingProduct(null);
         } else if (onBackToSales) {
           onBackToSales();
         }
@@ -267,7 +298,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFormOpen, adjustingProduct, deletingProduct, onBackToSales]);
+  }, [isFormOpen, adjustingProduct, onBackToSales]);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
@@ -582,8 +613,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                             {/* Eliminar */}
                             <button
                               type="button"
-                              onClick={() => setDeletingProduct(p)}
-                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-300 font-bold text-[11px] transition-colors"
+                              onClick={() => handleDeleteProduct(p)}
+                              className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800/40 text-rose-600 dark:text-rose-300 font-bold text-[11px] transition-colors cursor-pointer"
                               title="Desactivar/Eliminar del catálogo"
                             >
                               🗑️
@@ -1045,40 +1076,6 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         </div>
       )}
 
-      {/* ==============================================================
-          MODAL: CONFIRMACIÓN DE ELIMINACIÓN (SOFT DELETE)
-          ============================================================== */}
-      {deletingProduct && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-sm shadow-2xl p-6 text-center animate-in zoom-in-95">
-            <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400 flex items-center justify-center text-2xl mx-auto mb-3">
-              🗑️
-            </div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">
-              ¿Eliminar {deletingProduct.isService ? "Servicio" : "Producto"}?
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-              ¿Estás seguro de desactivar <strong>"{deletingProduct.name}"</strong>? No se perderán las ventas históricas asociadas a este ítem.
-            </p>
-            <div className="flex items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={() => setDeletingProduct(null)}
-                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmDelete}
-                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-md"
-              >
-                Sí, Eliminar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

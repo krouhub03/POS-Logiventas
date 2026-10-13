@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "../services/api";
 import { TerminalStatus } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
+import { useModals } from "../contexts/ModalContext";
 
 interface SettingsPageProps {
   terminalStatus: TerminalStatus;
@@ -17,6 +18,7 @@ export function SettingsPage({
   onUnpaired,
 }: SettingsPageProps) {
   const { theme, toggleTheme } = useTheme();
+  const { confirm, alert: modalAlert } = useModals();
   const [activeTab, setActiveTab] = useState<SettingsTab>("printer");
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -61,7 +63,11 @@ export function SettingsPage({
       showMsg("✅ Configuraciones guardadas correctamente");
     } catch (err) {
       console.error("Error guardando ajustes:", err);
-      alert("Error al guardar ajustes: " + String(err));
+      modalAlert({
+        title: "Error al Guardar Ajustes",
+        message: String(err),
+        variant: "error",
+      });
     } finally {
       setSaving(false);
     }
@@ -560,10 +566,14 @@ export function SettingsPage({
                           await api.auth.syncUsers();
                           showMsg("✅ Usuarios de caja sincronizados desde ERP");
                         } catch (e) {
-                          alert("Error sincronizando usuarios: " + String(e));
+                          modalAlert({
+                            title: "Error de Sincronización",
+                            message: "Error sincronizando usuarios: " + String(e),
+                            variant: "error",
+                          });
                         }
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors"
+                      className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
                     >
                       🔄 Sincronizar Usuarios y Cajeros
                     </button>
@@ -571,16 +581,27 @@ export function SettingsPage({
                     <button
                       type="button"
                       onClick={async () => {
-                        if (confirm("¿Está seguro de desvincular esta terminal del ERP?")) {
+                        const ok = await confirm({
+                          title: "Desvincular Terminal",
+                          message: "¿Está seguro de desvincular esta terminal del ERP? Se requerirá vincularla de nuevo con credenciales o código.",
+                          variant: "danger",
+                          confirmText: "Sí, Desvincular",
+                          cancelText: "Cancelar",
+                        });
+                        if (ok) {
                           try {
                             await api.auth.unpair();
                             onUnpaired();
                           } catch (e) {
-                            alert("Error al desvincular: " + String(e));
+                            modalAlert({
+                              title: "Error al Desvincular",
+                              message: "Error al desvincular: " + String(e),
+                              variant: "error",
+                            });
                           }
                         }
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-300 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-bold transition-colors"
+                      className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-300 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-bold transition-colors cursor-pointer"
                     >
                       ⚠️ Desvincular Terminal
                     </button>
