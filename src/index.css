@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   *, ::after, ::before {
     box-sizing: border-box;
@@ -8,10 +10,23 @@
   body {
     margin: 0;
     padding: 0;
-    background-color: #020617;
-    color: #f8fafc;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     user-select: none;
     overflow: hidden;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  /* Modo Claro por defecto */
+  :root {
+    color-scheme: light;
+    background-color: #f1f5f9;
+    color: #0f172a;
+  }
+
+  /* Modo Oscuro cuando está activa la clase .dark */
+  :root.dark {
+    color-scheme: dark;
+    background-color: #020617;
+    color: #f8fafc;
   }
 }

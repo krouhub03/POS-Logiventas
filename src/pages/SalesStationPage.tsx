@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput } from "../types";
 import { api } from "../services/api";
 import { formatCents } from "../lib/money";
+import { useTheme } from "../contexts/ThemeContext";
 import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
@@ -39,6 +40,8 @@ export function SalesStationPage({
   onLockTerminal,
   onNavigateToProducts,
 }: SalesStationPageProps) {
+  const { theme, toggleTheme } = useTheme();
+
   // Tabs de Tickets (Soporte multi-ticket en memoria estilo Eleventa)
   const [tickets, setTickets] = useState<TicketTab[]>([
     { id: 1, name: "Ticket 1", lines: [] },
@@ -98,7 +101,6 @@ export function SalesStationPage({
     const existingIndex = cartLines.findIndex((l) => l.productId === product.id);
 
     if (existingIndex >= 0) {
-      // Incrementar cantidad existente
       const updatedLines = [...cartLines];
       const existing = updatedLines[existingIndex];
       const newQty = existing.quantity + quantity;
@@ -116,7 +118,6 @@ export function SalesStationPage({
       updateCurrentTicketLines(updatedLines);
       setSelectedLineIndex(existingIndex);
     } else {
-      // Nueva línea
       const unitSubtotal = Math.round(product.priceCents * quantity);
       const unitTax = Math.round((unitSubtotal * product.taxRateBp + 5000) / 10000);
       const newLine: CartLine = {
@@ -138,7 +139,7 @@ export function SalesStationPage({
     }
   };
 
-  // Buscar por código de barras o formato "CANTIDAD*CODIGO" (ej. 3*75012345)
+  // Buscar por código de barras o formato "CANTIDAD*CODIGO"
   const handleBarcodeSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const raw = barcodeInput.trim();
@@ -157,7 +158,6 @@ export function SalesStationPage({
     }
 
     try {
-      // Primero intentar búsqueda exacta por código de barras
       const direct = await api.products.findByBarcode(queryCode);
       if (direct) {
         addProductToTicket(direct, qty);
@@ -166,7 +166,6 @@ export function SalesStationPage({
         return;
       }
 
-      // Si no, buscar por listado con filtro
       const products = await api.products.list(queryCode);
       const match = products.find(
         (p) => p.barcode?.toLowerCase() === queryCode.toLowerCase() || p.sku.toLowerCase() === queryCode.toLowerCase()
@@ -177,7 +176,6 @@ export function SalesStationPage({
         setBarcodeInput("");
         showFeedback(`+ ${qty} × ${match.name}`);
       } else if (products.length > 1) {
-        // Abrir modal de búsqueda si hay múltiples coincidencias
         setIsSearchOpen(true);
       } else {
         showFeedback(`⚠️ No se encontró el producto: ${queryCode}`);
@@ -263,7 +261,6 @@ export function SalesStationPage({
         payments,
       });
 
-      // Limpiar ticket actual
       updateCurrentTicketLines([]);
       setSelectedLineIndex(-1);
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
@@ -278,7 +275,6 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignorar atajos si hay modales abiertos
       if (isSearchOpen || isCobroOpen || isVariosOpen) return;
 
       if (e.key === "F10") {
@@ -324,9 +320,9 @@ export function SalesStationPage({
   }, [isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal]);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 select-none overflow-hidden font-sans">
+    <div className="flex flex-col h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
       {/* 1. BARRA SUPERIOR DE MÓDULOS ESTILO ELEVENTA */}
-      <header className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between shadow-md">
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center justify-between shadow-sm transition-colors duration-150">
         <div className="flex items-center gap-1 sm:gap-2">
           {/* Logo / Badge Megalider */}
           <div className="flex items-center gap-2 mr-3 px-2.5 py-1 bg-gradient-to-r from-red-600 to-rose-700 rounded-lg text-white font-black text-xs tracking-wider shadow">
@@ -344,56 +340,76 @@ export function SalesStationPage({
 
           <button
             onClick={onNavigateToProducts}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors"
           >
-            <span className="bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-400">F3</span>
+            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F3</span>
             <span>Productos</span>
           </button>
 
           <button
             onClick={() => showFeedback("Módulo de Clientes sincronizado con ERP")}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors hidden sm:flex"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors hidden sm:flex"
           >
-            <span className="bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-400">F2</span>
+            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F2</span>
             <span>Clientes</span>
           </button>
 
           <button
             onClick={() => showFeedback("Inventario sincronizado con ERP")}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors hidden sm:flex"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors hidden sm:flex"
           >
-            <span className="bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-400">F4</span>
+            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F4</span>
             <span>Inventario</span>
           </button>
         </div>
 
-        {/* Info Cajero & Terminal */}
+        {/* Info Cajero, Selector de Tema & Bloqueo */}
         <div className="flex items-center gap-3">
+          {/* BOTÓN DE CAMBIO DE MODO CLARO / OSCURO */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
+            title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
+          >
+            {theme === "dark" ? (
+              <>
+                <span className="text-amber-400 text-sm">☀️</span>
+                <span className="hidden sm:inline text-[11px]">Claro</span>
+              </>
+            ) : (
+              <>
+                <span className="text-indigo-600 text-sm">🌙</span>
+                <span className="hidden sm:inline text-[11px]">Oscuro</span>
+              </>
+            )}
+          </button>
+
           <div className="text-right hidden md:block">
-            <div className="text-xs font-bold text-white flex items-center gap-1.5 justify-end">
+            <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 justify-end">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
               {cashier.fullName}
             </div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono">
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-mono">
               {terminalStatus.cajaCodigo || "CAJA-01"} • {terminalStatus.empresaNombre || "Megalider"}
             </div>
           </div>
 
           <button
             onClick={onLockTerminal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900 border border-rose-800/40 text-rose-200 text-xs font-semibold transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-semibold transition-colors"
             title="Bloquear Terminal (Esc)"
           >
             <span>🔒 Bloquear</span>
-            <span className="text-[10px] font-mono bg-rose-900/80 px-1 rounded text-rose-300">Esc</span>
+            <span className="text-[10px] font-mono bg-rose-200/80 dark:bg-rose-900/80 px-1 rounded text-rose-800 dark:text-rose-300">Esc</span>
           </button>
         </div>
       </header>
 
       {/* 2. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (ESTILO ELEVENTA) */}
-      <div className="bg-slate-900/90 border-b border-slate-800 p-3 flex flex-wrap items-center gap-3">
+      <div className="bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-3 flex flex-wrap items-center gap-3 transition-colors duration-150">
         {/* Pestañas de Tickets (Ticket 1, Ticket 2, +) */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 mr-2">
+        <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-950 p-1 rounded-xl border border-slate-300 dark:border-slate-800 mr-2">
           {tickets.map((t) => (
             <button
               key={t.id}
@@ -403,13 +419,13 @@ export function SalesStationPage({
               }}
               className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
                 activeTicketId === t.id
-                  ? "bg-slate-800 text-emerald-400 border border-emerald-500/30 shadow"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                  ? "bg-white text-emerald-700 shadow-sm border border-slate-200 dark:bg-slate-800 dark:text-emerald-400 dark:border-emerald-500/30"
+                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
               }`}
             >
               <span>{t.name}</span>
               {t.lines.length > 0 && (
-                <span className="bg-emerald-900/60 text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
+                <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
                   {t.lines.length}
                 </span>
               )}
@@ -421,7 +437,7 @@ export function SalesStationPage({
               setTickets([...tickets, { id: nextId, name: `Ticket ${nextId}`, lines: [] }]);
               setActiveTicketId(nextId);
             }}
-            className="px-2 py-1 text-slate-500 hover:text-slate-200 hover:bg-slate-800 rounded-lg text-xs font-bold transition-colors"
+            className="px-2 py-1 text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 rounded-lg text-xs font-bold transition-colors"
             title="Nuevo Ticket"
           >
             +
@@ -437,7 +453,7 @@ export function SalesStationPage({
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               placeholder="Código del producto o cantidad*código (ej. 3*75012345)..."
-              className="w-full bg-slate-950 border-2 border-slate-700 focus:border-emerald-500 rounded-xl px-4 py-2.5 text-white font-mono text-base font-bold placeholder:font-sans placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+              className="w-full bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white font-mono text-base font-bold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
               autoFocus
             />
             {barcodeInput && (
@@ -447,7 +463,7 @@ export function SalesStationPage({
                   setBarcodeInput("");
                   focusInput();
                 }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-sm"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white text-sm"
               >
                 ✕
               </button>
@@ -455,7 +471,7 @@ export function SalesStationPage({
           </div>
           <button
             type="submit"
-            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-950 transition-colors"
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-700/20 dark:shadow-emerald-950 transition-colors"
           >
             <span>Enter</span>
             <span className="hidden sm:inline">Agregar</span>
@@ -466,10 +482,10 @@ export function SalesStationPage({
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setIsVariosOpen(true)}
-            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+            className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-amber-300 dark:border-slate-700 text-amber-800 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
             title="Vender artículo sin código (Insert)"
           >
-            <span className="bg-amber-950/80 px-1 rounded text-[10px] font-mono text-amber-400 border border-amber-800/40">
+            <span className="bg-amber-200/80 dark:bg-amber-950/80 px-1 rounded text-[10px] font-mono text-amber-900 dark:text-amber-400 border border-amber-400/40 dark:border-amber-800/40">
               INS
             </span>
             <span>Varios</span>
@@ -477,10 +493,10 @@ export function SalesStationPage({
 
           <button
             onClick={() => setIsSearchOpen(true)}
-            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sky-300 font-bold text-xs flex items-center gap-1.5 transition-colors"
+            className="px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-sky-300 dark:border-slate-700 text-sky-800 dark:text-sky-300 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
             title="Buscar Producto por Nombre o SKU (F10)"
           >
-            <span className="bg-sky-950/80 px-1 rounded text-[10px] font-mono text-sky-400 border border-sky-800/40">
+            <span className="bg-sky-200/80 dark:bg-sky-950/80 px-1 rounded text-[10px] font-mono text-sky-900 dark:text-sky-400 border border-sky-400/40 dark:border-sky-800/40">
               F10
             </span>
             <span>Buscar</span>
@@ -489,10 +505,10 @@ export function SalesStationPage({
           <button
             onClick={removeSelectedLine}
             disabled={selectedLineIndex < 0 || cartLines.length === 0}
-            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-800/50 text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/40 border border-rose-300 dark:border-slate-700 text-rose-800 dark:text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none shadow-sm"
             title="Eliminar producto seleccionado (Del)"
           >
-            <span className="bg-rose-950/80 px-1 rounded text-[10px] font-mono text-rose-400 border border-rose-800/40">
+            <span className="bg-rose-200/80 dark:bg-rose-950/80 px-1 rounded text-[10px] font-mono text-rose-900 dark:text-rose-400 border border-rose-400/40 dark:border-rose-800/40">
               DEL
             </span>
             <span>Borrar</span>
@@ -502,19 +518,19 @@ export function SalesStationPage({
 
       {/* FEEDBACK TOAST */}
       {feedbackMsg && (
-        <div className="bg-slate-800/95 border-b border-emerald-500/40 text-emerald-300 px-4 py-1.5 text-xs font-semibold flex items-center justify-between animate-in fade-in slide-in-from-top-1">
+        <div className="bg-emerald-50 dark:bg-slate-800/95 border-b border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 px-4 py-1.5 text-xs font-semibold flex items-center justify-between animate-in fade-in slide-in-from-top-1">
           <span>{feedbackMsg}</span>
-          <button onClick={() => setFeedbackMsg(null)} className="text-slate-400 hover:text-white">
+          <button onClick={() => setFeedbackMsg(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white">
             ✕
           </button>
         </div>
       )}
 
       {/* 3. TABLA PRINCIPAL DE VENTAS ESTILO ELEVENTA */}
-      <main className="flex-1 bg-slate-950 overflow-auto p-3">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-inner flex flex-col h-full">
+      <main className="flex-1 p-3 overflow-auto">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full transition-colors duration-150">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-850 border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400 font-bold sticky top-0 bg-slate-900 z-10">
+            <thead className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10">
               <tr>
                 <th className="py-2.5 px-3 w-12 text-center">#</th>
                 <th className="py-2.5 px-3 w-36">Código de Barras</th>
@@ -525,14 +541,14 @@ export function SalesStationPage({
                 <th className="py-2.5 px-3 w-24 text-center">Existencia</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-24 text-center text-slate-600 font-sans">
+                  <td colSpan={7} className="py-24 text-center text-slate-400 dark:text-slate-600 font-sans">
                     <div className="text-4xl mb-2">🛒</div>
-                    <div className="text-base font-bold text-slate-400">El ticket de venta está vacío</div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      Escanee un código de barras, presione <span className="text-sky-400 font-mono font-bold">F10</span> para buscar, o <span className="text-amber-400 font-mono font-bold">INS</span> para venta libre.
+                    <div className="text-base font-bold text-slate-700 dark:text-slate-400">El ticket de venta está vacío</div>
+                    <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">
+                      Escanee un código de barras, presione <span className="text-sky-600 dark:text-sky-400 font-mono font-bold">F10</span> para buscar, o <span className="text-amber-600 dark:text-amber-400 font-mono font-bold">INS</span> para venta libre.
                     </div>
                   </td>
                 </tr>
@@ -545,17 +561,17 @@ export function SalesStationPage({
                       onClick={() => setSelectedLineIndex(index)}
                       className={`cursor-pointer transition-colors ${
                         isSelected
-                          ? "bg-emerald-950/40 text-emerald-200 border-l-4 border-l-emerald-500"
-                          : "hover:bg-slate-800/40 text-slate-200"
+                          ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 border-l-4 border-l-emerald-600 dark:border-l-emerald-500"
+                          : "hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200"
                       }`}
                     >
-                      <td className="py-2.5 px-3 text-center text-slate-500 font-sans text-xs">
+                      <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs">
                         {index + 1}
                       </td>
-                      <td className="py-2.5 px-3 font-semibold text-slate-300">
+                      <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
                         {line.barcode}
                       </td>
-                      <td className="py-2.5 px-3 font-sans font-medium text-white">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-900 dark:text-white">
                         {line.description}
                         {line.taxRateBp > 0 && (
                           <span className="ml-2 text-[10px] text-slate-500 font-mono">
@@ -563,24 +579,24 @@ export function SalesStationPage({
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-300">
+                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300">
                         {formatCents(line.unitPriceCents)}
                       </td>
                       <td className="py-2.5 px-3 text-center">
-                        <span className="bg-slate-950 px-2 py-1 rounded border border-slate-800 font-bold text-emerald-400">
+                        <span className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 font-bold text-emerald-700 dark:text-emerald-400">
                           {line.quantity}
                         </span>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-emerald-400 text-sm">
+                      <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                         {formatCents(line.totalCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center text-slate-400">
+                      <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
                         {line.currentStock !== undefined ? (
                           <span
                             className={`px-1.5 py-0.5 rounded text-[11px] ${
                               line.currentStock <= 5
-                                ? "bg-rose-950/80 text-rose-300 border border-rose-800/40"
-                                : "text-slate-400"
+                                ? "bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/40"
+                                : "text-slate-600 dark:text-slate-400"
                             }`}
                           >
                             {line.currentStock}
@@ -599,27 +615,27 @@ export function SalesStationPage({
       </main>
 
       {/* 4. FOOTER RESUMEN ESTILO ELEVENTA CON VISOR GIGANTE */}
-      <footer className="bg-slate-900 border-t-2 border-slate-800 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-2xl">
+      <footer className="bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-md transition-colors duration-150">
         {/* Atajos Inferiores & Resumen de Piezas */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-800 flex items-center gap-4">
+          <div className="bg-slate-100 dark:bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-4">
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-500">Artículos</div>
-              <div className="text-lg font-black text-white font-mono">{totalItemsCount}</div>
+              <div className="text-lg font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
             </div>
-            <div className="w-px h-8 bg-slate-800" />
+            <div className="w-px h-8 bg-slate-300 dark:bg-slate-800" />
             <div>
               <div className="text-[10px] uppercase font-bold text-slate-500">Piezas</div>
-              <div className="text-lg font-black text-emerald-400 font-mono">{totalPieces}</div>
+              <div className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={() => showFeedback("Poner ticket en espera")}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors"
+              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors"
             >
-              <span className="bg-slate-900 px-1 rounded font-mono text-[10px] text-slate-400">F6</span>
+              <span className="bg-slate-200 dark:bg-slate-900 px-1 rounded font-mono text-[10px] text-slate-600 dark:text-slate-400">F6</span>
               <span>Pendiente</span>
             </button>
             <button
@@ -632,7 +648,7 @@ export function SalesStationPage({
                 }
               }}
               disabled={cartLines.length === 0}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 font-semibold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-700 dark:text-slate-400 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none"
             >
               <span>✕ Cancelar Ticket</span>
             </button>
@@ -642,13 +658,13 @@ export function SalesStationPage({
         {/* VISOR GIGANTE DEL TOTAL Y BOTÓN COBRAR (F12) */}
         <div className="flex items-center gap-5 w-full md:w-auto justify-end">
           <div className="text-right">
-            <div className="text-[10px] text-slate-400 font-mono">
+            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}
             </div>
-            <div className="text-[10px] uppercase tracking-widest font-black text-slate-400">
+            <div className="text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400">
               Total a Pagar
             </div>
-            <div className="text-4xl md:text-5xl font-black text-emerald-400 font-mono tracking-tight drop-shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+            <div className="text-4xl md:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight dark:drop-shadow-[0_0_20px_rgba(16,185,129,0.3)]">
               {formatCents(totalCents)}
             </div>
           </div>
@@ -658,9 +674,9 @@ export function SalesStationPage({
               if (cartLines.length > 0) setIsCobroOpen(true);
             }}
             disabled={cartLines.length === 0}
-            className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 active:scale-95 text-white font-black text-xl uppercase tracking-wider flex items-center gap-3 shadow-xl shadow-emerald-950/60 transition-all disabled:opacity-40 disabled:pointer-events-none border border-emerald-400/30"
+            className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xl uppercase tracking-wider flex items-center gap-3 shadow-xl shadow-emerald-700/30 dark:shadow-emerald-950/60 transition-all disabled:opacity-40 disabled:pointer-events-none border border-emerald-400/40"
           >
-            <span className="bg-emerald-900/80 px-2 py-0.5 rounded-lg text-sm font-mono border border-emerald-400/40">
+            <span className="bg-emerald-800/80 px-2 py-0.5 rounded-lg text-sm font-mono border border-emerald-400/40">
               F12
             </span>
             <span>Cobrar</span>

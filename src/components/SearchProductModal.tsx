@@ -26,7 +26,6 @@ export function SearchProductModal({
       setSelectedIndex(0);
       setProducts([]);
       setTimeout(() => inputRef.current?.focus(), 50);
-      // Cargar lista inicial
       api.products.list("").then((res) => setProducts(res)).catch(console.error);
     }
   }, [isOpen]);
@@ -68,76 +67,100 @@ export function SearchProductModal({
   if (!isOpen) return null;
 
   return (
-    <div style={styles.overlay}>
-      <div style={styles.modal}>
-        <div style={styles.header}>
-          <h2 style={styles.title}>Buscar Producto [F10]</h2>
-          <button type="button" onClick={onClose} style={styles.closeBtn}>✕</button>
+    <div
+      className="fixed inset-0 z-50 bg-black/50 dark:bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 transition-colors"
+      onKeyDown={handleKeyDown}
+    >
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-3xl max-h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+        {/* Header */}
+        <div className="bg-slate-50 dark:bg-slate-950 px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="bg-sky-100 dark:bg-sky-950/80 text-sky-800 dark:text-sky-400 border border-sky-300 dark:border-sky-800/40 text-xs px-2 py-0.5 rounded font-mono font-bold">
+              F10
+            </span>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white">
+              Búsqueda de Productos
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700 dark:hover:text-white text-lg font-bold"
+          >
+            ✕
+          </button>
         </div>
 
-        <div style={styles.searchBar}>
+        {/* Input de Búsqueda */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
           <input
             ref={inputRef}
-            style={styles.searchInput}
+            type="text"
+            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white font-medium focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500"
             placeholder="Escribe nombre, código de barras o SKU… (Usa ↑ ↓ para navegar)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={handleKeyDown}
           />
         </div>
 
-        <div style={styles.tableContainer}>
-          <table style={styles.table}>
+        {/* Tabla de Resultados */}
+        <div className="flex-1 overflow-auto p-4 bg-slate-50 dark:bg-slate-950/50">
+          <table className="w-full text-left border-collapse">
             <thead>
-              <tr>
-                <th style={styles.th}>SKU / Código</th>
-                <th style={styles.th}>Descripción</th>
-                <th style={{ ...styles.th, textAlign: "right" }}>Precio</th>
-                <th style={{ ...styles.th, textAlign: "right" }}>Existencia</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-bold">
+                <th className="py-2 px-3">SKU / Código</th>
+                <th className="py-2 px-3">Descripción</th>
+                <th className="py-2 px-3 text-right">Precio</th>
+                <th className="py-2 px-3 text-right">Existencia</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan={4} style={styles.empty}>
-                    {loading ? "Buscando productos…" : "No se encontraron productos"}
+                  <td colSpan={4} className="py-12 text-center text-slate-400 dark:text-slate-500 font-sans">
+                    {loading ? "Buscando productos…" : "No se encontraron productos coincidentes"}
                   </td>
                 </tr>
               ) : (
-                products.map((p, idx) => (
-                  <tr
-                    key={p.id}
-                    style={{
-                      ...styles.tr,
-                      ...(idx === selectedIndex ? styles.trSelected : {}),
-                    }}
-                    onClick={() => {
-                      onSelect(p);
-                      onClose();
-                    }}
-                  >
-                    <td style={styles.tdMono}>{p.barcode || p.sku}</td>
-                    <td style={styles.tdName}>{p.name}</td>
-                    <td style={{ ...styles.td, textAlign: "right", color: "#60a5fa", fontWeight: "bold" }}>
-                      {formatCents(p.priceCents)}
-                    </td>
-                    <td style={{ ...styles.td, textAlign: "right" }}>
-                      <span style={p.stock <= p.minStock ? { color: "#ef4444", fontWeight: "bold" } : {}}>
-                        {p.stock} {p.unit}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                products.map((p, idx) => {
+                  const isSelected = idx === selectedIndex;
+                  return (
+                    <tr
+                      key={p.id}
+                      onClick={() => {
+                        onSelect(p);
+                        onClose();
+                      }}
+                      className={`cursor-pointer transition-colors ${
+                        isSelected
+                          ? "bg-sky-100 dark:bg-sky-950/50 text-sky-950 dark:text-sky-200 font-semibold border-l-4 border-l-sky-500"
+                          : "hover:bg-slate-100 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200"
+                      }`}
+                    >
+                      <td className="py-2.5 px-3">{p.barcode || p.sku}</td>
+                      <td className="py-2.5 px-3 font-sans font-medium">{p.name}</td>
+                      <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400">
+                        {formatCents(p.priceCents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-slate-600 dark:text-slate-400">
+                        <span className={p.stock <= p.minStock ? "text-rose-600 dark:text-rose-400 font-bold" : ""}>
+                          {p.stock} {p.unit}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
 
-        <div style={styles.footer}>
-          <span style={styles.hint}>
-            [↑ ↓] Seleccionar · [Enter] Agregar a Venta · [Esc] Salir
-          </span>
-          <button type="button" onClick={onClose} style={styles.closeActionBtn}>
+        {/* Footer */}
+        <div className="bg-slate-50 dark:bg-slate-950 px-6 py-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <span>[↑ ↓] Seleccionar · [Enter] Agregar · [Esc] Salir</span>
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
+          >
             Cerrar
           </button>
         </div>
@@ -145,130 +168,3 @@ export function SearchProductModal({
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0, 0, 0, 0.75)",
-    backdropFilter: "blur(4px)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 9999,
-  },
-  modal: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: "16px",
-    width: "100%",
-    maxWidth: "750px",
-    maxHeight: "85vh",
-    display: "flex",
-    flexDirection: "column",
-    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.6)",
-    color: "#f8fafc",
-    overflow: "hidden",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "1rem 1.5rem",
-    borderBottom: "1px solid #334155",
-    background: "#0f172a",
-  },
-  title: {
-    margin: 0,
-    fontSize: "1.2rem",
-    fontWeight: "bold",
-  },
-  closeBtn: {
-    background: "transparent",
-    border: "none",
-    color: "#94a3b8",
-    fontSize: "1.2rem",
-    cursor: "pointer",
-  },
-  searchBar: {
-    padding: "1rem 1.5rem",
-    borderBottom: "1px solid #334155",
-    background: "#1e293b",
-  },
-  searchInput: {
-    width: "100%",
-    background: "#0f172a",
-    border: "2px solid #3b82f6",
-    borderRadius: "8px",
-    padding: "0.75rem 1rem",
-    fontSize: "1.05rem",
-    color: "#f8fafc",
-    outline: "none",
-    boxSizing: "border-box",
-  },
-  tableContainer: {
-    flex: 1,
-    overflowY: "auto",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: "0.9rem",
-  },
-  th: {
-    background: "#0f172a",
-    padding: "0.75rem 1rem",
-    color: "#94a3b8",
-    fontSize: "0.75rem",
-    textTransform: "uppercase",
-    borderBottom: "1px solid #334155",
-    textAlign: "left",
-  },
-  tr: {
-    cursor: "pointer",
-    borderBottom: "1px solid #334155",
-    transition: "background 0.1s ease",
-  },
-  trSelected: {
-    background: "#2563eb !important",
-    color: "#ffffff !important",
-  },
-  td: {
-    padding: "0.75rem 1rem",
-  },
-  tdMono: {
-    padding: "0.75rem 1rem",
-    fontFamily: "monospace",
-    color: "#94a3b8",
-  },
-  tdName: {
-    padding: "0.75rem 1rem",
-    fontWeight: 600,
-  },
-  empty: {
-    textAlign: "center",
-    padding: "3rem",
-    color: "#64748b",
-  },
-  footer: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "0.75rem 1.5rem",
-    borderTop: "1px solid #334155",
-    background: "#0f172a",
-  },
-  hint: {
-    fontSize: "0.8rem",
-    color: "#94a3b8",
-  },
-  closeActionBtn: {
-    background: "#334155",
-    border: "none",
-    borderRadius: "6px",
-    color: "#e2e8f0",
-    padding: "0.4rem 0.8rem",
-    fontSize: "0.85rem",
-    cursor: "pointer",
-  },
-};
