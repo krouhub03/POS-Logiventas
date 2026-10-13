@@ -420,12 +420,45 @@ export function SalesStationPage({
           e.preventDefault();
           setSelectedLineIndex((prev) => Math.max(0, prev - 1));
         }
+      } else if (
+        document.activeElement !== barcodeInputRef.current &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey
+      ) {
+        // CAPTURA GLOBAL DE ESCÁNER: Si el foco no está en el input, capturar el dígito/carácter y enfocar
+        e.preventDefault();
+        barcodeInputRef.current?.focus();
+        setBarcodeInput((prev) => prev + e.key);
+      } else if (e.key === "Enter" && document.activeElement !== barcodeInputRef.current) {
+        e.preventDefault();
+        handleBarcodeSubmit();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal]);
+  }, [isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput]);
+
+  // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
+  useEffect(() => {
+    const handleGlobalClick = (e: MouseEvent) => {
+      if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        !target.closest("button") &&
+        !target.closest("input") &&
+        !target.closest("select") &&
+        !target.closest("textarea")
+      ) {
+        barcodeInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("click", handleGlobalClick);
+    return () => window.removeEventListener("click", handleGlobalClick);
+  }, [isSearchOpen, isCobroOpen, isVariosOpen]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
