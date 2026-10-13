@@ -636,6 +636,23 @@ export function SettingsPage({
                       className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
                     />
                   </div>
+
+                  <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+                    <div>
+                      <div className="text-sm font-bold text-slate-900 dark:text-white">
+                        Permitir Venta sin Existencias (Stock Negativo)
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        Permite registrar ventas incluso si el inventario local está en 0
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings.allow_negative_stock === "true"}
+                      onChange={(e) => updateField("allow_negative_stock", String(e.target.checked))}
+                      className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
+                    />
+                  </div>
                 </div>
               </div>
             )}

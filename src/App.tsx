@@ -10,16 +10,32 @@ import "./App.css";
 
 function App() {
   const [terminalStatus, setTerminalStatus] = useState<TerminalStatus | null>(null);
-  const [activeCashier, setActiveCashier] = useState<CashierUser | null>(null);
+  const [activeCashier, setActiveCashier] = useState<CashierUser | null>(() => {
+    try {
+      const saved = localStorage.getItem("pos_active_cashier");
+      return saved ? (JSON.parse(saved) as CashierUser) : null;
+    } catch {
+      return null;
+    }
+  });
   const [currentView, setCurrentView] = useState<"sales" | "products" | "settings">("sales");
   const [loading, setLoading] = useState(true);
+
+  const handleSetCashier = (cashier: CashierUser | null) => {
+    setActiveCashier(cashier);
+    if (cashier) {
+      localStorage.setItem("pos_active_cashier", JSON.stringify(cashier));
+    } else {
+      localStorage.removeItem("pos_active_cashier");
+    }
+  };
 
   const cargarEstado = useCallback(async () => {
     try {
       const termStatus = await api.auth.getTerminalStatus();
       setTerminalStatus(termStatus);
       if (termStatus.activeCashier) {
-        setActiveCashier(termStatus.activeCashier);
+        handleSetCashier(termStatus.activeCashier);
       }
     } catch (e: unknown) {
       console.error("Error al cargar estado de terminal:", e);
@@ -66,7 +82,7 @@ function App() {
         initialErpUrl={terminalStatus?.erpUrl}
         onPaired={(newStatus) => {
           setTerminalStatus(newStatus);
-          setActiveCashier(null);
+          handleSetCashier(null);
         }}
       />
     );
@@ -77,10 +93,10 @@ function App() {
     return (
       <CashierLockScreen
         status={terminalStatus}
-        onUnlocked={(cashier) => setActiveCashier(cashier)}
+        onUnlocked={(cashier) => handleSetCashier(cashier)}
         onUnpaired={() => {
           setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
-          setActiveCashier(null);
+          handleSetCashier(null);
         }}
       />
     );
@@ -94,7 +110,7 @@ function App() {
         onBackToSales={() => setCurrentView("sales")}
         onUnpaired={() => {
           setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
-          setActiveCashier(null);
+          handleSetCashier(null);
         }}
       />
     );
@@ -106,7 +122,7 @@ function App() {
       <SalesStationPage
         cashier={activeCashier}
         terminalStatus={terminalStatus}
-        onLockTerminal={() => setActiveCashier(null)}
+        onLockTerminal={() => handleSetCashier(null)}
         onNavigateToProducts={() => setCurrentView("products")}
         onNavigateToSettings={() => setCurrentView("settings")}
       />

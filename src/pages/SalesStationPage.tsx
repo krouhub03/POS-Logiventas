@@ -3,6 +3,7 @@ import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput } fro
 import { api } from "../services/api";
 import { formatCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
+import { playScanSuccess, playStockWarning, playScanError } from "../lib/sound";
 import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
@@ -61,7 +62,10 @@ export function SalesStationPage({
   const [isVariosOpen, setIsVariosOpen] = useState(false);
 
   // Estado de feedback / notificación rápida
-  const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    msg: string;
+  } | null>(null);
 
   // Ticket activo actual
   const currentTicket = tickets.find((t) => t.id === activeTicketId) || tickets[0];
@@ -74,9 +78,12 @@ export function SalesStationPage({
   const totalPieces = cartLines.reduce((acc, l) => acc + l.quantity, 0);
   const totalItemsCount = cartLines.length;
 
-  const showFeedback = (msg: string) => {
-    setFeedbackMsg(msg);
-    setTimeout(() => setFeedbackMsg(null), 3000);
+  const showFeedback = (
+    msg: string,
+    type: "success" | "warning" | "error" | "info" = "info"
+  ) => {
+    setFeedback({ type, msg });
+    setTimeout(() => setFeedback(null), 4000);
   };
 
   // Enfoque continuo al input de código
@@ -213,32 +220,67 @@ export function SalesStationPage({
       }
     }
 
+    const handleProductScanned = (product: Product, quantity = 1) => {
+      const lineEnTicket = cartLines.find((l) => l.productId === product.id);
+      const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
+      const stockRestante = product.stock - yaEnTicket;
+
+      if (product.stock <= 0) {
+        playStockWarning();
+        showFeedback(
+          `⚠️ DISPONIBILIDAD AGOTADA: "${product.name}" no tiene existencias (Stock: 0 ${product.unit}).`,
+          "warning"
+        );
+      } else if (stockRestante < quantity) {
+        playStockWarning();
+        showFeedback(
+          `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit} (ya tienes ${yaEnTicket} en ticket).`,
+          "warning"
+        );
+      } else {
+        playScanSuccess();
+        const nuevoRestante = product.stock - yaEnTicket - quantity;
+        showFeedback(
+          `✅ + ${quantity} × ${product.name} (Disponibles en tienda: ${nuevoRestante} ${product.unit})`,
+          "success"
+        );
+      }
+
+      addProductToTicket(product, quantity);
+    };
+
     try {
       const direct = await api.products.findByBarcode(queryCode);
       if (direct) {
-        addProductToTicket(direct, qty);
+        handleProductScanned(direct, qty);
         setBarcodeInput("");
-        showFeedback(`+ ${qty} × ${direct.name}`);
         return;
       }
 
       const products = await api.products.list(queryCode);
-      const match = products.find(
-        (p) => p.barcode?.toLowerCase() === queryCode.toLowerCase() || p.sku.toLowerCase() === queryCode.toLowerCase()
-      ) || (products.length === 1 ? products[0] : null);
+      const match =
+        products.find(
+          (p) =>
+            p.barcode?.toLowerCase() === queryCode.toLowerCase() ||
+            p.sku.toLowerCase() === queryCode.toLowerCase()
+        ) || (products.length === 1 ? products[0] : null);
 
       if (match) {
-        addProductToTicket(match, qty);
+        handleProductScanned(match, qty);
         setBarcodeInput("");
-        showFeedback(`+ ${qty} × ${match.name}`);
       } else if (products.length > 1) {
         setIsSearchOpen(true);
       } else {
-        showFeedback(`⚠️ No se encontró el producto: ${queryCode}`);
+        playScanError();
+        showFeedback(
+          `❌ Producto no encontrado: "${queryCode}". Presione F10 para buscar o F3 para crearlo.`,
+          "error"
+        );
       }
     } catch (err) {
       console.error("Error buscando producto:", err);
-      showFeedback("Error al buscar producto");
+      playScanError();
+      showFeedback("Error al buscar producto", "error");
     } finally {
       focusInput();
     }
@@ -608,11 +650,35 @@ export function SalesStationPage({
         </div>
       </div>
 
-      {/* FEEDBACK TOAST */}
-      {feedbackMsg && (
-        <div className="bg-emerald-50 dark:bg-slate-800/95 border-b border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-300 px-4 py-1.5 text-xs font-semibold flex items-center justify-between animate-in fade-in slide-in-from-top-1">
-          <span>{feedbackMsg}</span>
-          <button onClick={() => setFeedbackMsg(null)} className="text-slate-400 hover:text-slate-600 dark:hover:text-white">
+      {/* FEEDBACK TOAST MULTI-COLOR CON SONIDO */}
+      {feedback && (
+        <div
+          className={`px-4 py-2 text-xs font-semibold flex items-center justify-between border-b animate-in fade-in slide-in-from-top-1 transition-colors ${
+            feedback.type === "success"
+              ? "bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-200"
+              : feedback.type === "warning"
+              ? "bg-amber-50 dark:bg-amber-950/80 border-amber-300 dark:border-amber-500/40 text-amber-900 dark:text-amber-200"
+              : feedback.type === "error"
+              ? "bg-rose-50 dark:bg-rose-950/80 border-rose-300 dark:border-rose-500/40 text-rose-900 dark:text-rose-200"
+              : "bg-sky-50 dark:bg-slate-800/95 border-sky-300 dark:border-slate-700 text-sky-900 dark:text-slate-200"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span>
+              {feedback.type === "success"
+                ? "🟢"
+                : feedback.type === "warning"
+                ? "🟡"
+                : feedback.type === "error"
+                ? "🔴"
+                : "ℹ️"}
+            </span>
+            <span>{feedback.msg}</span>
+          </div>
+          <button
+            onClick={() => setFeedback(null)}
+            className="text-slate-400 hover:text-slate-700 dark:hover:text-white ml-4"
+          >
             ✕
           </button>
         </div>
@@ -682,19 +748,23 @@ export function SalesStationPage({
                       <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                         {formatCents(line.totalCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center text-slate-600 dark:text-slate-400">
+                      <td className="py-2.5 px-3 text-center">
                         {line.currentStock !== undefined ? (
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[11px] ${
-                              line.currentStock <= 5
-                                ? "bg-rose-100 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/40"
-                                : "text-slate-600 dark:text-slate-400"
-                            }`}
-                          >
-                            {line.currentStock}
-                          </span>
+                          line.currentStock <= 0 ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 font-sans uppercase tracking-wide">
+                              Agotado (0)
+                            </span>
+                          ) : line.currentStock <= 5 ? (
+                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800/60 font-mono">
+                              Bajo ({line.currentStock})
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 dark:text-emerald-400 font-bold font-mono">
+                              {line.currentStock}
+                            </span>
+                          )
                         ) : (
-                          "—"
+                          <span className="text-slate-400">—</span>
                         )}
                       </td>
                     </tr>
