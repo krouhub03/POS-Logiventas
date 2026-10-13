@@ -36,3 +36,17 @@ pub struct OutboxBatchResult {
     pub synced: usize,
     pub failed: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PaymentMethodDto {
+    pub id: String,
+    pub code: String,
+    pub erp_code: String,
+    pub name: String,
+    pub r#type: String,
+    pub puc_code: Option<String>,
+    pub puc_account_id: Option<String>,
+    pub puc_account_name: Option<String>,
+    pub active: i64,
+}

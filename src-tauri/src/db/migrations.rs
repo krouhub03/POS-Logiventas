@@ -13,6 +13,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0005_sync_queue.sql"),
     include_str!("../../migrations/0006_product_erp_id.sql"),
     include_str!("../../migrations/0007_product_sync_flag.sql"),
+    include_str!("../../migrations/0008_payment_methods.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {

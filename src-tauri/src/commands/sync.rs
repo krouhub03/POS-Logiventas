@@ -6,7 +6,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::sync::{
-    CheckStockItemInput, OutboxBatchResult, SyncStatusDto, VerifyStockResult,
+    CheckStockItemInput, OutboxBatchResult, PaymentMethodDto, SyncStatusDto, VerifyStockResult,
 };
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
@@ -347,11 +347,12 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         .as_array()
         .ok_or_else(|| AppError::Validation("Formato inválido de productos recibido del ERP".into()))?;
 
-    let mut conn = db.conn()?;
-    let tx = conn.transaction()?;
-    let mut total_synced = 0;
+    let total_synced = {
+        let mut conn = db.conn()?;
+        let tx = conn.transaction()?;
+        let mut total_synced = 0;
 
-    let mut sorted_products = products_array.clone();
+        let mut sorted_products = products_array.clone();
     sorted_products.sort_by_key(|p| if p["active"].as_i64().unwrap_or(1) == 1 { 0 } else { 1 });
 
     let mut used_barcodes = std::collections::HashSet::<String>::new();
@@ -541,12 +542,17 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         }
     }
 
-    tx.execute(
-        "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = datetime('now')",
-        [],
-    )?;
+        tx.execute(
+            "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = datetime('now')",
+            [],
+        )?;
 
-    tx.commit()?;
+        tx.commit()?;
+        Ok::<usize, AppError>(total_synced)
+    }?;
+
+    // Sincronizar también los medios de pago vinculados con sus cuentas PUC
+    let _ = sync_payment_methods_internal(db).await;
 
     Ok(total_synced)
 }
@@ -554,6 +560,125 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
 #[tauri::command]
 pub async fn sync_catalog_from_erp(db: State<'_, Db>) -> AppResult<usize> {
     sync_catalog_internal(&db).await
+}
+
+/// 💳 Sincroniza medios de pago y sus cuentas PUC desde el ERP hacia SQLite local.
+pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if token.is_empty() {
+        return Ok(0);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/sync/medios-pago", erp_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await;
+
+    let res = match resp {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(0),
+    };
+
+    let json: Value = res.json().await.unwrap_or_default();
+    let payment_methods = match json["data"]["payment_methods"].as_array() {
+        Some(arr) => arr,
+        None => return Ok(0),
+    };
+
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let mut synced_count = 0;
+    for pm in payment_methods {
+        let id = pm["id"].as_str().unwrap_or_default();
+        let code = pm["code"].as_str().unwrap_or_default();
+        let erp_code = pm["erp_code"].as_str().unwrap_or_default();
+        let name = pm["name"].as_str().unwrap_or_default();
+        let pm_type = pm["type"].as_str().unwrap_or_default();
+        let puc_code = pm["puc_code"].as_str();
+        let puc_account_id = pm["puc_account_id"].as_str();
+        let puc_account_name = pm["puc_account_name"].as_str();
+        let active = pm["active"].as_i64().unwrap_or(1);
+
+        if !code.is_empty() {
+            tx.execute(
+                "INSERT INTO payment_methods (id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))
+                 ON CONFLICT(code) DO UPDATE SET
+                    id = excluded.id,
+                    erp_code = excluded.erp_code,
+                    name = excluded.name,
+                    type = excluded.type,
+                    puc_code = excluded.puc_code,
+                    puc_account_id = excluded.puc_account_id,
+                    puc_account_name = excluded.puc_account_name,
+                    active = excluded.active,
+                    updated_at = datetime('now')",
+                params![
+                    id,
+                    code,
+                    erp_code,
+                    name,
+                    pm_type,
+                    puc_code,
+                    puc_account_id,
+                    puc_account_name,
+                    active
+                ],
+            )?;
+            synced_count += 1;
+        }
+    }
+
+    tx.commit()?;
+    Ok(synced_count)
+}
+
+#[tauri::command]
+pub async fn sync_payment_methods(db: State<'_, Db>) -> AppResult<usize> {
+    sync_payment_methods_internal(&db).await
+}
+
+#[tauri::command]
+pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMethodDto>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active
+         FROM payment_methods
+         ORDER BY name ASC",
+    )?;
+
+    let rows = stmt.query_map([], |r| {
+        Ok(PaymentMethodDto {
+            id: r.get(0)?,
+            code: r.get(1)?,
+            erp_code: r.get(2)?,
+            name: r.get(3)?,
+            r#type: r.get(4)?,
+            puc_code: r.get(5)?,
+            puc_account_id: r.get(6)?,
+            puc_account_name: r.get(7)?,
+            active: r.get(8)?,
+        })
+    })?;
+
+    let mut list = Vec::new();
+    for r in rows {
+        list.push(r?);
+    }
+    Ok(list)
 }
 
 /// 📤 Despacha las ventas pendientes en la cola outbox (sync_queue) hacia el ERP.

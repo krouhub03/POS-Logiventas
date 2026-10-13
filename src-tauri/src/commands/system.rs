@@ -45,3 +45,9 @@ pub fn minimize_window(window: tauri::Window) -> AppResult<()> {
     Ok(())
 }
 
+/// Reiniciar la aplicación (útil tras instalar actualizaciones).
+#[tauri::command]
+pub fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+

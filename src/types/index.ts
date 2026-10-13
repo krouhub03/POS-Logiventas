@@ -221,3 +221,15 @@ export interface OutboxBatchResult {
   failed: number;
 }
 
+export interface PaymentMethod {
+  id: string;
+  code: string;
+  erpCode: string;
+  name: string;
+  type: string;
+  pucCode: string | null;
+  pucAccountId: string | null;
+  pucAccountName: string | null;
+  active: number;
+}
+

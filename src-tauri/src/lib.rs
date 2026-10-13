@@ -9,10 +9,15 @@ use crate::db::Db;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // Updater: habilitar cuando existan `pubkey` y `endpoints` en tauri.conf.json
-        // (ver README > "Actualizaciones automáticas").
-        //    .plugin(tauri_plugin_updater::Builder::new().build())
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join("logiventa.db");
@@ -27,6 +32,7 @@ pub fn run() {
             commands::system::toggle_fullscreen,
             commands::system::set_fullscreen,
             commands::system::minimize_window,
+            commands::system::restart_app,
             commands::products::list_products,
             commands::products::find_product_by_barcode,
             commands::products::get_product,
@@ -56,6 +62,8 @@ pub fn run() {
             commands::sync::dispatch_sync_outbox,
             commands::sync::pull_inventory_deltas,
             commands::sync::get_sync_status,
+            commands::sync::sync_payment_methods,
+            commands::sync::get_payment_methods,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

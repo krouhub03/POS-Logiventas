@@ -212,10 +212,19 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         "createdAt": &created_at,
         "items": payload_items,
         "payments": input.payments.iter().map(|p| {
+            let (cuenta_puc_id, puc_code, erp_code): (Option<String>, Option<String>, Option<String>) = tx.query_row(
+                "SELECT puc_account_id, puc_code, erp_code FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
+                params![p.method],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).unwrap_or((None, None, None));
+
             serde_json::json!({
                 "method": p.method,
                 "amountCents": p.amount_cents,
-                "reference": p.reference
+                "reference": p.reference,
+                "cuentaPucId": cuenta_puc_id,
+                "pucCode": puc_code,
+                "erpCode": erp_code
             })
         }).collect::<Vec<_>>()
     });

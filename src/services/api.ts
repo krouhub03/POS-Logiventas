@@ -11,6 +11,7 @@ import type {
   PairCodeInput,
   PairLoginInput,
   PairLoginResult,
+  PaymentMethod,
   Product,
   SaleReceipt,
   StockAdjustmentInput,
@@ -90,6 +91,8 @@ export const api = {
     dispatchOutbox: () => invoke<OutboxBatchResult>("dispatch_sync_outbox"),
     pullDeltas: () => invoke<number>("pull_inventory_deltas"),
     getStatus: () => invoke<SyncStatus>("get_sync_status"),
+    syncPaymentMethods: () => invoke<number>("sync_payment_methods"),
+    getPaymentMethods: () => invoke<PaymentMethod[]>("get_payment_methods"),
     onStatusChange: (callback: (status: SyncStatus) => void): Promise<UnlistenFn> =>
       listen<SyncStatus>("sync-status-changed", (event) => callback(event.payload)),
   },
