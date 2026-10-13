@@ -1,15 +1,16 @@
 mod migrations;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
 
 /// Estado global con la conexión SQLite, administrado por Tauri (`app.manage`).
+#[derive(Clone)]
 pub struct Db {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
     path: PathBuf,
 }
 
@@ -29,7 +30,7 @@ impl Db {
         migrations::run(&mut conn)?;
 
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
             path: path.to_path_buf(),
         })
     }

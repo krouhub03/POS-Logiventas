@@ -160,21 +160,40 @@ Las migraciones residen en `src-tauri/migrations/`.
 
 ---
 
-## 🔄 5. Integración y Sincronización con Megalider ERP
+## 🔄 5. Integración y Sincronización Automática con Megalider ERP
 
 1. **Emparejamiento Seguro (M2M Pairing)**:
    - La terminal se vincula a una empresa y caja registrada en el ERP mediante código de un solo uso o credenciales de administrador.
-   - Las credenciales M2M se guardan localmente en la tabla `settings`.
-2. **Sync Outbox**:
-   - Cada venta local confirmada en SQLite genera una entrada en la cola de sincronización.
-   - Cuando hay conectividad, un proceso despacha las ventas hacia el ERP.
-   - Al recibirse en el ERP, se dispara el **Motor Contable v6.2**, generando asientos de partida doble con hash criptográfico SHA-256 encadenado.
-3. **Catálogo y Precios**:
-   - Las actualizaciones de precios en la nube se descargan periódicamente a la tabla `products` local sin bloquear la pantalla de ventas en uso.
+   - Las credenciales M2M (`empresa_id`, `caja_id`, `api_token`, `api_url`) se guardan localmente en la tabla `settings`.
+   - La caja en el ERP se vincula a una bodega específica para debitar y consultar inventarios reales.
+
+2. **Demonio Asíncrono de Sincronización en Rust (`Sync Daemon`)**:
+   - Corre en segundo plano como tarea concurrente de Tauri (`tauri::async_runtime::spawn`) cada 15 segundos sin bloquear la interfaz.
+   - **Envío de Ventas Locales (Outbox Dispatch)**:
+     - Cada venta local confirmada en SQLite se almacena atómicamente en `sync_queue`.
+     - El demonio despacha las ventas acumuladas hacia `POST /api/pos/v1/sync/ventas`.
+     - Al procesarse en el ERP, se descuenta el stock de la bodega vinculada y se integra con el **Motor Contable v6.2**.
+   - **Catálogo Bidireccional (`Sync Catalog`)**:
+     - **Subida de Altas Locales**: Los productos creados en el POS (`needs_erp_upload = 1`) se envían a `POST /api/pos/v1/sync/productos`, recibiendo su `erp_id` definitivo y registrando inventario inicial en el ERP.
+     - **Descarga y Bajas Remotas**: Consume `GET /api/pos/v1/sync/productos`. Los productos eliminados o desactivados en el ERP (`activo = false`) se marcan con `active = 0` en la base SQLite local, ocultándolos inmediatamente de las búsquedas sin comprometer la integridad histórica.
+   - **Notificaciones Reactivas al Frontend**:
+     - El demonio emite el evento IPC `sync-status-changed` con `{ isOnline, pendingCount, lastSyncedAt }`.
+     - La cabecera del POS refleja el estado en tiempo real con distintivos dinámicos: *"Al día"*, *"Sincronizando (N)"*, o *"Modo local (N)"*, además de un botón de sincronización manual bajo demanda (`🔄`).
 
 ---
 
-## 🎨 6. Sistema Estándar de Modales UI
+## 🖥️ 6. Diseño Ergonómico de Cabecera y Controles de Ventana
+
+1. **Cabecera Optimizada para Terminal POS**:
+   - Diseño limpio y libre de elementos distractores o logos redundantes, maximizando el espacio útil para el visor de ticket y cobro.
+   - Atajos directos a módulos clave: `F1` Ventas, `F2` Clientes, `F3` Productos, `F4` Inventario, `F7` Configuración.
+2. **Controles de Ventana Icon-Only**:
+   - **Alternar Pantalla Completa (`⛶` / F11)**: Invoca el comando nativo `toggle_fullscreen` de Tauri, ocultando la barra de tareas de Windows para una experiencia inmersiva tipo kiosco.
+   - **Minimizar Ventana (`—`)**: Invoca `minimize_window` de forma compacta para permitir alternar entre ventanas del sistema operativo cuando no existe barra de título tradicional.
+
+---
+
+## 🎨 7. Sistema Estándar de Modales UI
 
 Siguiendo las directivas de experiencia de usuario:
 - Queda terminantemente prohibido invocar `window.alert()` y `window.confirm()`.

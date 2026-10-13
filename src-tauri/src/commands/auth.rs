@@ -49,6 +49,15 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
 // HTTP Helpers (Async - Sin referencias a rusqlite::Connection)
 // ─────────────────────────────────────────────────────────────
 
+fn internal_unpair(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    set_setting(conn, "pairing_status", "unpaired")?;
+    set_setting(conn, "terminal_token", "")?;
+    set_setting(conn, "caja_id", "")?;
+    set_setting(conn, "caja_nombre", "")?;
+    set_setting(conn, "caja_codigo", "")?;
+    Ok(())
+}
+
 async fn http_fetch_users(erp_url: &str, token: &str) -> AppResult<Value> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -372,10 +381,71 @@ pub fn login_cashier_pin(db: State<'_, Db>, pin: String) -> AppResult<CashierUse
 #[tauri::command]
 pub fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     let conn = db.conn()?;
-    set_setting(&conn, "pairing_status", "unpaired")?;
-    set_setting(&conn, "terminal_token", "")?;
-    set_setting(&conn, "caja_id", "")?;
-    set_setting(&conn, "caja_nombre", "")?;
-    set_setting(&conn, "caja_codigo", "")?;
+    internal_unpair(&conn)?;
     Ok(fetch_status_sync(&conn))
 }
+
+/// Valida periódicamente con el ERP si la caja sigue activa.
+/// Si la caja fue eliminada o revocada en el ERP (401, 403, 404),
+/// la terminal se auto-desvincula localmente de inmediato para prevenir uso indebido.
+#[tauri::command]
+pub async fn validate_terminal_session(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    let (erp_url, token, is_paired) = {
+        let conn = db.conn()?;
+        let status = fetch_status_sync(&conn);
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (status.erp_url, token, status.is_paired)
+    };
+
+    if !is_paired || token.is_empty() {
+        let conn = db.conn()?;
+        return Ok(fetch_status_sync(&conn));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
+    let res_opt = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await;
+
+    match res_opt {
+        Ok(res) => {
+            let status_code = res.status();
+            // 401 (no autorizada/revocada), 403, 404 (caja eliminada)
+            if status_code == reqwest::StatusCode::UNAUTHORIZED
+                || status_code == reqwest::StatusCode::FORBIDDEN
+                || status_code == reqwest::StatusCode::NOT_FOUND
+            {
+                let conn = db.conn()?;
+                internal_unpair(&conn)?;
+                return Ok(fetch_status_sync(&conn));
+            }
+
+            if status_code.is_success() {
+                if let Ok(json) = res.json::<Value>().await {
+                    let is_active = json["data"]["activo"].as_bool().unwrap_or(true);
+                    let caja_estado = json["data"]["caja"]["estado"].as_str().unwrap_or("ACTIVA");
+                    if !is_active || caja_estado != "ACTIVA" {
+                        let conn = db.conn()?;
+                        internal_unpair(&conn)?;
+                        return Ok(fetch_status_sync(&conn));
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            // Falla de red transitoria: NO desvincular para mantener la política Offline-First
+            // pero logueamos advertencia.
+            eprintln!("[WARN POS] Error temporal al contactar ERP: {e}");
+        }
+    }
+
+    let conn = db.conn()?;
+    Ok(fetch_status_sync(&conn))
+}
+

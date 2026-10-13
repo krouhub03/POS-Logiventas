@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput } from "../types";
+import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus } from "../types";
 import { api } from "../services/api";
-import { formatCents } from "../lib/money";
+import { formatCents, calculateTaxCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
 import { playScanSuccess, playStockWarning, playScanError } from "../lib/sound";
@@ -115,6 +115,32 @@ export function SalesStationPage({
     type: "success" | "warning" | "error" | "info";
     msg: string;
   } | null>(null);
+
+  // Estado de sincronización en tiempo real y outbox
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Escuchar eventos en tiempo real del Daemon de Sincronización continua de Rust
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    // Cargar estado inicial
+    api.sync.getStatus().then(setSyncStatus).catch(console.warn);
+
+    // Suscribirse a eventos automáticos emitidos por el Daemon de Rust
+    api.sync
+      .onStatusChange((status) => {
+        setSyncStatus(status);
+      })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(console.warn);
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   // Ticket activo actual
   const currentTicket = tickets.find((t) => t.id === activeTicketId) || tickets[0];
@@ -232,7 +258,7 @@ export function SalesStationPage({
       const existing = updatedLines[existingIndex];
       const newQty = existing.quantity + quantity;
       const newSubtotal = Math.round(existing.unitPriceCents * newQty);
-      const newTax = Math.round((newSubtotal * existing.taxRateBp + 5000) / 10000);
+      const newTax = calculateTaxCents(newSubtotal, existing.taxRateBp);
       const newTotal = newSubtotal + newTax;
 
       updatedLines[existingIndex] = {
@@ -246,7 +272,7 @@ export function SalesStationPage({
       setSelectedLineIndex(existingIndex);
     } else {
       const unitSubtotal = Math.round(product.priceCents * quantity);
-      const unitTax = Math.round((unitSubtotal * product.taxRateBp + 5000) / 10000);
+      const unitTax = calculateTaxCents(unitSubtotal, product.taxRateBp);
       const newLine: CartLine = {
         id: `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         productId: product.id,
@@ -362,7 +388,7 @@ export function SalesStationPage({
     const target = updated[selectedLineIndex];
     const newQty = Math.max(0.01, target.quantity + delta);
     const newSubtotal = Math.round(target.unitPriceCents * newQty);
-    const newTax = Math.round((newSubtotal * target.taxRateBp + 5000) / 10000);
+    const newTax = calculateTaxCents(newSubtotal, target.taxRateBp);
 
     updated[selectedLineIndex] = {
       ...target,
@@ -440,6 +466,8 @@ export function SalesStationPage({
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
       setIsCobroOpen(false);
       focusInput();
+      // Notificar al outbox dispatcher de inmediato para subida rápida
+      api.sync.dispatchOutbox().catch(console.warn);
     } catch (err: unknown) {
       console.error("Error registrando venta:", err);
       modalAlert({
@@ -449,6 +477,99 @@ export function SalesStationPage({
       });
     }
   };
+
+  // Pre-verificación de stock crítico y apertura de cobro
+  const handleOpenCobro = async () => {
+    if (cartLines.length === 0) {
+      showFeedback("⚠️ No hay productos en el ticket para cobrar", "warning");
+      return;
+    }
+
+    const physicalItems = cartLines
+      .filter((l) => l.productId != null)
+      .map((l) => ({ productId: l.productId!, quantity: l.quantity }));
+
+    if (physicalItems.length > 0) {
+      try {
+        const check = await api.sync.verifyStock(physicalItems);
+        if (!check.ok) {
+          playScanError();
+          const prodName = check.productName ? `"${check.productName}"` : "este producto";
+          const disp = check.stockDisponible ?? 0;
+
+          if (check.motivo === "PRODUCTO_AGOTADO" || disp <= 0) {
+            modalAlert({
+              title: "Producto Agotado",
+              message: `No hay existencias disponibles de ${prodName} en el inventario. Por favor retírelo del ticket para continuar.`,
+              variant: "warning",
+            });
+            return;
+          }
+
+          if (check.motivo === "RESERVADO_OTRA_CAJA") {
+            modalAlert({
+              title: "Producto No Disponible",
+              message: `La última unidad disponible de ${prodName} acaba de ser cobrada o seleccionada en otra caja. Por favor retírelo del ticket.`,
+              variant: "warning",
+            });
+            return;
+          }
+
+          if (check.motivo === "STOCK_INSUFICIENTE") {
+            modalAlert({
+              title: "Existencias Insuficientes",
+              message: `Solo hay ${disp} unidad(es) disponible(s) de ${prodName}. Por favor ajuste la cantidad en el ticket.`,
+              variant: "warning",
+            });
+            return;
+          }
+
+          modalAlert({
+            title: "Producto No Disponible",
+            message: `No es posible procesar ${prodName} en este momento porque no hay existencias suficientes.`,
+            variant: "warning",
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn("Error en verifyStock:", err);
+      }
+    }
+
+    setIsCobroOpen(true);
+  };
+
+  // Cierre de modal de cobro y liberación de reservas
+  const handleCloseCobro = async () => {
+    setIsCobroOpen(false);
+    try {
+      await api.sync.releaseStock();
+    } catch (err) {
+      console.warn("Error liberando reserva:", err);
+    }
+    focusInput();
+  };
+
+  // Sincronización manual bajo demanda (catálogo y outbox)
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    try {
+      showFeedback("Sincronizando catálogo y ventas con el ERP...", "info");
+      await api.sync.dispatchOutbox();
+      const count = await api.sync.syncCatalog();
+      const status = await api.sync.getStatus();
+      setSyncStatus(status);
+      showFeedback(`✅ Sincronizado: ${count} productos actualizados`, "success");
+    } catch (err: unknown) {
+      console.error("Error en sincronización manual:", err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showFeedback(`Error al sincronizar con el ERP: ${errMsg}`, "error");
+    } finally {
+      setIsSyncing(false);
+      focusInput();
+    }
+  };
+
 
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
@@ -467,11 +588,7 @@ export function SalesStationPage({
         setIsSearchOpen(true);
       } else if (e.key === "F12" || (e.code === "Space" && e.ctrlKey)) {
         e.preventDefault();
-        if (cartLines.length > 0) {
-          setIsCobroOpen(true);
-        } else {
-          showFeedback("⚠️ No hay productos en el ticket para cobrar");
-        }
+        handleOpenCobro();
       } else if (e.key === "Insert") {
         e.preventDefault();
         setIsVariosOpen(true);
@@ -552,14 +669,6 @@ export function SalesStationPage({
       {/* 1. BARRA SUPERIOR DE MÓDULOS ESTILO ELEVENTA */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center justify-between shadow-sm transition-colors duration-150">
         <div className="flex items-center gap-1 sm:gap-2">
-          {/* Logo / Badge Megalider */}
-          <div className="flex items-center gap-2 mr-3 px-2.5 py-1 bg-gradient-to-r from-red-600 to-rose-700 rounded-lg text-white font-black text-xs tracking-wider shadow">
-            <span>ML</span>
-            <span className="text-xs uppercase font-semibold text-rose-100 tracking-normal hidden md:inline">
-              Megalider POS
-            </span>
-          </div>
-
           {/* Botones de Módulos (F1-F4) */}
           <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs shadow-sm hover:bg-emerald-500 transition-colors">
             <span className="bg-emerald-800/80 px-1.5 py-0.5 rounded text-[10px] font-mono">F1</span>
@@ -627,23 +736,53 @@ export function SalesStationPage({
           <button
             type="button"
             onClick={() => api.system.toggleFullscreen().catch(console.error)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
-            title="Alternar Pantalla Completa (F11) - Oculta la barra de tareas de Windows"
+            className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
+            title="Alternar Pantalla Completa (F11)"
           >
             <span className="text-sm">⛶</span>
-            <span className="hidden sm:inline text-[11px]">Pantalla Completa</span>
           </button>
 
           {/* BOTÓN MINIMIZAR (en pantalla completa no hay barra de título nativa) */}
           <button
             type="button"
             onClick={() => api.system.minimizeWindow().catch(console.error)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
+            className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
             title="Minimizar ventana"
           >
-            <span className="text-sm leading-none">—</span>
-            <span className="hidden sm:inline text-[11px]">Minimizar</span>
+            <span className="text-sm leading-none font-bold">—</span>
           </button>
+
+          {/* BADGE DE ESTADO DE CAJA Y CONEXIÓN */}
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            {syncStatus?.isOnline ? (
+              syncStatus.pendingCount > 0 ? (
+                <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium text-[11px]" title={`${syncStatus.pendingCount} venta(s) guardada(s) pendientes de sincronizar`}>
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                  Sincronizando ({syncStatus.pendingCount})
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]" title="Terminal al día con el inventario">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  Al día
+                </span>
+              )
+            ) : (
+              <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 font-medium text-[11px]" title="Ventas guardadas en esta terminal. Se actualizarán automáticamente al reconectar.">
+                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                Modo local {syncStatus?.pendingCount ? `(${syncStatus.pendingCount})` : ""}
+              </span>
+            )}
+
+            <button
+              type="button"
+              disabled={isSyncing}
+              onClick={handleManualSync}
+              className="ml-1 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors disabled:opacity-50"
+              title="Forzar sincronización de catálogo y ventas ahora"
+            >
+              <span className={isSyncing ? "animate-spin inline-block text-xs" : "text-xs"}>🔄</span>
+            </button>
+          </div>
 
           <div className="text-right hidden md:block">
             <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 justify-end">
@@ -967,9 +1106,7 @@ export function SalesStationPage({
           </div>
 
           <button
-            onClick={() => {
-              if (cartLines.length > 0) setIsCobroOpen(true);
-            }}
+            onClick={handleOpenCobro}
             disabled={cartLines.length === 0}
             className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xl uppercase tracking-wider flex items-center gap-3 shadow-xl shadow-emerald-700/30 dark:shadow-emerald-950/60 transition-all disabled:opacity-40 disabled:pointer-events-none border border-emerald-400/40"
           >
@@ -1009,10 +1146,7 @@ export function SalesStationPage({
       <CobroModal
         isOpen={isCobroOpen}
         totalCents={totalCents}
-        onClose={() => {
-          setIsCobroOpen(false);
-          focusInput();
-        }}
+        onClose={handleCloseCobro}
         onConfirm={handleProcessSale}
       />
     </div>

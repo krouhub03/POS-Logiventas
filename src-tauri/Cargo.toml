@@ -27,6 +27,7 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 thiserror = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 bcrypt = "0.16"
+tokio = { version = "1", features = ["time"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

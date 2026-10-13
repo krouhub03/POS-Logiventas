@@ -1,19 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
   CashierUser,
+  CheckStockItemInput,
   CreateSaleInput,
   InventoryMovement,
   NewProduct,
+  OutboxBatchResult,
   PairCodeInput,
   PairLoginInput,
   PairLoginResult,
   Product,
   SaleReceipt,
   StockAdjustmentInput,
+  SyncStatus,
   TerminalStatus,
   TodaySalesSummary,
   UpdateProductInput,
+  VerifyStockResult,
 } from "../types";
 
 /**
@@ -32,6 +37,7 @@ export const api = {
 
   auth: {
     getTerminalStatus: () => invoke<TerminalStatus>("get_terminal_status"),
+    validateSession: () => invoke<TerminalStatus>("validate_terminal_session"),
     pairCode: (input: PairCodeInput) =>
       invoke<TerminalStatus>("pair_terminal_code", { input }),
     pairLogin: (input: PairLoginInput) =>
@@ -73,5 +79,18 @@ export const api = {
       invoke<void>("update_settings", { settings }),
     testPrintTicket: () => invoke<string>("test_print_ticket"),
     testOpenDrawer: () => invoke<string>("test_open_drawer"),
+  },
+
+  sync: {
+    verifyStock: (items: CheckStockItemInput[]) =>
+      invoke<VerifyStockResult>("verify_and_reserve_stock", { items }),
+    releaseStock: (productId?: number) =>
+      invoke<void>("release_stock_reservation", { productId }),
+    syncCatalog: () => invoke<number>("sync_catalog_from_erp"),
+    dispatchOutbox: () => invoke<OutboxBatchResult>("dispatch_sync_outbox"),
+    pullDeltas: () => invoke<number>("pull_inventory_deltas"),
+    getStatus: () => invoke<SyncStatus>("get_sync_status"),
+    onStatusChange: (callback: (status: SyncStatus) => void): Promise<UnlistenFn> =>
+      listen<SyncStatus>("sync-status-changed", (event) => callback(event.payload)),
   },
 };

@@ -110,18 +110,24 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
         let item_row_id = tx.last_insert_rowid();
 
-        // Si es producto físico registrado (no servicio), descontar inventario y registrar movimiento
+        // Si es producto físico registrado (no servicio), verificar y descontar inventario
         if let Some(pid) = it.product_id {
-            let is_service: bool = tx
+            let (is_service, current_stock): (i64, f64) = tx
                 .query_row(
-                    "SELECT is_service FROM products WHERE id = ?1",
+                    "SELECT is_service, stock FROM products WHERE id = ?1",
                     params![pid],
-                    |r| r.get::<_, i64>(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .map(|val| val != 0)
-                .unwrap_or(false);
+                .unwrap_or((0, 0.0));
 
-            if !is_service {
+            if is_service == 0 {
+                if current_stock < it.quantity {
+                    return Err(AppError::Validation(format!(
+                        "Stock local insuficiente para '{}'. Disponible: {}, Solicitado: {}",
+                        it.description, current_stock, it.quantity
+                    )));
+                }
+
                 tx.execute(
                     "UPDATE products SET stock = stock - ?1, updated_at = datetime('now') WHERE id = ?2",
                     params![it.quantity, pid],
@@ -160,6 +166,45 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         "SELECT created_at FROM sales WHERE id = ?1",
         params![sale_id],
         |r| r.get(0),
+    )?;
+
+    // 5. Inserción en outbox (sync_queue) dentro de la misma transacción ACID
+    let sale_payload = serde_json::json!({
+        "id": sale_id,
+        "folio": &folio,
+        "userId": input.user_id,
+        "customerId": input.customer_id,
+        "subtotalCents": subtotal_cents,
+        "discountCents": discount_cents,
+        "taxCents": tax_cents,
+        "totalCents": total_cents,
+        "status": "completed",
+        "createdAt": &created_at,
+        "items": input.items.iter().map(|it| {
+            serde_json::json!({
+                "productId": it.product_id.map(|id| id.to_string()),
+                "sku": it.sku,
+                "barcode": it.barcode,
+                "description": it.description,
+                "quantity": it.quantity,
+                "unitPriceCents": it.unit_price_cents,
+                "taxRateBp": it.tax_rate_bp.unwrap_or(0),
+                "discountCents": it.discount_cents.unwrap_or(0),
+                "totalCents": ((it.quantity * it.unit_price_cents as f64).round() as i64)
+            })
+        }).collect::<Vec<_>>(),
+        "payments": input.payments.iter().map(|p| {
+            serde_json::json!({
+                "method": p.method,
+                "amountCents": p.amount_cents,
+                "reference": p.reference
+            })
+        }).collect::<Vec<_>>()
+    });
+
+    tx.execute(
+        "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('sale', ?1, ?2, 'pending')",
+        params![sale_id, sale_payload.to_string()],
     )?;
 
     tx.commit()?;

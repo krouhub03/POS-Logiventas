@@ -188,3 +188,36 @@ export interface TodaySalesSummary {
 
 export type PosSettings = Record<string, string>;
 
+/* ==============================================================
+   Modelos de Sincronización y Control de Stock Multi-Caja
+   ============================================================== */
+
+export interface CheckStockItemInput {
+  productId: number;
+  quantity: number;
+}
+
+export interface VerifyStockResult {
+  ok: boolean;
+  motivo?: "STOCK_INSUFICIENTE" | "STOCK_LOCAL_AGOTADO" | "OFFLINE_STRICT_BLOCKED" | string;
+  productId?: number;
+  productName?: string;
+  stockDisponible?: number;
+  offlineWarning?: boolean;
+}
+
+export interface SyncStatus {
+  isPaired: boolean;
+  isOnline: boolean;
+  pendingCount: number;
+  lastSyncAt?: string;
+  offlinePolicy: "strict" | "flexible" | string;
+  criticalThreshold: number;
+}
+
+export interface OutboxBatchResult {
+  dispatched: number;
+  synced: number;
+  failed: number;
+}
+

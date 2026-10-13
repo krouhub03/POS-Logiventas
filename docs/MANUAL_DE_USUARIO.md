@@ -14,6 +14,7 @@ Guía visual y paso a paso para cajeros, supervisores y administradores de punto
 6. [Catálogo de Productos y Servicios](#6-catálogo-de-productos-y-servicios)
 7. [Ajustes de Inventario y Existencias](#7-ajustes-de-inventario-y-existencias)
 8. [Configuración de Periféricos (Impresora y Cajón)](#8-configuración-de-periféricos-impresora-y-cajón)
+9. [Sincronización Automática con el ERP y Controles de Pantalla](#9-sincronización-automática-con-el-erp-y-controles-de-pantalla)
 
 ---
 
@@ -125,4 +126,28 @@ Presiona **`F7`** para configurar tu hardware comercial:
 
 - **Impresora Térmica**: Selecciona el ancho de papel (58 mm para tickets pequeños o 80 mm para estándar), el puerto de conexión (USB / COM / Red) y presiona **"Imprimir Ticket de Prueba"**.
 - **Cajón Portamonedas**: Activa la apertura automática al cobrar en efectivo y usa el botón **"Abrir Cajón de Prueba"** para verificar el pulso RJ11.
-- **Pantalla Completa (`F11`)**: Actívala para ocultar la barra de tareas de Windows y trabajar en modo estación dedicada.
+
+---
+
+## 9. Sincronización Automática con el ERP y Controles de Pantalla
+
+El sistema opera de forma transparente y bidireccional con el ERP central en la nube (**Megalider**):
+
+### A. Sincronización en Segundo Plano Automática
+- **Catálogo y Precios**: Cada vez que se crean, modifican o ajustan precios en el ERP, el POS actualiza automáticamente su base local cada pocos segundos.
+- **Bajas y Eliminaciones**: Si un producto es eliminado o marcado como inactivo en el ERP, se oculta de forma inmediata de las búsquedas de caja (`F10`) en el POS para prevenir cobros de mercancía descontinuada.
+- **Nuevos Productos Creados en Caja**: Si registras un nuevo producto directamente en el POS (`F3`), el sistema lo sube automáticamente al ERP, creándolo en el catálogo central y asignándole inventario inicial en la bodega de la caja.
+- **Ventas Despachadas**: Cada venta confirmada en el POS se encola localmente y se envía al ERP en cuanto hay conexión, descontando el inventario de la bodega y registrando los asientos contables pertinentes.
+
+### B. Indicador Visual de Conectividad
+En la esquina superior derecha verás en todo momento el estado de tu terminal:
+- 🟢 **Al día**: Todo el catálogo local y las ventas están sincronizados al 100% con la nube.
+- 🟡 **Sincronizando (N)**: Hay ventas en tránsito enviándose hacia el ERP.
+- ⚪ **Modo local (N)**: No hay conexión a internet o el servidor no responde. Puedes seguir cobrando con total normalidad; las ventas se acumulan de forma segura en tu equipo y se subirán al reconectar.
+- **Botón `🔄`**: Permite forzar una sincronización manual inmediata de catálogo y ventas con un solo clic.
+
+### C. Controles de Ventana (Modo Kiosco)
+La barra superior incluye botones compactos de acceso rápido:
+- **`⛶` (Pantalla Completa - F11)**: Oculta la barra de tareas de Windows para evitar distracciones o salidas accidentales de la pantalla de cobro.
+- **`—` (Minimizar)**: Minimiza la ventana a la barra del sistema si necesitas consultar otra aplicación autorizada.
+

@@ -95,8 +95,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
 
     tx.execute(
         "INSERT INTO products (sku, barcode, name, category_id, unit, price_cents, cost_cents, \
-         tax_rate_bp, stock, min_stock, is_service, active) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1)",
+         tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1)",
         params![
             input.sku.trim(),
             input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty()),
@@ -162,7 +162,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         "UPDATE products SET \
          sku = ?1, barcode = ?2, name = ?3, category_id = ?4, unit = ?5, \
          price_cents = ?6, cost_cents = ?7, tax_rate_bp = ?8, stock = ?9, \
-         min_stock = ?10, is_service = ?11, active = ?12, updated_at = datetime('now') \
+         min_stock = ?10, is_service = ?11, active = ?12, needs_erp_upload = 1, updated_at = datetime('now') \
          WHERE id = ?13",
         params![
             input.sku.trim(),
@@ -241,9 +241,9 @@ pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult
 
     let diff = input.new_stock - current_stock;
     if diff.abs() > f64::EPSILON {
-        // Actualizar stock del producto
+        // Actualizar stock del producto y marcar para sync con ERP
         tx.execute(
-            "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2",
+            "UPDATE products SET stock = ?1, needs_erp_upload = 1, updated_at = datetime('now') WHERE id = ?2",
             params![input.new_stock, input.product_id],
         )?;
 

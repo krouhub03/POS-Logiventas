@@ -24,7 +24,7 @@ Diseñado para operar en entornos comerciales exigentes (cigarrerías, minimarke
 ## ✨ Características Principales
 
 - **Arquitectura 100% Offline-First**: Nunca bloquea una venta, cobro o apertura de caja si se cae la conexión a internet. Todas las operaciones se confirman localmente en SQLite bajo transacciones atómicas ACID.
-- **Sincronización Bidireccional con ERP Megalider**: Vinculación mediante código seguro o credenciales, sincronización periódica de catálogo de productos, cajeros autorizados y envío en cola asíncrona (*Sync Outbox*) de ventas cerradas para registro contable automático (Motor Contable v6.2).
+- **Sincronización Bidireccional Automática con ERP Megalider**: Demonio de fondo en Rust ejecutándose concurrentemente cada 15s. Sincroniza productos creados en caja hacia la nube, descarga actualizaciones de precios y catálogo, oculta de inmediato productos dados de baja en el ERP y despacha ventas locales vía Outbox con descuento automático en la bodega asignada e integración al Motor Contable v6.2.
 - **Estación de Ventas Eleventa-Style**:
   - Visor gigante de total a cobrar con soporte de múltiples tickets simultáneos (siempre al menos 1 ticket activo).
   - Captura inteligente del escáner de código de barras (wedge interceptor global), incluso si el cursor no está enfocado en la barra de búsqueda.
@@ -35,7 +35,7 @@ Diseñado para operar en entornos comerciales exigentes (cigarrerías, minimarke
   - **Servicios**: Exentos de inventario físico (horas, mantenimientos, fletes, comisiones), se facturan en caja sin exigir stock físico.
 - **Auditoría de Inventario y Kardex**: Registro transaccional de ventas, compras, ajustes manuales, mermas y conteos físicos.
 - **Modales UI Estándar sin Bloqueo del Navegador**: Erradicación total de `window.alert()` y `window.confirm()` nativos en favor de modales accesibles con teclado (`Enter` / `Esc`), animaciones fluidas y diseño corporativo Megalider.
-- **Modo Kiosk / Pantalla Completa Permanente (`F11`)**: Oculta la barra de tareas de Windows para evitar que el cajero minimice o salga accidentalmente de la estación de cobro.
+- **Controles de Pantalla y Modo Kiosk (`⛶` / `—` / F11)**: Botones compactos icon-only de Pantalla Completa y Minimizar que ocultan la barra de tareas de Windows para operar en modo estación dedicada sin distracciones.
 - **Tema Visual Dual (Modo Claro / Modo Oscuro)**: Paleta de alto contraste optimizada para monitores de punto de venta e iluminación variable.
 
 ---
@@ -197,20 +197,26 @@ POS-Logiventa/
 │   │   ├── 0001_initial.sql      # Tablas base: users, products, sales, etc.
 │   │   ├── 0002_terminal_settings.sql # Configuración de terminal y caja
 │   │   ├── 0003_hardware_settings.sql # Periféricos, ticket e impresora
-│   │   └── 0004_product_services.sql  # Soporte para servicios y existencias
+│   │   ├── 0004_product_services.sql  # Soporte para servicios y existencias
+│   │   ├── 0005_sync_queue.sql   # Cola de sincronización outbox (M2M)
+│   │   ├── 0006_product_erp_id.sql # Mapeo erp_id para productos
+│   │   └── 0007_product_sync_flag.sql # Bandera needs_erp_upload
 │   ├── src/
 │   │   ├── commands/             # Comandos Tauri #[tauri::command]
 │   │   │   ├── auth.rs           # Autenticación de cajeros y enlace M2M
 │   │   │   ├── products.rs       # CRUD de productos, servicios y kardex
 │   │   │   ├── sales.rs          # Creación transaccional de ventas y pagos
 │   │   │   ├── settings.rs       # Gestión de ajustes de hardware
+│   │   │   ├── sync.rs           # Sincronización outbox y catálogo
 │   │   │   └── system.rs         # Info del sistema y modo pantalla completa
 │   │   ├── db/                   # Conexión SQLite y runner de migraciones
 │   │   │   ├── migrations.rs     # Ejecutor atómico de scripts SQL
 │   │   │   └── mod.rs            # Pool y conexión rusqlite
 │   │   ├── models/               # DTOs y estructuras serializables
+│   │   │   ├── sync.rs           # Modelos de sync y payloads
+│   │   │   └── ...               # Modelos de ventas, productos, etc.
 │   │   ├── error.rs              # Manejo centralizado de errores
-│   │   ├── lib.rs                # Registro de comandos y plugins
+│   │   ├── lib.rs                # Registro de comandos, plugins y demonio sync
 │   │   └── main.rs               # Punto de entrada de la aplicación Rust
 │   ├── Cargo.toml                # Dependencias de Rust
 │   └── tauri.conf.json           # Configuración de ventana y permisos Tauri
@@ -278,5 +284,6 @@ npm install
 
 ## 📄 Licencia
 
-Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.#   P O S - L o g i v e n t a s  
+Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.#   P O S - L o g i v e n t a s 
+ 
  

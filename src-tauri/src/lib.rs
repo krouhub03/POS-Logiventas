@@ -17,7 +17,9 @@ pub fn run() {
         .setup(|app| {
             let db_path = app.path().app_data_dir()?.join("logiventa.db");
             let db = Db::open(&db_path)?;
-            app.manage(db);
+            app.manage(db.clone());
+            // 🚀 Iniciar Daemon de Sincronización Automática Continua en segundo plano
+            commands::sync::start_sync_daemon(app.handle().clone(), db);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -34,6 +36,7 @@ pub fn run() {
             commands::products::adjust_stock,
             commands::products::list_inventory_movements,
             commands::auth::get_terminal_status,
+            commands::auth::validate_terminal_session,
             commands::auth::pair_terminal_code,
             commands::auth::pair_terminal_login,
             commands::auth::sync_users_from_erp,
@@ -47,6 +50,12 @@ pub fn run() {
             commands::settings::update_settings,
             commands::settings::test_print_ticket,
             commands::settings::test_open_drawer,
+            commands::sync::verify_and_reserve_stock,
+            commands::sync::release_stock_reservation,
+            commands::sync::sync_catalog_from_erp,
+            commands::sync::dispatch_sync_outbox,
+            commands::sync::pull_inventory_deltas,
+            commands::sync::get_sync_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

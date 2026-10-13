@@ -14,3 +14,12 @@ export function toCents(amount: number | string): number {
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100);
 }
+
+/**
+ * Calcula el impuesto en centavos a partir del subtotal en centavos y la tasa en puntos base (BP).
+ * 1% = 100 bp. Si la tasa es 0 o no está definida, el impuesto es estrictamente 0.
+ */
+export function calculateTaxCents(subtotalCents: number, taxRateBp?: number): number {
+  if (!taxRateBp || taxRateBp <= 0) return 0;
+  return Math.round((subtotalCents * taxRateBp) / 10000);
+}

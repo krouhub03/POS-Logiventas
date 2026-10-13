@@ -37,6 +37,15 @@ function App() {
       if (termStatus.activeCashier) {
         handleSetCashier(termStatus.activeCashier);
       }
+      // Si la terminal está vinculada, verificar inmediatamente si sigue activa en el ERP
+      if (termStatus.isPaired) {
+        api.auth.validateSession().then((liveStatus) => {
+          if (!liveStatus.isPaired) {
+            setTerminalStatus(liveStatus);
+            handleSetCashier(null);
+          }
+        }).catch(() => {});
+      }
     } catch (e: unknown) {
       console.error("Error al cargar estado de terminal:", e);
     } finally {
@@ -47,6 +56,30 @@ function App() {
   useEffect(() => {
     cargarEstado();
   }, [cargarEstado]);
+
+  // Auditoría y Latido Periódico (cada 15s):
+  // Si la caja es eliminada, desactivada o revocada en el ERP Megalider,
+  // el POS expulsa al cajero y bloquea la terminal en la pantalla de vinculación.
+  useEffect(() => {
+    if (!terminalStatus?.isPaired) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const liveStatus = await api.auth.validateSession();
+        if (!liveStatus.isPaired) {
+          console.warn("[SEGURIDAD POS] La caja fue eliminada o revocada en el ERP. Cerrando sesión de cajero...");
+          setTerminalStatus(liveStatus);
+          handleSetCashier(null);
+        }
+      } catch (err) {
+        // En caso de corte de red momentáneo, la política Offline-First de validateSession
+        // no desvincula la terminal local.
+      }
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [terminalStatus?.isPaired]);
+
 
   // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F4 = Inventario, F7 = Configuración)
   useEffect(() => {

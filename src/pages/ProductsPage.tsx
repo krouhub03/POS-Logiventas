@@ -79,6 +79,27 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   }, []);
 
+  const [syncingCatalog, setSyncingCatalog] = useState(false);
+
+  // Sincronización bidireccional de catálogo con el ERP
+  const handleSyncCatalog = useCallback(async () => {
+    try {
+      setSyncingCatalog(true);
+      const count = await api.sync.syncCatalog();
+      showNotification(`✓ Catálogo sincronizado con el ERP (${count} productos procesados).`);
+      await loadProducts();
+    } catch (e: unknown) {
+      console.warn("Aviso: No se pudo conectar al ERP para actualizar catálogo:", e);
+    } finally {
+      setSyncingCatalog(false);
+    }
+  }, [loadProducts]);
+
+  // Sincronizar catálogo al abrir la vista
+  useEffect(() => {
+    handleSyncCatalog();
+  }, [handleSyncCatalog]);
+
   useEffect(() => {
     const t = setTimeout(() => {
       loadProducts();
@@ -199,6 +220,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
       setIsFormOpen(false);
       loadProducts();
+      // Subir producto nuevo al ERP y refrescar
+      api.sync.syncCatalog().then(loadProducts).catch(console.warn);
     } catch (err: unknown) {
       modalAlert({
         title: "Error al Guardar",
@@ -242,6 +265,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       setAdjustingProduct(null);
       loadProducts();
       if (activeTab === "kardex") loadMovements();
+      // Sincronizar de inmediato con el ERP de forma bidireccional
+      api.sync.syncCatalog().then(loadProducts).catch(console.warn);
     } catch (err: unknown) {
       modalAlert({
         title: "Error al Ajustar Stock",
@@ -361,6 +386,16 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
         {/* Acciones principales */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={syncingCatalog}
+            onClick={handleSyncCatalog}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
+            title="Sincronizar catálogo con Megalider ERP (Subir locales y descargar remotos)"
+          >
+            <span className={syncingCatalog ? "animate-spin inline-block text-xs" : "text-xs"}>🔄</span>
+            <span>{syncingCatalog ? "Sincronizando..." : "Sincronizar ERP"}</span>
+          </button>
           <button
             type="button"
             onClick={() => handleOpenCreateModal(false)}
