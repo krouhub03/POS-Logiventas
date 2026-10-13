@@ -108,40 +108,46 @@ function App() {
     );
   }
 
-  // 3. Pantalla de Configuración del Sistema (F7)
-  if (currentView === "settings") {
-    return (
-      <SettingsPage
-        terminalStatus={terminalStatus}
-        onBackToSales={() => setCurrentView("sales")}
-        onUnpaired={() => {
-          setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
-          handleSetCashier(null);
-        }}
-      />
-    );
-  }
-
-  // 4. Estación de Ventas principal (Eleventa-Style) (F1)
-  if (currentView === "sales") {
-    return (
-      <SalesStationPage
-        cashier={activeCashier}
-        terminalStatus={terminalStatus}
-        onLockTerminal={() => handleSetCashier(null)}
-        onNavigateToProducts={() => setCurrentView("products")}
-        onNavigateToInventory={() => setCurrentView("inventory")}
-        onNavigateToSettings={() => setCurrentView("settings")}
-      />
-    );
-  }
-
-  // 5. Catálogo de productos y control de inventario (F3 / F4)
+  // 3. Estación de Ventas principal (siempre viva para preservar tickets y foco) + Pantallas superpuestas
   return (
-    <ProductsPage
-      initialTab={currentView === "inventory" ? "inventory" : "catalog"}
-      onBackToSales={() => setCurrentView("sales")}
-    />
+    <div className="w-screen h-screen overflow-hidden relative">
+      {/* VISTA DE VENTAS (F1): Siempre viva en DOM para no perder productos escaneados ni tickets */}
+      <div className={currentView === "sales" ? "w-full h-full" : "hidden"}>
+        <SalesStationPage
+          cashier={activeCashier}
+          terminalStatus={terminalStatus}
+          isActive={currentView === "sales"}
+          onLockTerminal={() => handleSetCashier(null)}
+          onNavigateToProducts={() => setCurrentView("products")}
+          onNavigateToInventory={() => setCurrentView("inventory")}
+          onNavigateToSettings={() => setCurrentView("settings")}
+        />
+      </div>
+
+      {/* VISTA DE CONFIGURACIÓN (F7) */}
+      {currentView === "settings" && (
+        <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950">
+          <SettingsPage
+            terminalStatus={terminalStatus}
+            onBackToSales={() => setCurrentView("sales")}
+            onUnpaired={() => {
+              setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
+              handleSetCashier(null);
+            }}
+          />
+        </div>
+      )}
+
+      {/* VISTA DE PRODUCTOS E INVENTARIO (F3 / F4) */}
+      {(currentView === "products" || currentView === "inventory") && (
+        <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950">
+          <ProductsPage
+            initialTab={currentView === "inventory" ? "inventory" : "catalog"}
+            onBackToSales={() => setCurrentView("sales")}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

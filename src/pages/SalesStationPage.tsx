@@ -31,15 +31,50 @@ interface TicketTab {
 interface SalesStationPageProps {
   cashier: CashierUser;
   terminalStatus: TerminalStatus;
+  isActive?: boolean;
   onLockTerminal: () => void;
   onNavigateToProducts?: () => void;
   onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
 }
 
+const STORAGE_KEY_TICKETS = "pos_active_tickets";
+const STORAGE_KEY_ACTIVE_TICKET = "pos_active_ticket_id";
+
+function getInitialTickets(): TicketTab[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TICKETS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error("Error leyendo tickets guardados:", e);
+  }
+  return [{ id: 1, name: "Ticket 1", lines: [] }];
+}
+
+function getInitialActiveTicketId(initialTickets: TicketTab[]): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ACTIVE_TICKET);
+    if (raw) {
+      const parsed = Number(raw);
+      if (initialTickets.some((t) => t.id === parsed)) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error("Error leyendo ticket activo guardado:", e);
+  }
+  return initialTickets[0]?.id || 1;
+}
+
 export function SalesStationPage({
   cashier,
   terminalStatus,
+  isActive = true,
   onLockTerminal,
   onNavigateToProducts,
   onNavigateToInventory,
@@ -47,11 +82,21 @@ export function SalesStationPage({
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
 
-  // Tabs de Tickets: Siempre mínimo 1 ticket activo
-  const [tickets, setTickets] = useState<TicketTab[]>([
-    { id: 1, name: "Ticket 1", lines: [] },
-  ]);
-  const [activeTicketId, setActiveTicketId] = useState<number>(1);
+  // Tabs de Tickets: Persistidos permanentemente en localStorage (mínimo 1 ticket siempre)
+  const [tickets, setTickets] = useState<TicketTab[]>(getInitialTickets);
+  const [activeTicketId, setActiveTicketId] = useState<number>(() =>
+    getInitialActiveTicketId(tickets)
+  );
+
+  // Guardar tickets en localStorage ante cualquier adición, edición, cancelación o venta
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_TICKETS, JSON.stringify(tickets));
+  }, [tickets]);
+
+  // Guardar ticket activo seleccionado
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_ACTIVE_TICKET, String(activeTicketId));
+  }, [activeTicketId]);
 
   // Input de código de barras
   const [barcodeInput, setBarcodeInput] = useState("");
@@ -90,14 +135,16 @@ export function SalesStationPage({
 
   // Enfoque continuo al input de código
   const focusInput = useCallback(() => {
-    if (!isSearchOpen && !isCobroOpen && !isVariosOpen) {
+    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen) {
       barcodeInputRef.current?.focus();
     }
-  }, [isSearchOpen, isCobroOpen, isVariosOpen]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen]);
 
   useEffect(() => {
-    focusInput();
-  }, [focusInput, activeTicketId]);
+    if (isActive) {
+      focusInput();
+    }
+  }, [isActive, focusInput, activeTicketId]);
 
   // Actualizar líneas del ticket activo
   const updateCurrentTicketLines = (newLines: CartLine[]) => {
@@ -386,9 +433,10 @@ export function SalesStationPage({
 
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+    if (!isActive) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen) return;
 
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "F7") {
         e.preventDefault();
         onNavigateToSettings?.();
@@ -457,12 +505,14 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
+    if (!isActive) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+
     const handleGlobalClick = (e: MouseEvent) => {
-      if (isSearchOpen || isCobroOpen || isVariosOpen) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -476,7 +526,7 @@ export function SalesStationPage({
     };
     window.addEventListener("click", handleGlobalClick);
     return () => window.removeEventListener("click", handleGlobalClick);
-  }, [isSearchOpen, isCobroOpen, isVariosOpen]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
