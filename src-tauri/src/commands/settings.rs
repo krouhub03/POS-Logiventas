@@ -31,8 +31,8 @@ pub fn update_settings(
 
     for (k, v) in settings {
         tx.execute(
-            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![k, v],
         )?;
     }
