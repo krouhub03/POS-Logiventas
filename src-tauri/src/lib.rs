@@ -22,6 +22,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::system::app_info,
+            commands::system::toggle_fullscreen,
+            commands::system::set_fullscreen,
             commands::products::list_products,
             commands::products::find_product_by_barcode,
             commands::products::create_product,

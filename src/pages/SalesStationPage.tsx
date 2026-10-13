@@ -385,6 +385,9 @@ export function SalesStationPage({
       if (e.key === "F7") {
         e.preventDefault();
         onNavigateToSettings?.();
+      } else if (e.key === "F11") {
+        e.preventDefault();
+        api.system.toggleFullscreen().catch(console.error);
       } else if (e.key === "F10") {
         e.preventDefault();
         setIsSearchOpen(true);
@@ -541,6 +544,17 @@ export function SalesStationPage({
                 <span className="hidden sm:inline text-[11px]">Oscuro</span>
               </>
             )}
+          </button>
+
+          {/* BOTÓN DE PANTALLA COMPLETA (OCULTA BARRA DE TAREAS) */}
+          <button
+            type="button"
+            onClick={() => api.system.toggleFullscreen().catch(console.error)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
+            title="Alternar Pantalla Completa (F11) - Oculta la barra de tareas de Windows"
+          >
+            <span className="text-sm">⛶</span>
+            <span className="hidden sm:inline text-[11px]">Pantalla Completa</span>
           </button>
 
           <div className="text-right hidden md:block">

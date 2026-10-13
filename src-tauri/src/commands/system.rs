@@ -21,3 +21,20 @@ pub fn app_info(app: tauri::AppHandle, db: State<'_, Db>) -> AppResult<AppInfo> 
         schema_version: db.schema_version()?,
     })
 }
+
+/// Alternar modo pantalla completa (cubre la barra de tareas de Windows).
+#[tauri::command]
+pub fn toggle_fullscreen(window: tauri::Window) -> AppResult<bool> {
+    let is_fs = window.is_fullscreen()?;
+    let next_state = !is_fs;
+    window.set_fullscreen(next_state)?;
+    Ok(next_state)
+}
+
+/// Establecer explícitamente modo pantalla completa.
+#[tauri::command]
+pub fn set_fullscreen(window: tauri::Window, fullscreen: bool) -> AppResult<()> {
+    window.set_fullscreen(fullscreen)?;
+    Ok(())
+}
+

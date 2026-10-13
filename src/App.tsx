@@ -61,6 +61,9 @@ function App() {
       } else if (e.key === "F7") {
         e.preventDefault();
         setCurrentView("settings");
+      } else if (e.key === "F11") {
+        e.preventDefault();
+        api.system.toggleFullscreen().catch(console.error);
       }
     };
     window.addEventListener("keydown", handleGlobalKey);

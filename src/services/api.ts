@@ -19,6 +19,12 @@ import type {
  */
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
+  system: {
+    appInfo: () => invoke<AppInfo>("app_info"),
+    toggleFullscreen: () => invoke<boolean>("toggle_fullscreen"),
+    setFullscreen: (fullscreen: boolean) =>
+      invoke<void>("set_fullscreen", { fullscreen }),
+  },
 
   auth: {
     getTerminalStatus: () => invoke<TerminalStatus>("get_terminal_status"),
