@@ -272,6 +272,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         .timeout(Duration::from_secs(15))
         .build()?;
 
+    // 0. Despachar Outbox primero para que el ERP consolide ventas antes de retornarnos el stock
+    let _ = dispatch_outbox_internal(db).await;
+
     // 1. Extraer productos creados o modificados localmente en el POS para subir al ERP
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
@@ -438,6 +441,22 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             }
         }
 
+        // Calcular ventas locales pendientes en cola que aún no se reflejan en el ERP
+        let pending_sold: f64 = if let Some(local_id) = local_match {
+            tx.query_row(
+                "SELECT COALESCE(SUM(si.quantity), 0) \
+                 FROM sale_items si \
+                 JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+                 WHERE si.product_id = ?1 AND sq.status = 'pending'",
+                params![local_id],
+                |r| r.get(0),
+            ).unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        let effective_stock = if is_service == 1 { 0.0 } else { (stock - pending_sold).max(0.0) };
+
         if let Some(local_id) = local_match {
             tx.execute(
                 "UPDATE products SET
@@ -466,7 +485,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     price_cents,
                     cost_cents,
                     tax_rate_bp,
-                    stock,
+                    effective_stock,
                     min_stock,
                     active,
                     local_id
@@ -488,7 +507,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     price_cents,
                     cost_cents,
                     tax_rate_bp,
-                    stock,
+                    effective_stock,
                     min_stock,
                     active
                 ],
@@ -684,13 +703,40 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
         let stock_actual = d["stockActual"].as_f64().unwrap_or(0.0);
 
         if !p_id.is_empty() {
-            let affected = conn.execute(
-                "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE erp_id = ?2",
-                params![stock_actual, p_id],
-            );
-            if let Ok(n) = affected {
-                if n > 0 {
-                    count += 1;
+            let local_info: Option<(i64, i64)> = conn
+                .query_row(
+                    "SELECT id, is_service FROM products WHERE erp_id = ?1",
+                    params![p_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok();
+
+            if let Some((local_id, is_service)) = local_info {
+                if is_service == 1 {
+                    continue;
+                }
+
+                let pending_sold: f64 = conn
+                    .query_row(
+                        "SELECT COALESCE(SUM(si.quantity), 0) \
+                         FROM sale_items si \
+                         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+                         WHERE si.product_id = ?1 AND sq.status = 'pending'",
+                        params![local_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0.0);
+
+                let effective_stock = (stock_actual - pending_sold).max(0.0);
+
+                let affected = conn.execute(
+                    "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    params![effective_stock, local_id],
+                );
+                if let Ok(n) = affected {
+                    if n > 0 {
+                        count += 1;
+                    }
                 }
             }
         }

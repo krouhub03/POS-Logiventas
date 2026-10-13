@@ -169,6 +169,36 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
     )?;
 
     // 5. Inserción en outbox (sync_queue) dentro de la misma transacción ACID
+    let payload_items: Vec<serde_json::Value> = input.items.iter().map(|it| {
+        let (erp_id, sku, barcode): (Option<String>, Option<String>, Option<String>) = if let Some(pid) = it.product_id {
+            tx.query_row(
+                "SELECT erp_id, sku, barcode FROM products WHERE id = ?1",
+                params![pid],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).unwrap_or((None, None, None))
+        } else {
+            (None, None, None)
+        };
+
+        let resolved_sku = sku.or_else(|| it.sku.clone());
+        let resolved_barcode = barcode.or_else(|| it.barcode.clone());
+        let candidate_id = erp_id.clone().or_else(|| it.product_id.map(|id| id.to_string()));
+
+        serde_json::json!({
+            "erpProductId": erp_id,
+            "localProductId": it.product_id,
+            "productId": candidate_id,
+            "sku": resolved_sku,
+            "barcode": resolved_barcode,
+            "description": it.description,
+            "quantity": it.quantity,
+            "unitPriceCents": it.unit_price_cents,
+            "taxRateBp": it.tax_rate_bp.unwrap_or(0),
+            "discountCents": it.discount_cents.unwrap_or(0),
+            "totalCents": ((it.quantity * it.unit_price_cents as f64).round() as i64)
+        })
+    }).collect();
+
     let sale_payload = serde_json::json!({
         "id": sale_id,
         "folio": &folio,
@@ -180,19 +210,7 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         "totalCents": total_cents,
         "status": "completed",
         "createdAt": &created_at,
-        "items": input.items.iter().map(|it| {
-            serde_json::json!({
-                "productId": it.product_id.map(|id| id.to_string()),
-                "sku": it.sku,
-                "barcode": it.barcode,
-                "description": it.description,
-                "quantity": it.quantity,
-                "unitPriceCents": it.unit_price_cents,
-                "taxRateBp": it.tax_rate_bp.unwrap_or(0),
-                "discountCents": it.discount_cents.unwrap_or(0),
-                "totalCents": ((it.quantity * it.unit_price_cents as f64).round() as i64)
-            })
-        }).collect::<Vec<_>>(),
+        "items": payload_items,
         "payments": input.payments.iter().map(|p| {
             serde_json::json!({
                 "method": p.method,
