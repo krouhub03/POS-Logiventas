@@ -42,10 +42,9 @@ export function SalesStationPage({
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
 
-  // Tabs de Tickets (Soporte multi-ticket en memoria estilo Eleventa)
+  // Tabs de Tickets: Siempre mínimo 1 ticket activo
   const [tickets, setTickets] = useState<TicketTab[]>([
     { id: 1, name: "Ticket 1", lines: [] },
-    { id: 2, name: "Ticket 2", lines: [] },
   ]);
   const [activeTicketId, setActiveTicketId] = useState<number>(1);
 
@@ -94,6 +93,61 @@ export function SalesStationPage({
     setTickets((prev) =>
       prev.map((t) => (t.id === activeTicketId ? { ...t, lines: newLines } : t))
     );
+  };
+
+  // Adicionar un nuevo ticket
+  const handleAddTicket = () => {
+    const nextNumber = tickets.length + 1;
+    const newId = Date.now();
+    const newTicket: TicketTab = {
+      id: newId,
+      name: `Ticket ${nextNumber}`,
+      lines: [],
+    };
+    setTickets((prev) => [...prev, newTicket]);
+    setActiveTicketId(newId);
+    setSelectedLineIndex(-1);
+    showFeedback(`+ ${newTicket.name} agregado`);
+    focusInput();
+  };
+
+  // Cancelar o eliminar ticket (mínimo 1 siempre)
+  const handleCancelOrDeleteTicket = (targetId = activeTicketId) => {
+    const target = tickets.find((t) => t.id === targetId);
+    if (!target) return;
+
+    // Si solo hay 1 ticket (el mínimo obligatorio): se vacían sus productos
+    if (tickets.length <= 1) {
+      if (target.lines.length === 0) {
+        showFeedback("El ticket ya está vacío. Siempre debe haber al menos 1 ticket activo.");
+        return;
+      }
+      if (confirm(`¿Desea vaciar los productos de ${target.name}?`)) {
+        updateCurrentTicketLines([]);
+        setSelectedLineIndex(-1);
+        showFeedback(`${target.name} vaciado`);
+        focusInput();
+      }
+      return;
+    }
+
+    // Si hay más de 1 ticket: se descarta y elimina
+    const msg =
+      target.lines.length > 0
+        ? `¿Desea cancelar y eliminar ${target.name} con sus ${target.lines.length} producto(s)?`
+        : `¿Desea cerrar ${target.name}?`;
+
+    if (confirm(msg)) {
+      const remaining = tickets.filter((t) => t.id !== targetId);
+      setTickets(remaining);
+      if (activeTicketId === targetId) {
+        const newActive = remaining[remaining.length - 1];
+        setActiveTicketId(newActive.id);
+      }
+      setSelectedLineIndex(-1);
+      showFeedback(`✕ ${target.name} eliminado`);
+      focusInput();
+    }
   };
 
   // Agregar producto al ticket
@@ -261,7 +315,14 @@ export function SalesStationPage({
         payments,
       });
 
-      updateCurrentTicketLines([]);
+      // Si hay más de un ticket, cerramos el ticket que se acaba de cobrar
+      if (tickets.length > 1) {
+        const remaining = tickets.filter((t) => t.id !== activeTicketId);
+        setTickets(remaining);
+        setActiveTicketId(remaining[0].id);
+      } else {
+        updateCurrentTicketLines([]);
+      }
       setSelectedLineIndex(-1);
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
       setIsCobroOpen(false);
@@ -408,37 +469,54 @@ export function SalesStationPage({
 
       {/* 2. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (ESTILO ELEVENTA) */}
       <div className="bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-3 flex flex-wrap items-center gap-3 transition-colors duration-150">
-        {/* Pestañas de Tickets (Ticket 1, Ticket 2, +) */}
+        {/* Pestañas de Tickets (Mínimo 1 ticket siempre) */}
         <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-950 p-1 rounded-xl border border-slate-300 dark:border-slate-800 mr-2">
           {tickets.map((t) => (
-            <button
+            <div
               key={t.id}
-              onClick={() => {
-                setActiveTicketId(t.id);
-                focusInput();
-              }}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 ${
+              className={`flex items-center rounded-lg text-xs font-bold transition-colors ${
                 activeTicketId === t.id
                   ? "bg-white text-emerald-700 shadow-sm border border-slate-200 dark:bg-slate-800 dark:text-emerald-400 dark:border-emerald-500/30"
                   : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
               }`}
             >
-              <span>{t.name}</span>
-              {t.lines.length > 0 && (
-                <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
-                  {t.lines.length}
-                </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTicketId(t.id);
+                  focusInput();
+                }}
+                className="px-3 py-1 flex items-center gap-1.5"
+              >
+                <span>{t.name}</span>
+                {t.lines.length > 0 && (
+                  <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
+                    {t.lines.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Botón de cerrar pestaña si hay más de 1 ticket */}
+              {tickets.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCancelOrDeleteTicket(t.id);
+                  }}
+                  className="pr-2 pl-0.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold"
+                  title={`Cerrar y eliminar ${t.name}`}
+                >
+                  ✕
+                </button>
               )}
-            </button>
+            </div>
           ))}
           <button
-            onClick={() => {
-              const nextId = tickets.length + 1;
-              setTickets([...tickets, { id: nextId, name: `Ticket ${nextId}`, lines: [] }]);
-              setActiveTicketId(nextId);
-            }}
-            className="px-2 py-1 text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200 rounded-lg text-xs font-bold transition-colors"
-            title="Nuevo Ticket"
+            type="button"
+            onClick={handleAddTicket}
+            className="px-2.5 py-1 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-300/40 dark:hover:bg-slate-800 rounded-lg text-xs font-bold transition-colors"
+            title="Adicionar nuevo ticket"
           >
             +
           </button>
@@ -639,18 +717,11 @@ export function SalesStationPage({
               <span>Pendiente</span>
             </button>
             <button
-              onClick={() => {
-                if (confirm("¿Desea vaciar el ticket actual?")) {
-                  updateCurrentTicketLines([]);
-                  setSelectedLineIndex(-1);
-                  showFeedback("Ticket vaciado");
-                  focusInput();
-                }
-              }}
-              disabled={cartLines.length === 0}
-              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-700 dark:text-slate-400 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              onClick={() => handleCancelOrDeleteTicket()}
+              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-700 dark:text-slate-400 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors"
+              title={tickets.length > 1 ? `Eliminar ${currentTicket.name}` : `Vaciar ${currentTicket.name}`}
             >
-              <span>✕ Cancelar Ticket</span>
+              <span>{tickets.length > 1 ? `✕ Eliminar ${currentTicket.name}` : "✕ Cancelar Ticket"}</span>
             </button>
           </div>
         </div>
