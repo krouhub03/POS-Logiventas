@@ -27,6 +27,7 @@ export const api = {
     toggleFullscreen: () => invoke<boolean>("toggle_fullscreen"),
     setFullscreen: (fullscreen: boolean) =>
       invoke<void>("set_fullscreen", { fullscreen }),
+    minimizeWindow: () => invoke<void>("minimize_window"),
   },
 
   auth: {

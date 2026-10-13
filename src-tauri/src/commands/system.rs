@@ -38,3 +38,10 @@ pub fn set_fullscreen(window: tauri::Window, fullscreen: bool) -> AppResult<()> 
     Ok(())
 }
 
+/// Minimizar la ventana principal (necesario porque en pantalla completa no hay barra de título).
+#[tauri::command]
+pub fn minimize_window(window: tauri::Window) -> AppResult<()> {
+    window.minimize()?;
+    Ok(())
+}
+

@@ -24,6 +24,7 @@ pub fn run() {
             commands::system::app_info,
             commands::system::toggle_fullscreen,
             commands::system::set_fullscreen,
+            commands::system::minimize_window,
             commands::products::list_products,
             commands::products::find_product_by_barcode,
             commands::products::get_product,

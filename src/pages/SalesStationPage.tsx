@@ -634,6 +634,17 @@ export function SalesStationPage({
             <span className="hidden sm:inline text-[11px]">Pantalla Completa</span>
           </button>
 
+          {/* BOTÓN MINIMIZAR (en pantalla completa no hay barra de título nativa) */}
+          <button
+            type="button"
+            onClick={() => api.system.minimizeWindow().catch(console.error)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
+            title="Minimizar ventana"
+          >
+            <span className="text-sm leading-none">—</span>
+            <span className="hidden sm:inline text-[11px]">Minimizar</span>
+          </button>
+
           <div className="text-right hidden md:block">
             <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 justify-end">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
