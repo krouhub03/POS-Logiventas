@@ -3,14 +3,17 @@ import type {
   AppInfo,
   CashierUser,
   CreateSaleInput,
+  InventoryMovement,
   NewProduct,
   PairCodeInput,
   PairLoginInput,
   PairLoginResult,
   Product,
   SaleReceipt,
+  StockAdjustmentInput,
   TerminalStatus,
   TodaySalesSummary,
+  UpdateProductInput,
 } from "../types";
 
 /**
@@ -42,7 +45,18 @@ export const api = {
     list: (search?: string) => invoke<Product[]>("list_products", { search }),
     findByBarcode: (barcode: string) =>
       invoke<Product | null>("find_product_by_barcode", { barcode }),
+    get: (id: number) => invoke<Product>("get_product", { id }),
     create: (input: NewProduct) => invoke<Product>("create_product", { input }),
+    update: (input: UpdateProductInput) =>
+      invoke<Product>("update_product", { input }),
+    delete: (id: number) => invoke<void>("delete_product", { id }),
+    adjustStock: (input: StockAdjustmentInput) =>
+      invoke<Product>("adjust_stock", { input }),
+    listMovements: (productId?: number, limit?: number) =>
+      invoke<InventoryMovement[]>("list_inventory_movements", {
+        productId,
+        limit,
+      }),
   },
 
   sales: {

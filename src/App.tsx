@@ -18,7 +18,7 @@ function App() {
       return null;
     }
   });
-  const [currentView, setCurrentView] = useState<"sales" | "products" | "settings">("sales");
+  const [currentView, setCurrentView] = useState<"sales" | "products" | "inventory" | "settings">("sales");
   const [loading, setLoading] = useState(true);
 
   const handleSetCashier = (cashier: CashierUser | null) => {
@@ -48,7 +48,7 @@ function App() {
     cargarEstado();
   }, [cargarEstado]);
 
-  // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F7 = Configuración)
+  // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F4 = Inventario, F7 = Configuración)
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (!activeCashier) return;
@@ -58,6 +58,9 @@ function App() {
       } else if (e.key === "F3") {
         e.preventDefault();
         setCurrentView("products");
+      } else if (e.key === "F4") {
+        e.preventDefault();
+        setCurrentView("inventory");
       } else if (e.key === "F7") {
         e.preventDefault();
         setCurrentView("settings");
@@ -127,71 +130,18 @@ function App() {
         terminalStatus={terminalStatus}
         onLockTerminal={() => handleSetCashier(null)}
         onNavigateToProducts={() => setCurrentView("products")}
+        onNavigateToInventory={() => setCurrentView("inventory")}
         onNavigateToSettings={() => setCurrentView("settings")}
       />
     );
   }
 
-  // 5. Catálogo de productos (F3)
+  // 5. Catálogo de productos y control de inventario (F3 / F4)
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <h1 className="brand">Logiventa</h1>
-        <div style={{ padding: "0 0.5rem 1rem", fontSize: "0.8rem", color: "#94a3b8" }}>
-          <div><strong>{terminalStatus.cajaCodigo}</strong> · {terminalStatus.cajaNombre}</div>
-          <div style={{ fontSize: "0.75rem", color: "#64748b" }}>{terminalStatus.empresaNombre}</div>
-        </div>
-
-        <nav>
-          <button
-            type="button"
-            className="nav-item"
-            onClick={() => setCurrentView("sales")}
-            style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer" }}
-          >
-            ← Volver a Ventas (F1)
-          </button>
-          <a className="nav-item active">Productos (F3)</a>
-          <button
-            type="button"
-            className="nav-item"
-            onClick={() => setCurrentView("settings")}
-            style={{ width: "100%", textAlign: "left", background: "transparent", border: "none", cursor: "pointer" }}
-          >
-            Configuración (F7)
-          </button>
-        </nav>
-
-        <div style={{ marginTop: "auto", paddingTop: "1rem", borderTop: "1px solid #374151" }}>
-          <div style={{ fontSize: "0.85rem", color: "#f3f4f6", fontWeight: "bold" }}>
-            👤 {activeCashier.fullName}
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.75rem" }}>
-            Rol: {activeCashier.role}
-          </div>
-          <button
-            type="button"
-            onClick={() => setActiveCashier(null)}
-            style={{
-              width: "100%",
-              background: "#374151",
-              border: "none",
-              color: "#e5e7eb",
-              borderRadius: "6px",
-              padding: "0.4rem",
-              fontSize: "0.8rem",
-              cursor: "pointer",
-            }}
-          >
-            🔒 Bloquear Caja (Esc)
-          </button>
-        </div>
-      </aside>
-
-      <main className="content">
-        <ProductsPage />
-      </main>
-    </div>
+    <ProductsPage
+      initialTab={currentView === "inventory" ? "inventory" : "catalog"}
+      onBackToSales={() => setCurrentView("sales")}
+    />
   );
 }
 

@@ -110,18 +110,29 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
         let item_row_id = tx.last_insert_rowid();
 
-        // Si es producto registrado, descontar inventario y registrar movimiento
+        // Si es producto físico registrado (no servicio), descontar inventario y registrar movimiento
         if let Some(pid) = it.product_id {
-            tx.execute(
-                "UPDATE products SET stock = stock - ?1, updated_at = datetime('now') WHERE id = ?2",
-                params![it.quantity, pid],
-            )?;
+            let is_service: bool = tx
+                .query_row(
+                    "SELECT is_service FROM products WHERE id = ?1",
+                    params![pid],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map(|val| val != 0)
+                .unwrap_or(false);
 
-            tx.execute(
-                "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
-                 VALUES (?1, 'sale', ?2, ?3, ?4)",
-                params![pid, -it.quantity, folio, input.user_id],
-            )?;
+            if !is_service {
+                tx.execute(
+                    "UPDATE products SET stock = stock - ?1, updated_at = datetime('now') WHERE id = ?2",
+                    params![it.quantity, pid],
+                )?;
+
+                tx.execute(
+                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
+                     VALUES (?1, 'sale', ?2, ?3, ?4)",
+                    params![pid, -it.quantity, folio, input.user_id],
+                )?;
+            }
         }
 
         receipt_items.push(SaleItemDto {

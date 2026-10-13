@@ -33,6 +33,7 @@ interface SalesStationPageProps {
   terminalStatus: TerminalStatus;
   onLockTerminal: () => void;
   onNavigateToProducts?: () => void;
+  onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
 }
 
@@ -41,6 +42,7 @@ export function SalesStationPage({
   terminalStatus,
   onLockTerminal,
   onNavigateToProducts,
+  onNavigateToInventory,
   onNavigateToSettings,
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
@@ -221,29 +223,34 @@ export function SalesStationPage({
     }
 
     const handleProductScanned = (product: Product, quantity = 1) => {
-      const lineEnTicket = cartLines.find((l) => l.productId === product.id);
-      const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
-      const stockRestante = product.stock - yaEnTicket;
-
-      if (product.stock <= 0) {
-        playStockWarning();
-        showFeedback(
-          `⚠️ DISPONIBILIDAD AGOTADA: "${product.name}" no tiene existencias (Stock: 0 ${product.unit}).`,
-          "warning"
-        );
-      } else if (stockRestante < quantity) {
-        playStockWarning();
-        showFeedback(
-          `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit} (ya tienes ${yaEnTicket} en ticket).`,
-          "warning"
-        );
-      } else {
+      if (product.isService) {
         playScanSuccess();
-        const nuevoRestante = product.stock - yaEnTicket - quantity;
-        showFeedback(
-          `✅ + ${quantity} × ${product.name} (Disponibles en tienda: ${nuevoRestante} ${product.unit})`,
-          "success"
-        );
+        showFeedback(`✅ + ${quantity} × ${product.name} (Servicio)`, "success");
+      } else {
+        const lineEnTicket = cartLines.find((l) => l.productId === product.id);
+        const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
+        const stockRestante = product.stock - yaEnTicket;
+
+        if (product.stock <= 0) {
+          playStockWarning();
+          showFeedback(
+            `⚠️ DISPONIBILIDAD AGOTADA: "${product.name}" no tiene existencias (Stock: 0 ${product.unit}).`,
+            "warning"
+          );
+        } else if (stockRestante < quantity) {
+          playStockWarning();
+          showFeedback(
+            `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit} (ya tienes ${yaEnTicket} en ticket).`,
+            "warning"
+          );
+        } else {
+          playScanSuccess();
+          const nuevoRestante = product.stock - yaEnTicket - quantity;
+          showFeedback(
+            `✅ + ${quantity} × ${product.name} (Disponibles en tienda: ${nuevoRestante} ${product.unit})`,
+            "success"
+          );
+        }
       }
 
       addProductToTicket(product, quantity);
@@ -507,8 +514,9 @@ export function SalesStationPage({
           </button>
 
           <button
-            onClick={() => showFeedback("Inventario sincronizado con ERP")}
+            onClick={onNavigateToInventory || onNavigateToProducts}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors hidden sm:flex"
+            title="Control de existencias y ajustes de inventario (F4)"
           >
             <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F4</span>
             <span>Inventario</span>

@@ -11,6 +11,7 @@ export interface Product {
   taxRateBp: number;
   stock: number;
   minStock: number;
+  isService: boolean;
   active: boolean;
 }
 
@@ -26,6 +27,44 @@ export interface NewProduct {
   taxRateBp?: number;
   stock?: number;
   minStock?: number;
+  isService?: boolean;
+}
+
+/** Espejo de `models::product::UpdateProductInput` (Rust). */
+export interface UpdateProductInput {
+  id: number;
+  sku: string;
+  barcode?: string | null;
+  name: string;
+  categoryId?: number | null;
+  unit?: string;
+  priceCents: number;
+  costCents?: number;
+  taxRateBp?: number;
+  stock?: number;
+  minStock?: number;
+  isService?: boolean;
+  active?: boolean;
+}
+
+/** Espejo de `models::product::StockAdjustmentInput` (Rust). */
+export interface StockAdjustmentInput {
+  productId: number;
+  newStock: number;
+  reason: string;
+  userId?: number;
+}
+
+/** Espejo de `models::product::InventoryMovementDto` (Rust). */
+export interface InventoryMovement {
+  id: number;
+  productId: number;
+  productName?: string | null;
+  kind: "sale" | "purchase" | "adjustment" | "return";
+  quantity: number;
+  reference?: string | null;
+  userId?: number | null;
+  createdAt: string;
 }
 
 export interface AppInfo {
