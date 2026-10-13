@@ -4,12 +4,15 @@ import "./index.css";
 import App from "./App";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ModalProvider } from "./contexts/ModalContext";
+import { UpdaterProvider } from "./contexts/UpdaterContext";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <ModalProvider>
-        <App />
+        <UpdaterProvider>
+          <App />
+        </UpdaterProvider>
       </ModalProvider>
     </ThemeProvider>
   </React.StrictMode>,

@@ -5,6 +5,7 @@ import { SalesStationPage } from "./pages/SalesStationPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { PairingScreen } from "./components/PairingScreen";
 import { CashierLockScreen } from "./components/CashierLockScreen";
+import { UpdateNotificationBanner } from "./components/UpdateNotificationBanner";
 import type { CashierUser, TerminalStatus } from "./types";
 import "./App.css";
 
@@ -180,6 +181,9 @@ function App() {
           />
         </div>
       )}
+
+      {/* BANNER FLOTANTE DE ACTUALIZACIÓN AUTOMÁTICA */}
+      <UpdateNotificationBanner />
     </div>
   );
 }

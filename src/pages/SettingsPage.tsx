@@ -3,6 +3,7 @@ import { api } from "../services/api";
 import { TerminalStatus } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
+import { useUpdater } from "../contexts/UpdaterContext";
 
 interface SettingsPageProps {
   terminalStatus: TerminalStatus;
@@ -19,6 +20,7 @@ export function SettingsPage({
 }: SettingsPageProps) {
   const { theme, toggleTheme } = useTheme();
   const { confirm, alert: modalAlert } = useModals();
+  const updater = useUpdater();
   const [activeTab, setActiveTab] = useState<SettingsTab>("printer");
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -673,6 +675,75 @@ export function SettingsPage({
                       onChange={(e) => updateField("allow_negative_stock", String(e.target.checked))}
                       className="w-5 h-5 accent-emerald-600 rounded cursor-pointer"
                     />
+                  </div>
+
+                  {/* ACTUALIZACIONES AUTOMÁTICAS (TAURI UPDATER) */}
+                  <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>🔄 Actualizaciones del Sistema</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                            GitHub Releases
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          El sistema comprueba y descarga actualizaciones silenciosamente en segundo plano.
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {updater.status === "ready" ? (
+                          <button
+                            type="button"
+                            onClick={() => updater.restartAndApply()}
+                            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-700/20"
+                          >
+                            <span>🚀 Reiniciar a v{updater.newVersion}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => updater.checkForUpdates(true)}
+                            disabled={updater.status === "checking" || updater.status === "downloading"}
+                            className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+                          >
+                            {updater.status === "checking"
+                              ? "⏳ Comprobando…"
+                              : updater.status === "downloading"
+                              ? `⏳ Descargando (${updater.progressPercent}%)…`
+                              : "🔍 Buscar Actualizaciones Ahora"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Barra de progreso si está descargando */}
+                    {updater.status === "downloading" && (
+                      <div className="space-y-1 pt-1">
+                        <div className="flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
+                          <span>Descargando actualización en segundo plano…</span>
+                          <span className="font-mono">{updater.progressPercent}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-emerald-500 h-full transition-all duration-300"
+                            style={{ width: `${updater.progressPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {updater.status === "up-to-date" && (
+                      <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                        ✅ El sistema se encuentra actualizado a la última versión disponible.
+                      </div>
+                    )}
+
+                    {updater.status === "error" && updater.errorMsg && (
+                      <div className="text-xs text-rose-500 font-medium">
+                        ⚠️ Error al buscar actualización: {updater.errorMsg}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

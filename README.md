@@ -282,6 +282,32 @@ npm install
 
 ---
 
+## 🔄 Actualizaciones Automáticas (Tauri 2 Updater)
+
+El punto de venta cuenta con auto-actualización silenciosa en segundo plano mediante **GitHub Releases**:
+
+1. **Par de Claves Criptográficas**:
+   - Clave privada guardada en: `%USERPROFILE%\.tauri\pos-logiventa.key` (¡nunca compartir ni subir a git!).
+   - Clave pública configurada en `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`).
+2. **Comportamiento en Caja**:
+   - **Verificación silenciosa**: Al arrancar la terminal (tras 4 segundos) y periódicamente cada 60 minutos en segundo plano.
+   - **Descarga sin bloqueos**: Descarga e instala silenciosamente sin interrumpir cobros ni ventas en curso.
+   - **Aviso no intrusivo**: Muestra un banner flotante `[🔄 Reiniciar ahora]` cuando la nueva versión está lista para aplicarse.
+   - **Control manual**: En `Configuración (F7) > General`, el usuario puede pulsar *Buscar Actualizaciones Ahora* para forzar una comprobación.
+3. **Generar y Firmar una Nueva Versión de Release**:
+   Para compilar y firmar los instaladores (`.nsis.zip`, `.sig` y `latest.json`):
+
+   ```powershell
+   # En Windows PowerShell:
+   $env:TAURI_SIGNING_PRIVATE_KEY = (Get-Content "$HOME\.tauri\pos-logiventa.key" -Raw).Trim()
+   npm run tauri build
+   ```
+
+   Los artefactos firmados se generarán en `src-tauri/target/release/bundle/nsis/` junto con el archivo de manifiesto `latest.json`.
+   Basta con subir estos archivos al release correspondiente de GitHub (`https://github.com/krouhub03/POS-Logiventas/releases`).
+
+---
+
 ## 📄 Licencia
 
 Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.#   P O S - L o g i v e n t a s 
