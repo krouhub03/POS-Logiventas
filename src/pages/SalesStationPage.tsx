@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus } from "../types";
+import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift } from "../types";
 import { api } from "../services/api";
 import { formatCents, calculateTaxCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
 import { playScanSuccess, playStockWarning, playScanError } from "../lib/sound";
+import { hasPermission } from "../lib/permissions";
 import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
@@ -29,11 +30,56 @@ interface TicketTab {
   lines: CartLine[];
 }
 
+const BagIcon = () => (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>
+  </svg>
+);
+
+const PackageIcon = () => (
+  <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+  </svg>
+);
+
+const UsersIcon = () => (
+  <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+);
+
+const StoreIcon = () => (
+  <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/>
+  </svg>
+);
+
+const SettingsIcon = () => (
+  <svg className="w-3.5 h-3.5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
+  </svg>
+);
+
+const BarcodeScannerIcon = () => (
+  <svg className="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+    <path d="M7 8v8"/><path d="M12 8v8"/><path d="M17 8v8"/>
+  </svg>
+);
+
+const EmptyCartIcon = () => (
+  <svg className="w-8 h-8 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>
+  </svg>
+);
+
 interface SalesStationPageProps {
   cashier: CashierUser;
   terminalStatus: TerminalStatus;
+  activeShift?: CashShift | null;
   isActive?: boolean;
   onLockTerminal: () => void;
+  onOpenCloseShiftModal?: () => void;
   onNavigateToProducts?: () => void;
   onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
@@ -75,8 +121,10 @@ function getInitialActiveTicketId(initialTickets: TicketTab[]): number {
 export function SalesStationPage({
   cashier,
   terminalStatus,
+  activeShift,
   isActive = true,
   onLockTerminal,
+  onOpenCloseShiftModal,
   onNavigateToProducts,
   onNavigateToInventory,
   onNavigateToSettings,
@@ -104,6 +152,11 @@ export function SalesStationPage({
   const [barcodeInput, setBarcodeInput] = useState("");
   const [selectedLineIndex, setSelectedLineIndex] = useState<number>(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+
+  // Edición de nombre de ticket por doble clic
+  const [editingTicketId, setEditingTicketId] = useState<number | null>(null);
+  const [editingTicketName, setEditingTicketName] = useState("");
+  const editTicketInputRef = useRef<HTMLInputElement>(null);
 
   // Modales
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -163,16 +216,49 @@ export function SalesStationPage({
 
   // Enfoque continuo al input de código
   const focusInput = useCallback(() => {
-    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen) {
+    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen && editingTicketId === null) {
       barcodeInputRef.current?.focus();
     }
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId]);
 
   useEffect(() => {
-    if (isActive) {
+    if (isActive && editingTicketId === null) {
       focusInput();
     }
-  }, [isActive, focusInput, activeTicketId]);
+  }, [isActive, focusInput, activeTicketId, editingTicketId]);
+
+  // Enfocar y seleccionar texto al editar nombre de ticket
+  useEffect(() => {
+    if (editingTicketId !== null) {
+      editTicketInputRef.current?.focus();
+      editTicketInputRef.current?.select();
+    }
+  }, [editingTicketId]);
+
+  // Iniciar edición de nombre de ticket por doble clic
+  const handleStartRenameTicket = (ticket: TicketTab) => {
+    setActiveTicketId(ticket.id);
+    setEditingTicketId(ticket.id);
+    setEditingTicketName(ticket.name);
+  };
+
+  // Guardar nuevo nombre de ticket
+  const handleSaveTicketName = (ticketId: number) => {
+    const trimmed = editingTicketName.trim();
+    if (trimmed) {
+      setTickets((prev) =>
+        prev.map((t) => (t.id === ticketId ? { ...t, name: trimmed } : t))
+      );
+    }
+    setEditingTicketId(null);
+    focusInput();
+  };
+
+  // Cancelar edición de nombre de ticket
+  const handleCancelRenameTicket = () => {
+    setEditingTicketId(null);
+    focusInput();
+  };
 
   // Actualizar líneas del ticket activo
   const updateCurrentTicketLines = (newLines: CartLine[]) => {
@@ -183,6 +269,7 @@ export function SalesStationPage({
 
   // Adicionar un nuevo ticket
   const handleAddTicket = () => {
+    setEditingTicketId(null);
     const nextNumber = tickets.length + 1;
     const newId = Date.now();
     const newTicket: TicketTab = {
@@ -197,8 +284,45 @@ export function SalesStationPage({
     focusInput();
   };
 
+  // Poner ticket actual en espera / pendiente (F6)
+  const handleHoldTicket = () => {
+    setEditingTicketId(null);
+    if (cartLines.length === 0) {
+      showFeedback("El ticket actual ya está vacío", "info");
+      focusInput();
+      return;
+    }
+
+    // Si ya existe otro ticket completamente vacío, cambiamos a él para atender al nuevo cliente
+    const existingEmpty = tickets.find((t) => t.id !== activeTicketId && t.lines.length === 0);
+    if (existingEmpty) {
+      setActiveTicketId(existingEmpty.id);
+      setSelectedLineIndex(-1);
+      showFeedback(`⏳ ${currentTicket.name} en espera. ${existingEmpty.name} listo para venta.`, "info");
+      focusInput();
+      return;
+    }
+
+    // Si todos los tickets abiertos tienen productos, creamos uno nuevo limpio
+    const nextNumber = tickets.length + 1;
+    const newId = Date.now();
+    const newTicket: TicketTab = {
+      id: newId,
+      name: `Ticket ${nextNumber}`,
+      lines: [],
+    };
+    setTickets((prev) => [...prev, newTicket]);
+    setActiveTicketId(newId);
+    setSelectedLineIndex(-1);
+    showFeedback(`⏳ ${currentTicket.name} en espera. ${newTicket.name} listo para venta.`, "info");
+    focusInput();
+  };
+
   // Cancelar o eliminar ticket (mínimo 1 siempre)
   const handleCancelOrDeleteTicket = async (targetId = activeTicketId) => {
+    if (editingTicketId === targetId) {
+      setEditingTicketId(null);
+    }
     const target = tickets.find((t) => t.id === targetId);
     if (!target) return;
 
@@ -317,25 +441,41 @@ export function SalesStationPage({
       } else {
         const lineEnTicket = cartLines.find((l) => l.productId === product.id);
         const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
-        const stockRestante = product.stock - yaEnTicket;
+
+        // Cantidad de este producto apartada en otros tickets en espera
+        const enOtrosTickets = tickets
+          .filter((t) => t.id !== activeTicketId)
+          .flatMap((t) => t.lines)
+          .filter((l) => l.productId === product.id)
+          .reduce((sum, l) => sum + l.quantity, 0);
+
+        const nuevoTotalTicket = yaEnTicket + quantity;
+        const stockRestante = product.stock - nuevoTotalTicket;
 
         if (product.stock <= 0) {
           playStockWarning();
           showFeedback(
-            `⚠️ DISPONIBILIDAD AGOTADA: "${product.name}" no tiene existencias (Stock: 0 ${product.unit}).`,
+            `⚠️ SIN STOCK REGISTRADO: "${product.name}" (Stock: 0 ${product.unit}). Agregado por prioridad de mostrador.`,
             "warning"
           );
-        } else if (stockRestante < quantity) {
+        } else if (enOtrosTickets > 0 && stockRestante < enOtrosTickets) {
+          playScanSuccess();
+          showFeedback(
+            `⚡ Prioridad Mostrador: + ${quantity} × ${product.name} (Stock físico: ${product.stock} | ⏳ ${enOtrosTickets} en espera en otros tickets). El primero en pagar se lo lleva.`,
+            "info"
+          );
+        } else if (stockRestante < 0) {
           playStockWarning();
           showFeedback(
-            `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit} (ya tienes ${yaEnTicket} en ticket).`,
+            `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit}. Agregado por prioridad de mostrador.`,
             "warning"
           );
         } else {
           playScanSuccess();
-          const nuevoRestante = product.stock - yaEnTicket - quantity;
           showFeedback(
-            `✅ + ${quantity} × ${product.name} (Disponibles en tienda: ${nuevoRestante} ${product.unit})`,
+            `✅ + ${quantity} × ${product.name} (Disponibles: ${stockRestante} ${product.unit}${
+              enOtrosTickets > 0 ? ` • ⏳ ${enOtrosTickets} en espera` : ""
+            })`,
             "success"
           );
         }
@@ -498,29 +638,73 @@ export function SalesStationPage({
           const disp = check.stockDisponible ?? 0;
 
           if (check.motivo === "PRODUCTO_AGOTADO" || disp <= 0) {
-            modalAlert({
-              title: "Producto Agotado",
-              message: `No hay existencias disponibles de ${prodName} en el inventario. Por favor retírelo del ticket para continuar.`,
+            const ok = await confirm({
+              title: "⚠️ Producto Agotado en Mostrador",
+              message: `No quedan existencias físicas de ${prodName} (fueron cobradas por otro cliente o están agotadas).\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
               variant: "warning",
+              confirmText: "Sí, Remover y Cobrar",
+              cancelText: "Cerrar y Revisar Ticket",
             });
+            if (ok && check.productId) {
+              const updated = cartLines.filter((l) => l.productId !== check.productId);
+              updateCurrentTicketLines(updated);
+              showFeedback(`Removido automáticamente: ${prodName}`, "info");
+              if (updated.length > 0) {
+                setIsCobroOpen(true);
+              }
+            }
             return;
           }
 
           if (check.motivo === "RESERVADO_OTRA_CAJA") {
-            modalAlert({
-              title: "Producto No Disponible",
-              message: `La última unidad disponible de ${prodName} acaba de ser cobrada o seleccionada en otra caja. Por favor retírelo del ticket.`,
+            const ok = await confirm({
+              title: "⚠️ Vendido en Otra Caja",
+              message: `La última unidad física de ${prodName} acaba de ser cobrada en otra caja.\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
               variant: "warning",
+              confirmText: "Sí, Remover y Cobrar",
+              cancelText: "Cerrar y Revisar Ticket",
             });
+            if (ok && check.productId) {
+              const updated = cartLines.filter((l) => l.productId !== check.productId);
+              updateCurrentTicketLines(updated);
+              showFeedback(`Removido automáticamente: ${prodName}`, "info");
+              if (updated.length > 0) {
+                setIsCobroOpen(true);
+              }
+            }
             return;
           }
 
           if (check.motivo === "STOCK_INSUFICIENTE") {
-            modalAlert({
-              title: "Existencias Insuficientes",
-              message: `Solo hay ${disp} unidad(es) disponible(s) de ${prodName}. Por favor ajuste la cantidad en el ticket.`,
+            const line = cartLines.find((l) => l.productId === check.productId);
+            const cantPedida = line ? line.quantity : 1;
+            const ok = await confirm({
+              title: "⚠️ Existencias Insuficientes",
+              message: `Solo quedan ${disp} unidad(es) de ${prodName} (se solicitaron ${cantPedida}).\n\n¿Desea ajustar la cantidad automáticamente a ${disp} unidad(es) y proceder al cobro?`,
               variant: "warning",
+              confirmText: `Ajustar a ${disp} y Cobrar`,
+              cancelText: "Revisar Ticket",
             });
+            if (ok && check.productId && line) {
+              const updated = cartLines.map((l) => {
+                if (l.productId === check.productId) {
+                  const newQty = disp;
+                  const newSubtotal = Math.round(l.unitPriceCents * newQty);
+                  const newTax = calculateTaxCents(newSubtotal, l.taxRateBp);
+                  return {
+                    ...l,
+                    quantity: newQty,
+                    subtotalCents: newSubtotal,
+                    taxCents: newTax,
+                    totalCents: newSubtotal + newTax,
+                  };
+                }
+                return l;
+              });
+              updateCurrentTicketLines(updated);
+              showFeedback(`Cantidad ajustada a ${disp} de ${prodName}`, "info");
+              setIsCobroOpen(true);
+            }
             return;
           }
 
@@ -575,9 +759,22 @@ export function SalesStationPage({
   useEffect(() => {
     if (!isActive) return;
     if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+    if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "F7") {
+      // Ignorar atajos si el foco está en un input o textarea ajeno al escáner
+      const isOtherInputFocused =
+        document.activeElement &&
+        document.activeElement !== barcodeInputRef.current &&
+        (document.activeElement.tagName === "INPUT" ||
+          document.activeElement.tagName === "TEXTAREA" ||
+          document.activeElement.tagName === "SELECT");
+      if (isOtherInputFocused) return;
+
+      if (e.key === "F6") {
+        e.preventDefault();
+        handleHoldTicket();
+      } else if (e.key === "F7") {
         e.preventDefault();
         onNavigateToSettings?.();
       } else if (e.key === "F11") {
@@ -641,12 +838,12 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || editingTicketId !== null) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -662,197 +859,292 @@ export function SalesStationPage({
     };
     window.addEventListener("click", handleGlobalClick);
     return () => window.removeEventListener("click", handleGlobalClick);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId]);
+
+  const cashierInitials = (cashier.fullName || "Cajero")
+    .split(" ")
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   return (
-    <div className="flex flex-col h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
-      {/* 1. BARRA SUPERIOR DE MÓDULOS ESTILO ELEVENTA */}
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-2 flex items-center justify-between shadow-sm transition-colors duration-150">
-        <div className="flex items-center gap-1 sm:gap-2">
-          {/* Botones de Módulos (F1-F4) */}
-          <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold text-xs shadow-sm hover:bg-emerald-500 transition-colors">
-            <span className="bg-emerald-800/80 px-1.5 py-0.5 rounded text-[10px] font-mono">F1</span>
-            <span>Ventas</span>
-          </button>
-
-          <button
-            onClick={onNavigateToProducts}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors"
-          >
-            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F3</span>
-            <span>Productos</span>
-          </button>
-
-          <button
-            onClick={() => showFeedback("Módulo de Clientes sincronizado con ERP")}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors hidden sm:flex"
-          >
-            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F2</span>
-            <span>Clientes</span>
-          </button>
-
-          <button
-            onClick={onNavigateToInventory || onNavigateToProducts}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors hidden sm:flex"
-            title="Control de existencias y ajustes de inventario (F4)"
-          >
-            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F4</span>
-            <span>Inventario</span>
-          </button>
-
-          <button
-            onClick={onNavigateToSettings}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent transition-colors"
-            title="Configuración de periféricos y hardware (F7)"
-          >
-            <span className="bg-slate-200 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-500 dark:text-slate-400">F7</span>
-            <span>Configuración</span>
-          </button>
-        </div>
-
-        {/* Info Cajero, Selector de Tema & Bloqueo */}
+    <div className="flex flex-col h-screen bg-[#f8fafc] dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
+      {/* 1. FILA SUPERIOR: TERMINAL, ESTADO, CAJERO Y CONTROLES DE VENTANA */}
+      <header className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2 flex items-center justify-between text-xs transition-colors duration-150 shadow-xs">
         <div className="flex items-center gap-3">
-          {/* BOTÓN DE CAMBIO DE MODO CLARO / OSCURO */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
-            title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 font-medium text-xs">Terminal:</span>
+            <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-xs px-2.5 py-1 rounded-md">
+              {terminalStatus.cajaCodigo || "CAJA-01"}
+            </span>
+          </div>
+
+          {/* Badge de Estado / Sincronización */}
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold ${
+              syncStatus && !syncStatus.isOnline
+                ? "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-400"
+                : syncStatus && syncStatus.pendingCount > 0
+                ? "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800/60 text-sky-700 dark:text-sky-400"
+                : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400"
+            }`}
           >
-            {theme === "dark" ? (
-              <>
-                <span className="text-amber-400 text-sm">☀️</span>
-                <span className="hidden sm:inline text-[11px]">Claro</span>
-              </>
-            ) : (
-              <>
-                <span className="text-indigo-600 text-sm">🌙</span>
-                <span className="hidden sm:inline text-[11px]">Oscuro</span>
-              </>
-            )}
-          </button>
-
-          {/* BOTÓN DE PANTALLA COMPLETA (OCULTA BARRA DE TAREAS) */}
-          <button
-            type="button"
-            onClick={() => api.system.toggleFullscreen().catch(console.error)}
-            className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
-            title="Alternar Pantalla Completa (F11)"
-          >
-            <span className="text-sm">⛶</span>
-          </button>
-
-          {/* BOTÓN MINIMIZAR (en pantalla completa no hay barra de título nativa) */}
-          <button
-            type="button"
-            onClick={() => api.system.minimizeWindow().catch(console.error)}
-            className="flex items-center justify-center w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-xs font-semibold transition-colors"
-            title="Minimizar ventana"
-          >
-            <span className="text-sm leading-none font-bold">—</span>
-          </button>
-
-          {/* BADGE DE ESTADO DE CAJA Y CONEXIÓN */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-            {syncStatus?.isOnline ? (
-              syncStatus.pendingCount > 0 ? (
-                <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-medium text-[11px]" title={`${syncStatus.pendingCount} venta(s) guardada(s) pendientes de sincronizar`}>
-                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-                  Sincronizando ({syncStatus.pendingCount})
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-medium text-[11px]" title="Terminal al día con el inventario">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  Al día
-                </span>
-              )
-            ) : (
-              <span className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 font-medium text-[11px]" title="Ventas guardadas en esta terminal. Se actualizarán automáticamente al reconectar.">
-                <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                Modo local {syncStatus?.pendingCount ? `(${syncStatus.pendingCount})` : ""}
-              </span>
-            )}
-
+            <span
+              className={`w-2 h-2 rounded-full ${
+                syncStatus && !syncStatus.isOnline
+                  ? "bg-amber-500"
+                  : syncStatus && syncStatus.pendingCount > 0
+                  ? "bg-sky-500"
+                  : "bg-emerald-500"
+              }`}
+            />
+            <span>
+              {syncStatus && !syncStatus.isOnline
+                ? "Offline"
+                : syncStatus && syncStatus.pendingCount > 0
+                ? `Pendiente (${syncStatus.pendingCount})`
+                : "Al día"}
+            </span>
             <button
               type="button"
               disabled={isSyncing}
               onClick={handleManualSync}
-              className="ml-1 p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors disabled:opacity-50"
+              className="ml-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors disabled:opacity-50 cursor-pointer"
               title="Forzar sincronización de catálogo y ventas ahora"
             >
-              <span className={isSyncing ? "animate-spin inline-block text-xs" : "text-xs"}>🔄</span>
+              <span className={isSyncing ? "animate-spin inline-block text-xs" : "text-xs"}>⟳</span>
             </button>
           </div>
+        </div>
 
-          <div className="text-right hidden md:block">
-            <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 justify-end">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+        <div className="flex items-center gap-2.5">
+          {/* Avatar del Cajero con Iniciales + Nombre */}
+          <div className="flex items-center gap-2 mr-1">
+            <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center font-bold text-xs">
+              {cashierInitials}
+            </div>
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 hidden sm:inline">
               {cashier.fullName}
-            </div>
-            <div className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-mono">
-              {terminalStatus.cajaCodigo || "CAJA-01"} • {terminalStatus.empresaNombre || "Megalider"}
-            </div>
+            </span>
           </div>
 
+          {/* Botón Cerrar Turno */}
+          {activeShift && onOpenCloseShiftModal && (
+            <button
+              type="button"
+              onClick={onOpenCloseShiftModal}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+              title={`Turno actual: ${activeShift.folio}. Clic para realizar arqueo de caja y cierre Z-Report`}
+            >
+              <span>📋</span>
+              <span>Cerrar Turno</span>
+            </button>
+          )}
+
+          {/* Botón Bloquear Terminal */}
           <button
             onClick={onLockTerminal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-semibold transition-colors"
+            className="w-8 h-8 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-200 dark:border-rose-800 text-rose-500 flex items-center justify-center transition-colors cursor-pointer"
             title="Bloquear Terminal de Caja"
           >
-            <span>🔒 Bloquear</span>
+            <span>🔒</span>
+          </button>
+
+          {/* Botón Modo Claro / Oscuro */}
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-amber-500 flex items-center justify-center transition-colors cursor-pointer"
+            title={theme === "dark" ? "Cambiar a Modo Claro" : "Cambiar a Modo Oscuro"}
+          >
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
+
+          {/* Botón Minimizar */}
+          <button
+            type="button"
+            onClick={() => api.system.minimizeWindow().catch(console.error)}
+            className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-500 font-bold flex items-center justify-center transition-colors cursor-pointer"
+            title="Minimizar ventana"
+          >
+            —
+          </button>
+
+          {/* Botón Pantalla Completa */}
+          <button
+            type="button"
+            onClick={() => api.system.toggleFullscreen().catch(console.error)}
+            className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-500 flex items-center justify-center transition-colors cursor-pointer"
+            title="Alternar Pantalla Completa (F11)"
+          >
+            ⛶
           </button>
         </div>
       </header>
 
-      {/* 2. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (ESTILO ELEVENTA) */}
-      <div className="bg-slate-50 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-3 flex flex-wrap items-center gap-3 transition-colors duration-150">
-        {/* Pestañas de Tickets (Mínimo 1 ticket siempre) */}
-        <div className="flex items-center gap-1 bg-slate-200/80 dark:bg-slate-950 p-1 rounded-xl border border-slate-300 dark:border-slate-800 mr-2">
-          {tickets.map((t) => (
-            <div
-              key={t.id}
-              className={`flex items-center rounded-lg text-xs font-bold transition-colors ${
-                activeTicketId === t.id
-                  ? "bg-white text-emerald-700 shadow-sm border border-slate-200 dark:bg-slate-800 dark:text-emerald-400 dark:border-emerald-500/30"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-900"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTicketId(t.id);
-                  focusInput();
-                }}
-                className="px-3 py-1 flex items-center gap-1.5"
-              >
-                <span>{t.name}</span>
-                {t.lines.length > 0 && (
-                  <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
-                    {t.lines.length}
-                  </span>
-                )}
-              </button>
+      {/* 2. FILA DE NAVEGACIÓN DE MÓDULOS (F1 - F7) */}
+      <nav className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2 flex items-center justify-between shadow-xs transition-colors duration-150">
+        <div className="flex items-center gap-2">
+          {/* F1 Ventas (Activo) */}
+          <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer">
+            <span className="bg-emerald-900/60 px-1.5 py-0.5 rounded text-[10px] font-mono text-white">F1</span>
+            <BagIcon />
+            <span>Ventas</span>
+          </button>
 
-              {/* Botón de cerrar pestaña si hay más de 1 ticket */}
-              {tickets.length > 1 && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCancelOrDeleteTicket(t.id);
-                  }}
-                  className="pr-2 pl-0.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold"
-                  title={`Cerrar y eliminar ${t.name}`}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          ))}
+          {/* F3 Productos */}
+          <button
+            onClick={onNavigateToProducts}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+          >
+            <span className="text-slate-400 font-mono text-[10px]">F3</span>
+            <PackageIcon />
+            <span>Productos</span>
+          </button>
+
+          {/* F2 Clientes */}
+          <button
+            onClick={() => showFeedback("Módulo de Clientes sincronizado con ERP")}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
+          >
+            <span className="text-slate-400 font-mono text-[10px]">F2</span>
+            <UsersIcon />
+            <span>Clientes</span>
+          </button>
+
+          {/* F4 Inventario */}
+          {(hasPermission(cashier, "inventario:ajustar") || hasPermission(cashier, "inventario:ver")) && (
+            <button
+              onClick={onNavigateToInventory || onNavigateToProducts}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
+              title="Control de existencias y ajustes de inventario (F4)"
+            >
+              <span className="text-slate-400 font-mono text-[10px]">F4</span>
+              <StoreIcon />
+              <span>Inventario</span>
+            </button>
+          )}
+
+          {/* F7 Configuración */}
+          {hasPermission(cashier, "pos:configuracion") && (
+            <button
+              onClick={onNavigateToSettings}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+              title="Configuración de periféricos y hardware (F7)"
+            >
+              <span className="text-slate-400 font-mono text-[10px]">F7</span>
+              <SettingsIcon />
+              <span>Configuración</span>
+            </button>
+          )}
+        </div>
+
+        {/* Indicador de Ayuda a la Derecha */}
+        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-400 dark:text-slate-400 text-xs font-medium">
+          <span>👆</span>
+          <span>Teclas F1-F7 o toque directo</span>
+        </div>
+      </nav>
+
+      {/* 3. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (TICKETS + SCANNER + ACCIONES) */}
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2.5 flex flex-wrap items-center gap-3 transition-colors duration-150">
+        {/* Pestañas de Tickets (Mínimo 1 ticket siempre) */}
+        <div className="flex items-center gap-1.5 mr-2">
+          {tickets.map((t) => {
+            const isEditing = editingTicketId === t.id;
+            const isActiveTab = activeTicketId === t.id;
+
+            return (
+              <div
+                key={t.id}
+                className={`flex items-center rounded-lg text-xs font-bold transition-all ${
+                  isActiveTab
+                    ? "bg-white dark:bg-slate-800 text-slate-800 dark:text-white border border-slate-200 dark:border-slate-700 shadow-xs"
+                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                }`}
+              >
+                {isEditing ? (
+                  <div className="px-1.5 py-1 flex items-center">
+                    <input
+                      ref={editTicketInputRef}
+                      type="text"
+                      value={editingTicketName}
+                      onChange={(e) => setEditingTicketName(e.target.value)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleSaveTicketName(t.id);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          handleCancelRenameTicket();
+                        }
+                      }}
+                      onBlur={() => handleSaveTicketName(t.id)}
+                      autoFocus
+                      onFocus={(e) => e.target.select()}
+                      className="px-2 py-0.5 text-xs font-bold rounded bg-slate-50 dark:bg-slate-900 border border-emerald-500 text-slate-900 dark:text-white outline-none w-24 sm:w-28 shadow-sm"
+                      maxLength={30}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTicketId(t.id);
+                      focusInput();
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleStartRenameTicket(t);
+                    }}
+                    className="px-2.5 py-1.5 flex items-center gap-1.5 cursor-pointer select-none"
+                    title="Doble clic para cambiar nombre"
+                  >
+                    {isActiveTab && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    )}
+                    <span
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleStartRenameTicket(t);
+                      }}
+                    >
+                      {t.name}
+                    </span>
+                    {t.lines.length > 0 && (
+                      <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
+                        {t.lines.length}
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                {/* Botón de cerrar pestaña si hay más de 1 ticket */}
+                {tickets.length > 1 && !isEditing && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCancelOrDeleteTicket(t.id);
+                    }}
+                    className="pr-2 pl-0.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 text-xs font-bold cursor-pointer"
+                    title={`Cerrar y eliminar ${t.name}`}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            );
+          })}
           <button
             type="button"
             onClick={handleAddTicket}
-            className="px-2.5 py-1 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-300/40 dark:hover:bg-slate-800 rounded-lg text-xs font-bold transition-colors"
+            className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-sm font-bold transition-colors cursor-pointer"
             title="Adicionar nuevo ticket"
           >
             +
@@ -862,16 +1154,19 @@ export function SalesStationPage({
         {/* Input Principal de Código de Barras */}
         <form onSubmit={handleBarcodeSubmit} className="flex-1 min-w-[280px] flex items-center gap-2">
           <div className="relative flex-1">
+            <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+              <BarcodeScannerIcon />
+            </span>
             <input
               ref={barcodeInputRef}
               type="text"
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               placeholder="Código del producto o cantidad*código (ej. 3*75012345)..."
-              className="w-full bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white font-mono text-base font-bold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-sm"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl pl-10 pr-36 py-2.5 text-slate-900 dark:text-white font-mono text-sm font-semibold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-2xs transition-colors"
               autoFocus
             />
-            {barcodeInput && (
+            {barcodeInput ? (
               <button
                 type="button"
                 onClick={() => {
@@ -882,25 +1177,30 @@ export function SalesStationPage({
               >
                 ✕
               </button>
+            ) : (
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-[10px] font-mono font-bold tracking-wider uppercase border border-slate-200/80 dark:border-slate-700 pointer-events-none">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>SCANNER ACTIVO</span>
+              </div>
             )}
           </div>
           <button
             type="submit"
-            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-emerald-700/20 dark:shadow-emerald-950 transition-colors"
+            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
           >
-            <span>Enter</span>
-            <span className="hidden sm:inline">Agregar</span>
+            <span>ENTER</span>
+            <span className="hidden sm:inline">AGREGAR</span>
           </button>
         </form>
 
         {/* Botones de Acción de Entrada Rápida */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setIsVariosOpen(true)}
-            className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-amber-300 dark:border-slate-700 text-amber-800 dark:text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-[#fef3c7] hover:bg-[#fde68a] dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-[#92400e] dark:text-amber-200 border border-[#fcd34d] dark:border-amber-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Vender artículo sin código (Insert)"
           >
-            <span className="bg-amber-200/80 dark:bg-amber-950/80 px-1 rounded text-[10px] font-mono text-amber-900 dark:text-amber-400 border border-amber-400/40 dark:border-amber-800/40">
+            <span className="bg-[#fde68a] dark:bg-amber-900/60 text-[#78350f] dark:text-amber-300 border border-[#f59e0b]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               INS
             </span>
             <span>Varios</span>
@@ -908,10 +1208,10 @@ export function SalesStationPage({
 
           <button
             onClick={() => setIsSearchOpen(true)}
-            className="px-3 py-2 rounded-xl bg-sky-50 hover:bg-sky-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-sky-300 dark:border-slate-700 text-sky-800 dark:text-sky-300 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-[#e0f2fe] hover:bg-[#bae6fd] dark:bg-sky-950/40 dark:hover:bg-sky-900/50 text-[#0369a1] dark:text-sky-200 border border-[#7dd3fc] dark:border-sky-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Buscar Producto por Nombre o SKU (F10)"
           >
-            <span className="bg-sky-200/80 dark:bg-sky-950/80 px-1 rounded text-[10px] font-mono text-sky-900 dark:text-sky-400 border border-sky-400/40 dark:border-sky-800/40">
+            <span className="bg-[#bae6fd] dark:bg-sky-900/60 text-[#075985] dark:text-sky-300 border border-[#0ea5e9]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               F10
             </span>
             <span>Buscar</span>
@@ -920,10 +1220,10 @@ export function SalesStationPage({
           <button
             onClick={removeSelectedLine}
             disabled={selectedLineIndex < 0 || cartLines.length === 0}
-            className="px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/40 border border-rose-300 dark:border-slate-700 text-rose-800 dark:text-rose-300 font-bold text-xs flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:pointer-events-none shadow-sm"
+            className="px-3.5 py-2 rounded-xl bg-[#ffe4e6] hover:bg-[#fecdd3] dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-[#9f1239] dark:text-rose-200 border border-[#fda4af] dark:border-rose-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none"
             title="Eliminar producto seleccionado (Del)"
           >
-            <span className="bg-rose-200/80 dark:bg-rose-950/80 px-1 rounded text-[10px] font-mono text-rose-900 dark:text-rose-400 border border-rose-400/40 dark:border-rose-800/40">
+            <span className="bg-[#fecdd3] dark:bg-rose-900/60 text-[#881337] dark:text-rose-300 border border-[#f43f5e]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               DEL
             </span>
             <span>Borrar</span>
@@ -983,11 +1283,23 @@ export function SalesStationPage({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-24 text-center text-slate-400 dark:text-slate-600 font-sans">
-                    <div className="text-4xl mb-2">🛒</div>
-                    <div className="text-base font-bold text-slate-700 dark:text-slate-400">El ticket de venta está vacío</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">
-                      Escanee un código de barras, presione <span className="text-sky-600 dark:text-sky-400 font-mono font-bold">F10</span> para buscar, o <span className="text-amber-600 dark:text-amber-400 font-mono font-bold">INS</span> para venta libre.
+                  <td colSpan={7} className="py-24 text-center font-sans">
+                    <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center mx-auto mb-3 text-slate-300 dark:text-slate-600 shadow-2xs">
+                      <EmptyCartIcon />
+                    </div>
+                    <div className="text-base font-bold text-slate-800 dark:text-slate-200">
+                      El ticket de venta está vacío
+                    </div>
+                    <div className="text-xs text-slate-400 dark:text-slate-500 mt-1.5 flex items-center justify-center gap-1.5 flex-wrap">
+                      <span>Escanee un código de barras, presione</span>
+                      <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-mono text-[11px] font-semibold">
+                        F10
+                      </kbd>
+                      <span>para buscar, o</span>
+                      <kbd className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-mono text-[11px] font-semibold">
+                        INS
+                      </kbd>
+                      <span>para venta libre.</span>
                     </div>
                   </td>
                 </tr>
@@ -1031,19 +1343,39 @@ export function SalesStationPage({
                       </td>
                       <td className="py-2.5 px-3 text-center">
                         {line.currentStock !== undefined ? (
-                          line.currentStock <= 0 ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 font-sans uppercase tracking-wide">
-                              Agotado (0)
-                            </span>
-                          ) : line.currentStock <= 5 ? (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800/60 font-mono">
-                              Bajo ({line.currentStock})
-                            </span>
-                          ) : (
-                            <span className="text-emerald-700 dark:text-emerald-400 font-bold font-mono">
-                              {line.currentStock}
-                            </span>
-                          )
+                          (() => {
+                            const enEsperaOtros = tickets
+                              .filter((t) => t.id !== activeTicketId)
+                              .flatMap((t) => t.lines)
+                              .filter((l) => l.productId === line.productId)
+                              .reduce((acc, l) => acc + l.quantity, 0);
+
+                            return (
+                              <div className="flex flex-col items-center">
+                                {line.currentStock <= 0 ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800/60 font-sans uppercase tracking-wide">
+                                    Agotado (0)
+                                  </span>
+                                ) : line.currentStock <= 5 ? (
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800/60 font-mono">
+                                    Bajo ({line.currentStock})
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-700 dark:text-emerald-400 font-bold font-mono">
+                                    {line.currentStock}
+                                  </span>
+                                )}
+                                {enEsperaOtros > 0 && (
+                                  <span
+                                    className="text-[10px] font-sans font-semibold text-amber-600 dark:text-amber-400 leading-tight mt-0.5"
+                                    title={`${enEsperaOtros} unidad(es) de este producto en otros tickets en espera`}
+                                  >
+                                    ⏳ {enEsperaOtros} en espera
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
@@ -1057,50 +1389,52 @@ export function SalesStationPage({
         </div>
       </main>
 
-      {/* 4. FOOTER RESUMEN ESTILO ELEVENTA CON VISOR GIGANTE */}
-      <footer className="bg-white dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-800 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shadow-md transition-colors duration-150">
+      {/* 4. FOOTER RESUMEN CON VISOR GIGANTE */}
+      <footer className="bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xs transition-colors duration-150">
         {/* Atajos Inferiores & Resumen de Piezas */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="bg-slate-100 dark:bg-slate-950 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center gap-4">
+          <div className="bg-white dark:bg-slate-800/90 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-4 shadow-2xs">
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500">Artículos</div>
-              <div className="text-lg font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Artículos</div>
+              <div className="text-base font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
             </div>
-            <div className="w-px h-8 bg-slate-300 dark:bg-slate-800" />
+            <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-500">Piezas</div>
-              <div className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
+              <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Piezas</div>
+              <div className="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => showFeedback("Poner ticket en espera")}
-              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors"
+              onClick={handleHoldTicket}
+              className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-2 transition-colors cursor-pointer shadow-2xs"
+              title="Poner ticket en espera y abrir uno nuevo (F6)"
             >
-              <span className="bg-slate-200 dark:bg-slate-900 px-1 rounded font-mono text-[10px] text-slate-600 dark:text-slate-400">F6</span>
+              <span>⏸</span>
               <span>Pendiente</span>
             </button>
             <button
               onClick={() => handleCancelOrDeleteTicket()}
-              className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-700 dark:text-slate-400 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-transparent flex items-center gap-1.5 transition-colors"
+              className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               title={tickets.length > 1 ? `Eliminar ${currentTicket.name}` : `Vaciar ${currentTicket.name}`}
             >
-              <span>{tickets.length > 1 ? `✕ Eliminar ${currentTicket.name}` : "✕ Cancelar Ticket"}</span>
+              <span>✕</span>
+              <span>Cancelar Ticket</span>
             </button>
           </div>
         </div>
 
         {/* VISOR GIGANTE DEL TOTAL Y BOTÓN COBRAR (F12) */}
-        <div className="flex items-center gap-5 w-full md:w-auto justify-end">
+        <div className="flex items-center gap-6 w-full md:w-auto justify-end">
           <div className="text-right">
-            <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+            <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}
             </div>
-            <div className="text-[10px] uppercase tracking-widest font-black text-slate-500 dark:text-slate-400">
-              Total a Pagar
+            <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+              TOTAL A PAGAR
             </div>
-            <div className="text-4xl md:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight dark:drop-shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+            <div className="text-4xl md:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
               {formatCents(totalCents)}
             </div>
           </div>
@@ -1108,9 +1442,9 @@ export function SalesStationPage({
           <button
             onClick={handleOpenCobro}
             disabled={cartLines.length === 0}
-            className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-xl uppercase tracking-wider flex items-center gap-3 shadow-xl shadow-emerald-700/30 dark:shadow-emerald-950/60 transition-all disabled:opacity-40 disabled:pointer-events-none border border-emerald-400/40"
+            className="px-8 py-3.5 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-lg uppercase tracking-wider flex items-center gap-2.5 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
           >
-            <span className="bg-emerald-800/80 px-2 py-0.5 rounded-lg text-sm font-mono border border-emerald-400/40">
+            <span className="bg-white/25 dark:bg-emerald-700/60 px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
               F12
             </span>
             <span>Cobrar</span>

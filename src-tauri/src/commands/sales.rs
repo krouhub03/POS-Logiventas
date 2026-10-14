@@ -72,16 +72,42 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
     }
     let change_cents = paid_cents - total_cents;
 
+    // Validación estricta NIIF: el cambio solo puede originarse a partir de pagos en efectivo
+    if change_cents > 0 {
+        let cash_paid_cents: i64 = input.payments.iter()
+            .filter(|p| {
+                let m = p.method.to_lowercase();
+                m.contains("cash") || m.contains("efectivo")
+            })
+            .map(|p| p.amount_cents)
+            .sum();
+
+        if cash_paid_cents < change_cents {
+            return Err(AppError::Validation(
+                "El cambio (vuelto) solo puede originarse a partir de pagos en efectivo.".to_string(),
+            ));
+        }
+    }
+
     // 4. Transacción atómica ACID
     let tx = conn.transaction()?;
 
+    let active_shift_id: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM cash_sessions WHERE status = 'open' ORDER BY opened_at DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+
     tx.execute(
-        "INSERT INTO sales (folio, customer_id, user_id, subtotal_cents, discount_cents, tax_cents, total_cents, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'completed')",
+        "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'completed')",
         params![
             folio,
             input.customer_id,
             input.user_id,
+            active_shift_id,
             subtotal_cents,
             discount_cents,
             tax_cents,
@@ -155,10 +181,16 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
     // Registrar pagos
     for p in &input.payments {
+        let pm_id: Option<String> = tx.query_row(
+            "SELECT id FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
+            params![p.method],
+            |r| r.get(0),
+        ).ok();
+
         tx.execute(
-            "INSERT INTO payments (sale_id, method, amount_cents, reference)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![sale_id, p.method, p.amount_cents, p.reference],
+            "INSERT INTO payments (sale_id, payment_method_id, method, amount_cents, reference)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![sale_id, pm_id, p.method, p.amount_cents, p.reference],
         )?;
     }
 
@@ -208,6 +240,8 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         "discountCents": discount_cents,
         "taxCents": tax_cents,
         "totalCents": total_cents,
+        "paidCents": paid_cents,
+        "changeCents": change_cents,
         "status": "completed",
         "createdAt": &created_at,
         "items": payload_items,

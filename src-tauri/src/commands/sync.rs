@@ -448,7 +448,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "SELECT COALESCE(SUM(si.quantity), 0) \
                  FROM sale_items si \
                  JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                 WHERE si.product_id = ?1 AND sq.status = 'pending'",
+                 WHERE si.product_id = ?1 AND sq.status != 'synced'",
                 params![local_id],
                 |r| r.get(0),
             ).unwrap_or(0.0)
@@ -655,7 +655,7 @@ pub async fn sync_payment_methods(db: State<'_, Db>) -> AppResult<usize> {
 pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMethodDto>> {
     let conn = db.conn()?;
     let mut stmt = conn.prepare(
-        "SELECT id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active
+        "SELECT id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active, terminal_enabled
          FROM payment_methods
          ORDER BY name ASC",
     )?;
@@ -671,6 +671,7 @@ pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMeth
             puc_account_id: r.get(6)?,
             puc_account_name: r.get(7)?,
             active: r.get(8)?,
+            terminal_enabled: r.get(9)?,
         })
     })?;
 
@@ -679,6 +680,21 @@ pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMeth
         list.push(r?);
     }
     Ok(list)
+}
+
+#[tauri::command]
+pub async fn toggle_payment_method_terminal_status(
+    db: State<'_, Db>,
+    id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    let conn = db.conn()?;
+    let val: i64 = if enabled { 1 } else { 0 };
+    conn.execute(
+        "UPDATE payment_methods SET terminal_enabled = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![val, id],
+    )?;
+    Ok(())
 }
 
 /// 📤 Despacha las ventas pendientes en la cola outbox (sync_queue) hacia el ERP.
@@ -702,7 +718,8 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         for r in rows {
             let (id, payload_str) = r?;
             if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
-                pending_records.push(id);
+                let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                pending_records.push((id, folio));
                 ventas_json.push(parsed);
             }
         }
@@ -731,7 +748,7 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         Err(e) => {
             let conn = db.conn()?;
             let err_str = e.to_string();
-            for id in &pending_records {
+            for (id, _) in &pending_records {
                 let _ = conn.execute(
                     "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
                     params![err_str, id],
@@ -751,22 +768,48 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     let conn = db.conn()?;
     if is_success {
         let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
-        let total_synced = json["data"]["resultados"].as_array().map(|a| a.len()).unwrap_or(pending_records.len());
+        let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
+            .as_array()
+            .map(|arr| {
+                arr.iter().filter_map(|item| {
+                    let folio = item["folio"].as_str()?.to_string();
+                    let status = item["status"].as_str().unwrap_or("failed").to_string();
+                    let err = item["error"].as_str().map(|s| s.to_string());
+                    Some((folio, (status, err)))
+                }).collect()
+            })
+            .unwrap_or_default();
 
-        for id in &pending_records {
-            let _ = conn.execute(
-                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now') WHERE id = ?1",
-                params![id],
-            );
+        let mut synced_count = 0;
+        let mut failed_count = 0;
+
+        for (id, folio) in &pending_records {
+            let (status, err) = resultados_map.get(folio)
+                .cloned()
+                .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este ticket".to_string())));
+
+            if status == "synced" || status == "skipped" {
+                let _ = conn.execute(
+                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                    params![id],
+                );
+                synced_count += 1;
+            } else {
+                let _ = conn.execute(
+                    "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                    params![err.unwrap_or_else(|| "Fallo al procesar venta en ERP".to_string()), id],
+                );
+                failed_count += 1;
+            }
         }
 
         Ok(OutboxBatchResult {
             dispatched: pending_records.len(),
-            synced: total_synced,
-            failed: 0,
+            synced: synced_count,
+            failed: failed_count,
         })
     } else {
-        for id in &pending_records {
+        for (id, _) in &pending_records {
             let _ = conn.execute(
                 "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
                 params![res_text, id],
@@ -846,7 +889,7 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
                         "SELECT COALESCE(SUM(si.quantity), 0) \
                          FROM sale_items si \
                          JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                         WHERE si.product_id = ?1 AND sq.status = 'pending'",
+                         WHERE si.product_id = ?1 AND sq.status != 'synced'",
                         params![local_id],
                         |r| r.get(0),
                     )

@@ -12,6 +12,8 @@ pub struct TerminalStatus {
     pub empresa_nombre: Option<String>,
     pub empresa_nit: Option<String>,
     pub active_cashier: Option<CashierUser>,
+    #[serde(default)]
+    pub active_cashier_revoked: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,11 @@ pub struct CashierUser {
     pub email: Option<String>,
     pub role: String,
     pub active: bool,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    pub profile_name: Option<String>,
+    pub erp_role_code: Option<String>,
+    pub login_count: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

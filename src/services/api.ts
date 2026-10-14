@@ -3,10 +3,13 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
   CashierUser,
+  CashShift,
   CheckStockItemInput,
+  CloseShiftInput,
   CreateSaleInput,
   InventoryMovement,
   NewProduct,
+  OpenShiftInput,
   OutboxBatchResult,
   PairCodeInput,
   PairLoginInput,
@@ -14,6 +17,7 @@ import type {
   PaymentMethod,
   Product,
   SaleReceipt,
+  ShiftSummary,
   StockAdjustmentInput,
   SyncStatus,
   TerminalStatus,
@@ -39,7 +43,8 @@ export const api = {
 
   auth: {
     getTerminalStatus: () => invoke<TerminalStatus>("get_terminal_status"),
-    validateSession: () => invoke<TerminalStatus>("validate_terminal_session"),
+    validateSession: (activeErpUserId?: string) =>
+      invoke<TerminalStatus>("validate_terminal_session", { activeErpUserId }),
     pairCode: (input: PairCodeInput) =>
       invoke<TerminalStatus>("pair_terminal_code", { input }),
     pairLogin: (input: PairLoginInput) =>
@@ -47,6 +52,8 @@ export const api = {
     syncUsers: () => invoke<CashierUser[]>("sync_users_from_erp"),
     listCashiers: () => invoke<CashierUser[]>("list_local_cashiers"),
     loginPin: (pin: string) => invoke<CashierUser>("login_cashier_pin", { pin }),
+    loginUserPin: (userId: number, pin: string) =>
+      invoke<CashierUser>("login_cashier_user_pin", { userId, pin }),
     unpair: () => invoke<TerminalStatus>("unpair_terminal"),
   },
 
@@ -94,7 +101,18 @@ export const api = {
     getStatus: () => invoke<SyncStatus>("get_sync_status"),
     syncPaymentMethods: () => invoke<number>("sync_payment_methods"),
     getPaymentMethods: () => invoke<PaymentMethod[]>("get_payment_methods"),
+    togglePaymentMethodTerminalStatus: (id: string, enabled: boolean) =>
+      invoke<void>("toggle_payment_method_terminal_status", { id, enabled }),
     onStatusChange: (callback: (status: SyncStatus) => void): Promise<UnlistenFn> =>
       listen<SyncStatus>("sync-status-changed", (event) => callback(event.payload)),
+  },
+
+  shifts: {
+    getActiveShift: () => invoke<CashShift | null>("get_active_shift"),
+    openShift: (userId: number, input: OpenShiftInput) =>
+      invoke<CashShift>("open_shift", { userId, input }),
+    getShiftSummary: () => invoke<ShiftSummary>("get_shift_summary"),
+    closeShift: (input: CloseShiftInput) =>
+      invoke<CashShift>("close_shift", { input }),
   },
 };

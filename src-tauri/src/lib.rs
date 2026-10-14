@@ -48,6 +48,7 @@ pub fn run() {
             commands::auth::sync_users_from_erp,
             commands::auth::list_local_cashiers,
             commands::auth::login_cashier_pin,
+            commands::auth::login_cashier_user_pin,
             commands::auth::unpair_terminal,
             commands::sales::create_sale,
             commands::sales::get_last_sale,
@@ -64,6 +65,11 @@ pub fn run() {
             commands::sync::get_sync_status,
             commands::sync::sync_payment_methods,
             commands::sync::get_payment_methods,
+            commands::sync::toggle_payment_method_terminal_status,
+            commands::shifts::get_active_shift,
+            commands::shifts::open_shift,
+            commands::shifts::get_shift_summary,
+            commands::shifts::close_shift,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

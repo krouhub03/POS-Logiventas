@@ -49,4 +49,5 @@ pub struct PaymentMethodDto {
     pub puc_account_id: Option<String>,
     pub puc_account_name: Option<String>,
     pub active: i64,
+    pub terminal_enabled: i64,
 }

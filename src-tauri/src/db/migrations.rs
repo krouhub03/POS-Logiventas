@@ -14,6 +14,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0006_product_erp_id.sql"),
     include_str!("../../migrations/0007_product_sync_flag.sql"),
     include_str!("../../migrations/0008_payment_methods.sql"),
+    include_str!("../../migrations/0009_cash_shifts.sql"),
+    include_str!("../../migrations/0010_dynamic_payments.sql"),
+    include_str!("../../migrations/0011_user_permissions.sql"),
+    include_str!("../../migrations/0012_pos_profiles_and_granular_rbac.sql"),
+    include_str!("../../migrations/0013_clean_dummy_profiles.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {

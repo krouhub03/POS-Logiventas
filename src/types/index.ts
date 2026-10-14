@@ -82,6 +82,10 @@ export interface CashierUser {
   email: string | null;
   role: string;
   active: boolean;
+  permissions: string[];
+  profileName?: string | null;
+  erpRoleCode?: string | null;
+  loginCount?: number;
 }
 
 /** Estado de vinculación M2M de la terminal física con el ERP */
@@ -95,6 +99,7 @@ export interface TerminalStatus {
   empresaNombre: string | null;
   empresaNit: string | null;
   activeCashier: CashierUser | null;
+  activeCashierRevoked?: boolean;
 }
 
 export interface PairCodeInput {
@@ -141,7 +146,7 @@ export interface CartItemInput {
 }
 
 export interface PaymentInput {
-  method: "cash" | "card" | "transfer" | "other";
+  method: "cash" | "card" | "transfer" | "other" | (string & {});
   amountCents: number;
   reference?: string;
 }
@@ -231,5 +236,53 @@ export interface PaymentMethod {
   pucAccountId: string | null;
   pucAccountName: string | null;
   active: number;
+  terminalEnabled: number;
+}
+
+/* ==============================================================
+   Modelos de Turnos de Caja y Arqueo Z-Report (NIIF v6.2)
+   ============================================================== */
+
+export interface CashShift {
+  id: number;
+  folio: string;
+  userId: number;
+  userName?: string;
+  openedAt: string;
+  closedAt?: string;
+  openingCents: number;
+  closingCents?: number;
+  expectedCents?: number;
+  declaredCents?: number;
+  differenceCents?: number;
+  notes?: string;
+  status: "open" | "closed";
+  erpTurnoId?: string;
+}
+
+export interface OpenShiftInput {
+  openingCents: number;
+  notes?: string;
+}
+
+export interface CloseShiftInput {
+  declaredCents: number;
+  notes?: string;
+}
+
+export interface ShiftSummary {
+  shiftId: number;
+  folio: string;
+  openedAt: string;
+  userName: string;
+  openingCents: number;
+  salesCount: number;
+  totalSalesCents: number;
+  cashSalesCents: number;
+  cardSalesCents: number;
+  transferSalesCents: number;
+  otherSalesCents: number;
+  totalTaxCents: number;
+  expectedCashCents: number;
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
-import { TerminalStatus } from "../types";
+import { TerminalStatus, PaymentMethod } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
 import { useUpdater } from "../contexts/UpdaterContext";
@@ -11,7 +11,7 @@ interface SettingsPageProps {
   onUnpaired: () => void;
 }
 
-type SettingsTab = "printer" | "drawer" | "scanner" | "terminal" | "general";
+type SettingsTab = "printer" | "drawer" | "scanner" | "terminal" | "payments" | "general";
 
 export function SettingsPage({
   terminalStatus,
@@ -27,6 +27,11 @@ export function SettingsPage({
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Estado de medios de pago
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [loadingMethods, setLoadingMethods] = useState(false);
+  const [syncingMethods, setSyncingMethods] = useState(false);
 
   // Cargar ajustes desde SQLite
   useEffect(() => {
@@ -56,6 +61,60 @@ export function SettingsPage({
   const showMsg = (msg: string) => {
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 3500);
+  };
+
+  const loadPaymentMethods = async () => {
+    setLoadingMethods(true);
+    try {
+      const list = await api.sync.getPaymentMethods();
+      setPaymentMethods(list);
+    } catch (err) {
+      console.error("Error cargando medios de pago:", err);
+    } finally {
+      setLoadingMethods(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "payments") {
+      loadPaymentMethods();
+    }
+  }, [activeTab]);
+
+  const handleToggleMethod = async (id: string, currentEnabled: number) => {
+    const nextEnabled = currentEnabled !== 1;
+    try {
+      await api.sync.togglePaymentMethodTerminalStatus(id, nextEnabled);
+      setPaymentMethods((prev) =>
+        prev.map((pm) =>
+          pm.id === id ? { ...pm, terminalEnabled: nextEnabled ? 1 : 0 } : pm
+        )
+      );
+      showMsg(`✅ Medio de pago ${nextEnabled ? "habilitado" : "deshabilitado"} en esta caja`);
+    } catch (err) {
+      modalAlert({
+        title: "Error al cambiar estado",
+        message: String(err),
+        variant: "error",
+      });
+    }
+  };
+
+  const handleSyncPaymentMethods = async () => {
+    setSyncingMethods(true);
+    try {
+      const count = await api.sync.syncPaymentMethods();
+      await loadPaymentMethods();
+      showMsg(`✅ ${count} medios de pago sincronizados desde el ERP`);
+    } catch (err) {
+      modalAlert({
+        title: "Error al sincronizar con ERP",
+        message: String(err),
+        variant: "error",
+      });
+    } finally {
+      setSyncingMethods(false);
+    }
   };
 
   const handleSave = async () => {
@@ -215,6 +274,21 @@ export function SettingsPage({
             <div>
               <div className="font-bold">Terminal y ERP</div>
               <div className="text-[10px] opacity-75 font-normal">Sincronización M2M</div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("payments")}
+            className={`w-full text-left px-4 py-3 rounded-xl font-semibold text-xs transition-colors flex items-center gap-3 ${
+              activeTab === "payments"
+                ? "bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-emerald-500/30"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">💳</span>
+            <div>
+              <div className="font-bold">Medios de Pago</div>
+              <div className="text-[10px] opacity-75 font-normal">Habilitar para esta caja</div>
             </div>
           </button>
 
@@ -609,6 +683,129 @@ export function SettingsPage({
                     </button>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* TAB: MEDIOS DE PAGO */}
+            {activeTab === "payments" && (
+              <div className="space-y-6">
+                <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>💳 Medios de Pago en esta Caja</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold">
+                        {paymentMethods.filter((m) => m.terminalEnabled === 1).length} de {paymentMethods.length} activos
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Selecciona qué medios sincronizados desde Megalider ERP estarán habilitados para cobrar en esta terminal.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSyncPaymentMethods}
+                    disabled={syncingMethods}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-700/20 cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <span>{syncingMethods ? "⏳ Sincronizando…" : "🔄 Sincronizar desde ERP"}</span>
+                  </button>
+                </div>
+
+                {loadingMethods ? (
+                  <div className="p-8 text-center text-slate-500 text-sm">
+                    Cargando catálogo de medios de pago…
+                  </div>
+                ) : paymentMethods.length === 0 ? (
+                  <div className="p-8 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                    <span className="text-3xl">📭</span>
+                    <div className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      No hay medios de pago sincronizados
+                    </div>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      Presiona el botón "Sincronizar desde ERP" para descargar los métodos de pago y cuentas PUC configurados en Megalider.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleSyncPaymentMethods}
+                      disabled={syncingMethods}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold"
+                    >
+                      Descargar Medios de Pago Ahora
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {paymentMethods.map((pm) => {
+                      const isEnabled = pm.terminalEnabled === 1;
+                      const getIcon = () => {
+                        const t = (pm.type || "").toUpperCase();
+                        const c = (pm.code || "").toLowerCase();
+                        if (t === "EFECTIVO" || c.includes("cash") || c.includes("efectivo")) return "💵";
+                        if (t === "TARJETA" || c.includes("card") || c.includes("tarjeta")) return "💳";
+                        if (c.includes("nequi") || c.includes("daviplata") || t === "DIGITAL") return "📱";
+                        if (t === "BANCO" || c.includes("transfer")) return "🏦";
+                        return "🏷️";
+                      };
+
+                      return (
+                        <div
+                          key={pm.id}
+                          className={`p-4 bg-white dark:bg-slate-900 border rounded-xl flex items-center justify-between gap-4 transition-all ${
+                            isEnabled
+                              ? "border-emerald-300 dark:border-emerald-500/40 shadow-sm"
+                              : "border-slate-200 dark:border-slate-800 opacity-60 bg-slate-50/50 dark:bg-slate-900/40"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl p-2 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                              {getIcon()}
+                            </span>
+                            <div>
+                              <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                <span>{pm.name}</span>
+                                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                  {pm.type}
+                                </span>
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
+                                  Código: {pm.erpCode}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-2">
+                                <span className="font-semibold text-slate-600 dark:text-slate-300">
+                                  Cuenta Contable (PUC NIIF):
+                                </span>
+                                {pm.pucCode ? (
+                                  <span className="font-mono bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded text-[11px] font-bold">
+                                    {pm.pucCode} - {pm.pucAccountName || "Activo Circulante"}
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-600 dark:text-amber-400 font-mono text-[11px]">
+                                    (Sin cuenta asignada en ERP)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleMethod(pm.id, pm.terminalEnabled)}
+                              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-sm ${
+                                isEnabled
+                                  ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-700/20"
+                                  : "bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700"
+                              }`}
+                            >
+                              <span>{isEnabled ? "✅ Habilitado" : "⚪ Deshabilitado"}</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 

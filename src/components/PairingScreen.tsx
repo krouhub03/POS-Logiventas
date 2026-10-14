@@ -26,7 +26,8 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
     setLoading(true);
     setError(null);
     try {
-      const status = await api.auth.pairCode({ erpUrl, code });
+      const sanitizedCode = code.replace(/\s+/g, "").toUpperCase();
+      const status = await api.auth.pairCode({ erpUrl: erpUrl.trim(), code: sanitizedCode });
       onPaired(status);
     } catch (err: unknown) {
       setError(String(err));
@@ -71,7 +72,7 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
           <div style={styles.logoBadge}>POS</div>
           <h1 style={styles.title}>Vincular Terminal de Caja</h1>
           <p style={styles.subtitle}>
-            Conecta esta aplicación de escritorio con tu empresa en Megalider ERP.
+            Conecta esta aplicación de escritorio directamente con el dominio de tu empresa o sucursal.
           </p>
         </div>
 
@@ -89,7 +90,7 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
               setCajasDisponibles(null);
             }}
           >
-            1. Con Código de Vinculación (ERP)
+            1. Con Código de Vinculación (Recomendado)
           </button>
           <button
             type="button"
@@ -112,14 +113,14 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
         {tab === "code" && (
           <form onSubmit={handlePairWithCode} style={styles.form}>
             <div style={styles.field}>
-              <label style={styles.label}>URL del Servidor ERP</label>
+              <label style={styles.label}>URL o Dominio de tu Empresa (Tienda / Sucursal)</label>
               <input
                 style={styles.input}
                 type="text"
                 required
                 value={erpUrl}
                 onChange={(e) => setErpUrl(e.target.value)}
-                placeholder="https://erp.megalider.com o http://localhost:3000"
+                placeholder="https://cmegalider.com o http://localhost:3000"
               />
             </div>
 
@@ -136,7 +137,7 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
                 placeholder="ML-XXXX"
               />
               <span style={styles.hint}>
-                Genera este código en el ERP en el módulo: Configuración &gt; Cajas POS.
+                Genera este código en el panel de tu empresa en: Configuración &gt; Cajas POS (ej. https://cmegalider.com/admin/caja).
               </span>
             </div>
 
@@ -148,7 +149,7 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
                 ...(loading ? styles.btnDisabled : {}),
               }}
             >
-              {loading ? "Conectando con el ERP…" : "Vincular y Activar Caja"}
+              {loading ? "Conectando con tu Empresa…" : "Vincular y Activar Caja"}
             </button>
           </form>
         )}
@@ -157,14 +158,14 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
         {tab === "login" && (
           <form onSubmit={handlePairWithLogin} style={styles.form}>
             <div style={styles.field}>
-              <label style={styles.label}>URL del Servidor ERP</label>
+              <label style={styles.label}>URL o Dominio de tu Empresa</label>
               <input
                 style={styles.input}
                 type="text"
                 required
                 value={erpUrl}
                 onChange={(e) => setErpUrl(e.target.value)}
-                placeholder="http://localhost:3000"
+                placeholder="https://cmegalider.com o http://localhost:3000"
               />
             </div>
 
