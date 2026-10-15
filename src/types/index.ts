@@ -20,6 +20,14 @@ export interface Product {
   active: boolean;
 }
 
+/** Espejo de `models::product::ProductTag` (Rust). */
+export interface ProductTag {
+  id: number;
+  name: string;
+  colorHex: string;
+  active: boolean;
+}
+
 /** Espejo de `models::product::NewProduct` (Rust). */
 export interface NewProduct {
   sku: string;

@@ -4,6 +4,7 @@ import { formatCents, toCents } from "../lib/money";
 import { useModals } from "../contexts/ModalContext";
 import type {
   Product,
+  ProductTag,
   NewProduct,
   UpdateProductInput,
   InventoryMovement,
@@ -15,6 +16,17 @@ interface ProductsPageProps {
   onBackToSales?: () => void;
 }
 
+const PRESET_TAG_COLORS = [
+  { name: "Rojo (Alerta / Oferta)", hex: "#ef4444" },
+  { name: "Naranja (Promo 2x1)", hex: "#f97316" },
+  { name: "Ámbar (Destacado)", hex: "#f59e0b" },
+  { name: "Verde (Fresco / Orgánico)", hex: "#10b981" },
+  { name: "Azul (Frío / Bebidas)", hex: "#3b82f6" },
+  { name: "Violeta (Premium)", hex: "#8b5cf6" },
+  { name: "Rosa (Dulces / Snacks)", hex: "#ec4899" },
+  { name: "Pizarra (General)", hex: "#64748b" },
+];
+
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
@@ -22,6 +34,14 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [catalogTagFilter, setCatalogTagFilter] = useState<string>("all");
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState<"all" | "optimal" | "low" | "out">("all");
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<{ id: number; name: string } | null>(null);
+
+  // Estado de Etiquetas Maestras (Tags con Nombre y Color)
+  const [dbTags, setDbTags] = useState<ProductTag[]>([]);
+  const [isTagsModalOpen, setIsTagsModalOpen] = useState(false);
+  const [editingTag, setEditingTag] = useState<ProductTag | null>(null);
+  const [tagNameInput, setTagNameInput] = useState("");
+  const [tagColorInput, setTagColorInput] = useState("#ef4444");
+  const [tagSubmitting, setTagSubmitting] = useState(false);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
@@ -58,6 +78,122 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const showNotification = (msg: string) => {
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 3500);
+  };
+
+  // Cargar lista de etiquetas maestras desde SQLite
+  const loadTags = useCallback(async () => {
+    try {
+      const data = await api.tags.list();
+      setDbTags(data);
+    } catch (e: unknown) {
+      console.warn("Aviso: No se pudieron cargar etiquetas de BD:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTags();
+  }, [loadTags]);
+
+  // Mapa de colores por nombre de etiqueta para renderizado instantáneo
+  const tagColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of dbTags) {
+      map.set(t.name.toLowerCase().trim(), t.colorHex);
+    }
+    return map;
+  }, [dbTags]);
+
+  // Guardar (crear o editar) etiqueta maestra
+  const handleSaveTag = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tagNameInput.trim()) {
+      modalAlert({
+        title: "Nombre Requerido",
+        message: "Debe ingresar un nombre para la etiqueta.",
+        variant: "warning",
+      });
+      return;
+    }
+
+    try {
+      setTagSubmitting(true);
+      if (editingTag) {
+        await api.tags.update(editingTag.id, tagNameInput.trim(), tagColorInput);
+        showNotification(`✓ Etiqueta "${tagNameInput}" actualizada correctamente.`);
+      } else {
+        await api.tags.create(tagNameInput.trim(), tagColorInput);
+        showNotification(`✓ Etiqueta "${tagNameInput}" creada con éxito.`);
+      }
+      setTagNameInput("");
+      setTagColorInput("#ef4444");
+      setEditingTag(null);
+      await loadTags();
+    } catch (err: unknown) {
+      modalAlert({
+        title: "Error al Guardar Etiqueta",
+        message: String(err),
+        variant: "error",
+      });
+    } finally {
+      setTagSubmitting(false);
+    }
+  };
+
+  // Activar edición de etiqueta
+  const handleStartEditTag = (t: ProductTag) => {
+    setEditingTag(t);
+    setTagNameInput(t.name);
+    setTagColorInput(t.colorHex);
+  };
+
+  // Cancelar edición de etiqueta
+  const handleCancelEditTag = () => {
+    setEditingTag(null);
+    setTagNameInput("");
+    setTagColorInput("#ef4444");
+  };
+
+  // Eliminar etiqueta
+  const handleDeleteTag = async (t: ProductTag) => {
+    const ok = await confirm({
+      title: "Eliminar Etiqueta",
+      message: `¿Desea eliminar la etiqueta "${t.name}"? Los productos vinculados conservarán sus datos y no serán afectados.`,
+      confirmText: "Sí, Eliminar",
+      cancelText: "Cancelar",
+      variant: "danger",
+    });
+    if (!ok) return;
+
+    try {
+      await api.tags.delete(t.id);
+      showNotification(`✓ Etiqueta "${t.name}" eliminada.`);
+      if (editingTag?.id === t.id) {
+        handleCancelEditTag();
+      }
+      await loadTags();
+    } catch (err: unknown) {
+      modalAlert({
+        title: "Error al Eliminar",
+        message: String(err),
+        variant: "error",
+      });
+    }
+  };
+
+  // Alternar tag activo en el formulario de producto
+  const toggleFormTag = (tagName: string) => {
+    const current = formTags
+      .split(/[\s,]+/)
+      .map((x) => x.trim().replace(/^#/, ""))
+      .filter(Boolean);
+    const exists = current.some((x) => x.toLowerCase() === tagName.toLowerCase());
+    let next: string[];
+    if (exists) {
+      next = current.filter((x) => x.toLowerCase() !== tagName.toLowerCase());
+    } else {
+      next = [...current, tagName];
+    }
+    setFormTags(next.join(", "));
   };
 
   // Cargar lista de productos
@@ -181,20 +317,25 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     };
   }, [physicalProducts]);
 
-  // Micro-etiquetas presentes en catálogo para filtros rápidos
+  // Micro-etiquetas presentes en catálogo y base de datos para filtros rápidos
   const availableTags = useMemo(() => {
-    const set = new Set<string>();
+    const list: string[] = [];
+    for (const t of dbTags) {
+      if (!list.includes(t.name)) list.push(t.name);
+    }
     for (const p of products) {
       if (p.tags) {
         p.tags
           .split(/[\s,]+/)
           .map((t) => t.trim().replace(/^#/, ""))
           .filter(Boolean)
-          .forEach((t) => set.add(t));
+          .forEach((t) => {
+            if (!list.includes(t)) list.push(t);
+          });
       }
     }
-    return Array.from(set);
-  }, [products]);
+    return list;
+  }, [products, dbTags]);
 
   // Abrir formulario para nuevo producto
   const handleOpenCreateModal = (asService = false) => {
@@ -479,6 +620,17 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           >
             <span className={syncingCatalog ? "animate-spin inline-block text-xs" : "text-xs"}>🔄</span>
             <span>{syncingCatalog ? "Sincronizando..." : "Sincronizar ERP"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsTagsModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            title="Administrar catálogo de etiquetas maestras (Nombre y Color)"
+          >
+            <span>🏷️ Etiquetas</span>
+            <span className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1 rounded text-[10px] font-mono">
+              {dbTags.length}
+            </span>
           </button>
           <button
             type="button"
@@ -783,17 +935,25 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         <td className="py-3 px-4">
                           {itemTags.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
-                              {itemTags.map((tag) => (
-                                <button
-                                  key={tag}
-                                  type="button"
-                                  onClick={() => setCatalogTagFilter(tag)}
-                                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
-                                  title={`Filtrar por #${tag}`}
-                                >
-                                  #{tag}
-                                </button>
-                              ))}
+                              {itemTags.map((tag) => {
+                                const tagColor = tagColorMap.get(tag.toLowerCase().trim()) || "#6366f1";
+                                return (
+                                  <button
+                                    key={tag}
+                                    type="button"
+                                    onClick={() => setCatalogTagFilter(tag)}
+                                    style={{
+                                      backgroundColor: `${tagColor}18`,
+                                      borderColor: `${tagColor}40`,
+                                      color: tagColor,
+                                    }}
+                                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border hover:opacity-80 transition-opacity shadow-sm"
+                                    title={`Filtrar por #${tag}`}
+                                  >
+                                    #{tag}
+                                  </button>
+                                );
+                              })}
                             </div>
                           ) : (
                             <span className="text-slate-400 text-[10px] italic">Sin tags</span>
@@ -1431,43 +1591,77 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 </div>
               )}
 
-              {/* ETIQUETAS (TAGS) PARA BÚSQUEDA RÁPIDA */}
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+              {/* ETIQUETAS MAESTRAS (TAGS CON NOMBRE Y COLOR) */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>🏷️ Micro-Etiquetas (Tags)</span>
-                    <span className="text-[10px] text-slate-400 font-normal">Separadas por coma</span>
+                    <span>🏷️ Etiquetas del Producto</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Pulsa para activar o desactivar</span>
                   </label>
-                  <span className="text-[10px] text-slate-400 font-mono">Búsqueda rápida con #</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsTagsModalOpen(true)}
+                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    <span>⚙️ Gestionar Etiquetas</span>
+                  </button>
                 </div>
-                <input
-                  type="text"
-                  placeholder="Ej. frio, promo, combo, importado, rapido"
-                  value={formTags}
-                  onChange={(e) => setFormTags(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <span className="text-[10px] text-slate-400 font-semibold">Sugerencias:</span>
-                  {["frio", "promo", "combo", "granel", "rapido", "importado"].map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => {
-                        const current = formTags
-                          .split(",")
-                          .map((x) => x.trim())
-                          .filter(Boolean);
-                        if (!current.includes(t)) {
-                          current.push(t);
-                          setFormTags(current.join(", "));
-                        }
-                      }}
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-indigo-950 text-slate-700 dark:text-slate-300 hover:text-indigo-600 font-mono transition-colors cursor-pointer"
-                    >
-                      +{t}
-                    </button>
-                  ))}
+
+                {/* Chips seleccionables de dbTags */}
+                {dbTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
+                    {dbTags.map((t) => {
+                      const activeTags = formTags
+                        .split(/[\s,]+/)
+                        .map((x) => x.trim().replace(/^#/, "").toLowerCase())
+                        .filter(Boolean);
+                      const isSelected = activeTags.includes(t.name.toLowerCase());
+
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => toggleFormTag(t.name)}
+                          style={{
+                            backgroundColor: isSelected ? t.colorHex : undefined,
+                            borderColor: t.colorHex,
+                            color: isSelected ? "#ffffff" : undefined,
+                          }}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                            isSelected
+                              ? "shadow-xs scale-102 font-black"
+                              : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:scale-102"
+                          }`}
+                        >
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? "bg-white" : ""}`}
+                            style={{ backgroundColor: isSelected ? undefined : t.colorHex }}
+                          />
+                          <span>{t.name}</span>
+                          {isSelected && <span className="text-[10px]">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400 italic py-1">
+                    No hay etiquetas maestras registradas aún.
+                  </div>
+                )}
+
+                {/* Input de texto complementario */}
+                <div className="pt-1">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                    <span>Etiquetas asignadas actualmente:</span>
+                    <span className="font-mono">Búsqueda rápida en POS con #</span>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Ninguna etiqueta seleccionada"
+                    value={formTags}
+                    onChange={(e) => setFormTags(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
                 </div>
               </div>
 
@@ -1611,6 +1805,203 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL MAESTRO: GESTIÓN DE ETIQUETAS (TAGS) */}
+      {isTagsModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-xl w-full p-6 shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-xl shadow-inner border border-indigo-200 dark:border-indigo-800/40">
+                  🏷️
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">
+                    Gestor Maestro de Etiquetas
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Clasificación universal para POS, ERP Megalider y Tienda Online
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTagsModalOpen(false);
+                  handleCancelEditTag();
+                }}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Formulario Crear / Editar */}
+            <form onSubmit={handleSaveTag} className="pt-4 pb-5 border-b border-slate-200 dark:border-slate-800">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-3 flex items-center justify-between">
+                <span>{editingTag ? "✏️ Editar Etiqueta" : "➕ Nueva Etiqueta"}</span>
+                {editingTag && (
+                  <button
+                    type="button"
+                    onClick={handleCancelEditTag}
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline normal-case font-semibold text-xs"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                {/* Nombre de la etiqueta */}
+                <div className="md:col-span-7">
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                    Nombre de la etiqueta *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={40}
+                    placeholder="Ej. Oferta, Vegano, Frío, Combo…"
+                    value={tagNameInput}
+                    onChange={(e) => setTagNameInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* Color Hex & Picker */}
+                <div className="md:col-span-5">
+                  <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                    Color representativo
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={tagColorInput}
+                      onChange={(e) => setTagColorInput(e.target.value)}
+                      className="w-9 h-9 rounded-xl border border-slate-300 dark:border-slate-700 cursor-pointer bg-transparent p-0.5"
+                      title="Seleccionar color personalizado"
+                    />
+                    <input
+                      type="text"
+                      maxLength={7}
+                      value={tagColorInput}
+                      onChange={(e) => setTagColorInput(e.target.value)}
+                      className="w-24 px-2 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white uppercase"
+                    />
+                    <button
+                      type="submit"
+                      disabled={tagSubmitting}
+                      className="flex-1 py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md transition-all disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {tagSubmitting ? "..." : editingTag ? "Guardar" : "Crear"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Paleta de colores rápidos */}
+              <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-slate-400 font-semibold mr-1">Paleta recomendada:</span>
+                {PRESET_TAG_COLORS.map((c) => (
+                  <button
+                    key={c.hex}
+                    type="button"
+                    onClick={() => setTagColorInput(c.hex)}
+                    style={{ backgroundColor: c.hex }}
+                    className={`w-6 h-6 rounded-full border-2 transition-transform cursor-pointer ${
+                      tagColorInput.toLowerCase() === c.hex.toLowerCase()
+                        ? "scale-125 border-slate-900 dark:border-white shadow"
+                        : "border-transparent hover:scale-110 opacity-80 hover:opacity-100"
+                    }`}
+                    title={c.name}
+                  />
+                ))}
+              </div>
+            </form>
+
+            {/* Listado de Etiquetas Existentes */}
+            <div className="flex-1 overflow-y-auto pt-4 pr-1">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                  Etiquetas Registradas ({dbTags.length})
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Haz clic en ✏️ para editar o 🗑️ para eliminar
+                </span>
+              </div>
+
+              {dbTags.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs italic">
+                  No hay etiquetas registradas aún. ¡Crea la primera arriba!
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {dbTags.map((tag) => (
+                    <div
+                      key={tag.id}
+                      className="py-2.5 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 px-2 rounded-xl transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="w-4 h-4 rounded-full border border-black/10 shrink-0 shadow-sm"
+                          style={{ backgroundColor: tag.colorHex }}
+                        />
+                        <span
+                          style={{
+                            backgroundColor: `${tag.colorHex}20`,
+                            borderColor: `${tag.colorHex}50`,
+                            color: tag.colorHex,
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-xs font-black border font-mono tracking-wide"
+                        >
+                          #{tag.name}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                          {tag.colorHex}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditTag(tag)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 text-xs"
+                          title="Editar nombre o color"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTag(tag)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 text-xs"
+                          title="Eliminar etiqueta"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-4 mt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTagsModalOpen(false);
+                  handleCancelEditTag();
+                }}
+                className="px-5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}

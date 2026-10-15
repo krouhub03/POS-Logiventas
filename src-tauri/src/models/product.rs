@@ -88,3 +88,13 @@ pub struct InventoryMovementDto {
     pub user_id: Option<i64>,
     pub created_at: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTag {
+    pub id: i64,
+    pub name: String,
+    pub color_hex: String,
+    pub active: bool,
+}
+

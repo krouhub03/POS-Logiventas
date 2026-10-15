@@ -4,7 +4,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::product::{
-    InventoryMovementDto, NewProduct, Product, StockAdjustmentInput, UpdateProductInput,
+    InventoryMovementDto, NewProduct, Product, ProductTag, StockAdjustmentInput, UpdateProductInput,
 };
 
 const PRODUCT_COLUMNS: &str = "id, sku, barcode, name, category_id, unit, price_cents, cost_cents, \
@@ -365,3 +365,93 @@ pub fn list_inventory_movements(
 
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
+
+/// Lista todas las etiquetas maestras activas.
+#[tauri::command]
+pub fn list_product_tags(db: State<'_, Db>) -> AppResult<Vec<ProductTag>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, color_hex, active FROM product_tags WHERE active = 1 ORDER BY name ASC"
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let active_int: i64 = r.get(3)?;
+        Ok(ProductTag {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            color_hex: r.get(2)?,
+            active: active_int != 0,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Crea una nueva etiqueta maestra.
+#[tauri::command]
+pub fn create_product_tag(db: State<'_, Db>, name: String, color_hex: String) -> AppResult<ProductTag> {
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Err(AppError::Validation("El nombre de la etiqueta no puede estar vacío".into()));
+    }
+    let clean_color = if color_hex.trim().is_empty() {
+        "#6366f1".to_string()
+    } else {
+        color_hex.trim().to_string()
+    };
+
+    let conn = db.conn()?;
+    conn.execute(
+        "INSERT INTO product_tags (name, color_hex, active) VALUES (?1, ?2, 1) \
+         ON CONFLICT(name) DO UPDATE SET color_hex = ?2, active = 1",
+        params![clean_name, clean_color],
+    )?;
+    let id = conn.last_insert_rowid();
+
+    Ok(ProductTag {
+        id,
+        name: clean_name.to_string(),
+        color_hex: clean_color,
+        active: true,
+    })
+}
+
+/// Actualiza el nombre o color de una etiqueta maestra.
+#[tauri::command]
+pub fn update_product_tag(db: State<'_, Db>, id: i64, name: String, color_hex: String) -> AppResult<ProductTag> {
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Err(AppError::Validation("El nombre de la etiqueta no puede estar vacío".into()));
+    }
+    let clean_color = if color_hex.trim().is_empty() {
+        "#6366f1".to_string()
+    } else {
+        color_hex.trim().to_string()
+    };
+
+    let conn = db.conn()?;
+    let affected = conn.execute(
+        "UPDATE product_tags SET name = ?1, color_hex = ?2 WHERE id = ?3",
+        params![clean_name, clean_color, id],
+    )?;
+    if affected == 0 {
+        return Err(AppError::Validation(format!("Etiqueta con ID {} no encontrada", id)));
+    }
+
+    Ok(ProductTag {
+        id,
+        name: clean_name.to_string(),
+        color_hex: clean_color,
+        active: true,
+    })
+}
+
+/// Elimina (borra) una etiqueta maestra.
+#[tauri::command]
+pub fn delete_product_tag(db: State<'_, Db>, id: i64) -> AppResult<()> {
+    let conn = db.conn()?;
+    conn.execute(
+        "DELETE FROM product_tags WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+

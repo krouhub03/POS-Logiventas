@@ -18,6 +18,7 @@ import type {
   PairLoginResult,
   PaymentMethod,
   Product,
+  ProductTag,
   SaleReceipt,
   ShiftSummary,
   StockAdjustmentInput,
@@ -75,6 +76,15 @@ export const api = {
         productId,
         limit,
       }),
+  },
+
+  tags: {
+    list: () => invoke<ProductTag[]>("list_product_tags"),
+    create: (name: string, colorHex: string) =>
+      invoke<ProductTag>("create_product_tag", { name, colorHex }),
+    update: (id: number, name: string, colorHex: string) =>
+      invoke<ProductTag>("update_product_tag", { id, name, colorHex }),
+    delete: (id: number) => invoke<void>("delete_product_tag", { id }),
   },
 
   sales: {
