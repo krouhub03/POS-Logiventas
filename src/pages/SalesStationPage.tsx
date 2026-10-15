@@ -23,6 +23,7 @@ interface CartLine {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  unit?: string;
   currentStock?: number;
   controlsStock?: boolean;
 }
@@ -162,6 +163,11 @@ export function SalesStationPage({
   const [editingTicketName, setEditingTicketName] = useState("");
   const editTicketInputRef = useRef<HTMLInputElement>(null);
 
+  // Edición inline de cantidad por doble clic
+  const [editingQtyLineId, setEditingQtyLineId] = useState<string | null>(null);
+  const [editingQtyValue, setEditingQtyValue] = useState<string>("");
+  const qtyInputRef = useRef<HTMLInputElement>(null);
+
   // Modales
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCobroOpen, setIsCobroOpen] = useState(false);
@@ -221,16 +227,24 @@ export function SalesStationPage({
 
   // Enfoque continuo al input de código
   const focusInput = useCallback(() => {
-    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen && !isCustomerModalOpen && editingTicketId === null) {
+    if (
+      isActive &&
+      !isSearchOpen &&
+      !isCobroOpen &&
+      !isVariosOpen &&
+      !isCustomerModalOpen &&
+      editingTicketId === null &&
+      editingQtyLineId === null
+    ) {
       barcodeInputRef.current?.focus();
     }
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, editingQtyLineId]);
 
   useEffect(() => {
-    if (isActive && editingTicketId === null) {
+    if (isActive && editingTicketId === null && editingQtyLineId === null) {
       focusInput();
     }
-  }, [isActive, focusInput, activeTicketId, editingTicketId]);
+  }, [isActive, focusInput, activeTicketId, editingTicketId, editingQtyLineId]);
 
   // Enfocar y seleccionar texto al editar nombre de ticket
   useEffect(() => {
@@ -432,6 +446,7 @@ export function SalesStationPage({
         subtotalCents: unitSubtotal,
         taxCents: unitTax,
         totalCents: unitSubtotal + unitTax,
+        unit: product.unit || "UND",
         currentStock: product.stock,
         controlsStock: product.controlsStock,
       };
@@ -546,17 +561,29 @@ export function SalesStationPage({
     }
   };
 
-  // Manejo de cantidades con teclas + y -
-  const modifyQuantity = (delta: number) => {
-    if (selectedLineIndex < 0 || selectedLineIndex >= cartLines.length) return;
+  // Manejo de cantidades con teclas + y - (soporta línea activa o última línea agregada)
+  const modifyQuantity = (delta: number, lineIndex?: number) => {
+    if (cartLines.length === 0) return;
+    const idx = lineIndex !== undefined ? lineIndex : (selectedLineIndex >= 0 ? selectedLineIndex : cartLines.length - 1);
+    if (idx < 0 || idx >= cartLines.length) return;
+
+    const target = cartLines[idx];
+    const newQty = Math.round((target.quantity + delta) * 1000) / 1000;
+
+    if (newQty <= 0) {
+      const updated = cartLines.filter((_, i) => i !== idx);
+      updateCurrentTicketLines(updated);
+      setSelectedLineIndex(Math.max(0, idx - 1));
+      showFeedback(`✕ ${target.description} eliminado del ticket`);
+      return;
+    }
+
     const updated = [...cartLines];
-    const target = updated[selectedLineIndex];
-    const newQty = Math.max(0.01, target.quantity + delta);
     const newSubtotal = Math.round(target.unitPriceCents * newQty);
     const targetTaxFixed = target.taxFixedCents || 0;
     const newTax = calculateTaxCents(newSubtotal, target.taxRateBp) + Math.round(targetTaxFixed * newQty);
 
-    updated[selectedLineIndex] = {
+    updated[idx] = {
       ...target,
       quantity: newQty,
       subtotalCents: newSubtotal,
@@ -564,6 +591,57 @@ export function SalesStationPage({
       totalCents: newSubtotal + newTax,
     };
     updateCurrentTicketLines(updated);
+    setSelectedLineIndex(idx);
+    showFeedback(`${target.description}: ${newQty} ${target.unit || "UND"}`);
+  };
+
+  // Iniciar edición inline de cantidad por doble clic
+  const handleStartEditQty = (line: CartLine) => {
+    setEditingQtyLineId(line.id);
+    setEditingQtyValue(line.quantity.toString());
+    setTimeout(() => {
+      qtyInputRef.current?.focus();
+      qtyInputRef.current?.select();
+    }, 50);
+  };
+
+  // Guardar edición inline de cantidad
+  const handleSaveEditQty = (lineId: string) => {
+    const parsed = parseFloat(editingQtyValue);
+    if (!isNaN(parsed) && parsed > 0) {
+      const idx = cartLines.findIndex((l) => l.id === lineId);
+      if (idx >= 0) {
+        const target = cartLines[idx];
+        const updated = [...cartLines];
+        const newSubtotal = Math.round(target.unitPriceCents * parsed);
+        const targetTaxFixed = target.taxFixedCents || 0;
+        const newTax = calculateTaxCents(newSubtotal, target.taxRateBp) + Math.round(targetTaxFixed * parsed);
+
+        updated[idx] = {
+          ...target,
+          quantity: parsed,
+          subtotalCents: newSubtotal,
+          taxCents: newTax,
+          totalCents: newSubtotal + newTax,
+        };
+        updateCurrentTicketLines(updated);
+        setSelectedLineIndex(idx);
+        showFeedback(`${target.description}: ${parsed} ${target.unit || "UND"}`);
+      }
+    } else if (parsed === 0) {
+      const updated = cartLines.filter((l) => l.id !== lineId);
+      updateCurrentTicketLines(updated);
+      setSelectedLineIndex(-1);
+      showFeedback("Artículo eliminado del ticket");
+    }
+    setEditingQtyLineId(null);
+    focusInput();
+  };
+
+  // Cancelar edición inline de cantidad
+  const handleCancelEditQty = () => {
+    setEditingQtyLineId(null);
+    focusInput();
   };
 
   // Eliminar artículo seleccionado (DEL)
@@ -590,6 +668,7 @@ export function SalesStationPage({
       subtotalCents: subtotal,
       taxCents: 0,
       totalCents: subtotal,
+      unit: "UND",
     };
     const updated = [...cartLines, newLine];
     updateCurrentTicketLines(updated);
@@ -789,7 +868,7 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || editingQtyLineId !== null) return;
     if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -833,10 +912,10 @@ export function SalesStationPage({
       } else if (e.key === "Delete") {
         e.preventDefault();
         removeSelectedLine();
-      } else if (e.key === "+" && e.ctrlKey) {
+      } else if (e.key === "+" || e.key === "Add" || e.code === "NumpadAdd") {
         e.preventDefault();
         modifyQuantity(1);
-      } else if (e.key === "-" && e.ctrlKey) {
+      } else if (e.key === "-" || e.key === "Subtract" || e.code === "NumpadSubtract") {
         e.preventDefault();
         modifyQuantity(-1);
       } else if (e.key === "Escape") {
@@ -879,12 +958,12 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || editingTicketId !== null) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1265,6 +1344,21 @@ export function SalesStationPage({
               type="text"
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
+              onKeyDown={(e) => {
+                // Atajo directo + y - cuando el input está vacío
+                if (!barcodeInput && cartLines.length > 0) {
+                  if (e.key === "+" || e.key === "Add" || e.code === "NumpadAdd") {
+                    e.preventDefault();
+                    modifyQuantity(1);
+                    return;
+                  }
+                  if (e.key === "-" || e.key === "Subtract" || e.code === "NumpadSubtract") {
+                    e.preventDefault();
+                    modifyQuantity(-1);
+                    return;
+                  }
+                }
+              }}
               placeholder="Código del producto o cantidad*código (ej. 3*75012345)..."
               className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl pl-10 pr-36 py-2.5 text-slate-900 dark:text-white font-mono text-sm font-semibold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-2xs transition-colors"
               autoFocus
@@ -1436,10 +1530,50 @@ export function SalesStationPage({
                       <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300">
                         {formatCents(line.unitPriceCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <span className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 font-bold text-emerald-700 dark:text-emerald-400">
-                          {line.quantity}
-                        </span>
+                      <td
+                        className="py-2.5 px-3 text-center"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          handleStartEditQty(line);
+                        }}
+                      >
+                        {editingQtyLineId === line.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <input
+                              ref={qtyInputRef}
+                              type="number"
+                              step="any"
+                              min="0.001"
+                              value={editingQtyValue}
+                              onChange={(e) => setEditingQtyValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                e.stopPropagation();
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  handleSaveEditQty(line.id);
+                                } else if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  handleCancelEditQty();
+                                }
+                              }}
+                              onBlur={() => handleSaveEditQty(line.id)}
+                              className="w-16 px-1.5 py-0.5 text-center font-bold font-mono text-xs rounded bg-white dark:bg-slate-900 border-2 border-emerald-500 text-slate-900 dark:text-white outline-none shadow-sm"
+                            />
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">
+                              {line.unit || "UND"}
+                            </span>
+                          </div>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-950 dark:hover:bg-slate-900 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 font-bold text-emerald-700 dark:text-emerald-400 transition-colors select-none cursor-pointer shadow-2xs"
+                            title="Doble clic para cambiar cantidad"
+                          >
+                            <span>{line.quantity}</span>
+                            <span className="text-[9px] text-slate-500 dark:text-slate-400 font-sans font-semibold uppercase px-1 py-0.2 rounded bg-white/70 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700">
+                              {line.unit || "UND"}
+                            </span>
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm">
                         {formatCents(line.totalCents)}
