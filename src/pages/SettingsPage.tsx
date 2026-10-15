@@ -806,6 +806,11 @@ export function SettingsPage({
                     })}
                   </div>
                 )}
+
+                <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-500 dark:text-slate-400">
+                  <span className="text-emerald-500 font-bold">⚡ Guardado Automático:</span>
+                  <span>Cualquier medio de pago que habilites o deshabilites se guarda de forma instantánea en esta caja.</span>
+                </div>
               </div>
             )}
 
@@ -946,17 +951,19 @@ export function SettingsPage({
               </div>
             )}
 
-            {/* BOTÓN GUARDAR CAMBIOS */}
-            <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex justify-end">
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                className="px-8 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-colors disabled:opacity-50"
-              >
-                {saving ? "Guardando…" : "💾 Guardar Configuraciones"}
-              </button>
-            </div>
+            {/* BOTÓN GUARDAR CAMBIOS (Oculto en medios de pago porque se guardan en tiempo real) */}
+            {activeTab !== "payments" && (
+              <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-8 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {saving ? "Guardando…" : "💾 Guardar Configuraciones"}
+                </button>
+              </div>
+            )}
           </div>
         </main>
       </div>
