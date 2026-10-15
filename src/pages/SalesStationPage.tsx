@@ -1360,10 +1360,10 @@ export function SalesStationPage({
                 }
               }}
               placeholder="Código del producto o cantidad*código (ej. 3*75012345)..."
-              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl pl-10 pr-36 py-2.5 text-slate-900 dark:text-white font-mono text-sm font-semibold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-2xs transition-colors"
+              className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 focus:border-emerald-600 dark:focus:border-emerald-500 rounded-xl pl-10 pr-10 py-2.5 text-slate-900 dark:text-white font-mono text-sm font-semibold placeholder:font-sans placeholder:text-slate-400 dark:placeholder:text-slate-500 placeholder:text-xs placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-emerald-500/20 shadow-2xs transition-colors"
               autoFocus
             />
-            {barcodeInput ? (
+            {barcodeInput && (
               <button
                 type="button"
                 onClick={() => {
@@ -1374,11 +1374,6 @@ export function SalesStationPage({
               >
                 ✕
               </button>
-            ) : (
-              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-200/60 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-[10px] font-mono font-bold tracking-wider uppercase border border-slate-200/80 dark:border-slate-700 pointer-events-none">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>SCANNER ACTIVO</span>
-              </div>
             )}
           </div>
           <button
