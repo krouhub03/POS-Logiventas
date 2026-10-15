@@ -8,6 +8,7 @@ pub struct Product {
     pub barcode: Option<String>,
     pub name: String,
     pub category_id: Option<i64>,
+    pub category_name: Option<String>,
     pub unit: String,
     pub price_cents: i64,
     pub cost_cents: i64,

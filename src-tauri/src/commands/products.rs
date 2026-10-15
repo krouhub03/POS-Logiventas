@@ -7,8 +7,9 @@ use crate::models::product::{
     InventoryMovementDto, NewProduct, Product, ProductTag, StockAdjustmentInput, UpdateProductInput,
 };
 
-const PRODUCT_COLUMNS: &str = "id, sku, barcode, name, category_id, unit, price_cents, cost_cents, \
-     tax_rate_bp, stock, min_stock, is_service, active, controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents";
+const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
+     p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, p.is_bundle, p.tags, p.tax_fixed_cents, c.name";
+const PRODUCT_FROM: &str = "products p LEFT JOIN categories c ON c.id = p.category_id";
 
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let is_service_int: i64 = r.get(11)?;
@@ -18,6 +19,7 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let is_bundle_int: i64 = r.get(15).unwrap_or(0);
     let tags: Option<String> = r.get(16).ok();
     let tax_fixed_cents: i64 = r.get(17).unwrap_or(0);
+    let category_name: Option<String> = r.get(18).ok();
 
     Ok(Product {
         id: r.get(0)?,
@@ -25,6 +27,7 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         barcode: r.get(2)?,
         name: r.get(3)?,
         category_id: r.get(4)?,
+        category_name,
         unit: r.get(5)?,
         price_cents: r.get(6)?,
         cost_cents: r.get(7)?,
@@ -41,15 +44,30 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     })
 }
 
+/// Lista los nombres de categorías registradas (orden alfabético).
+#[tauri::command]
+pub fn list_categories(db: State<'_, Db>) -> AppResult<Vec<String>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare("SELECT name FROM categories WHERE active = 1 ORDER BY name ASC")?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    let mut list = Vec::new();
+    for name in rows.flatten() {
+        if !name.trim().is_empty() && !list.contains(&name) {
+            list.push(name);
+        }
+    }
+    Ok(list)
+}
+
 /// Lista productos activos. `search` filtra por nombre, SKU, código de barras o tags (#frio, etc.).
 #[tauri::command]
 pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec<Product>> {
     let conn = db.conn()?;
     let pattern = format!("%{}%", search.unwrap_or_default().trim());
     let sql = format!(
-        "SELECT {PRODUCT_COLUMNS} FROM products \
-         WHERE active = 1 AND (name LIKE ?1 OR sku LIKE ?1 OR barcode LIKE ?1 OR tags LIKE ?1) \
-         ORDER BY name LIMIT 300"
+        "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
+         WHERE p.active = 1 AND (p.name LIKE ?1 OR p.sku LIKE ?1 OR p.barcode LIKE ?1 OR p.tags LIKE ?1) \
+         ORDER BY p.name LIMIT 300"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![pattern], map_product)?;
@@ -60,7 +78,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
 #[tauri::command]
 pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<Option<Product>> {
     let conn = db.conn()?;
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM products WHERE active = 1 AND barcode = ?1");
+    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.active = 1 AND p.barcode = ?1");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query_map(params![barcode.trim()], map_product)?;
     Ok(rows.next().transpose()?)
@@ -70,7 +88,7 @@ pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<
 #[tauri::command]
 pub fn get_product(db: State<'_, Db>, id: i64) -> AppResult<Product> {
     let conn = db.conn()?;
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM products WHERE id = ?1");
+    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
     conn.query_row(&sql, params![id], map_product)
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
@@ -154,7 +172,7 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         )?;
     }
 
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM products WHERE id = ?1");
+    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
     let product = tx.query_row(&sql, params![id], map_product)?;
     tx.commit()?;
 
@@ -233,7 +251,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         ],
     )?;
 
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM products WHERE id = ?1");
+    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
     let product = tx.query_row(&sql, params![input.id], map_product)?;
     tx.commit()?;
 
@@ -313,7 +331,7 @@ pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult
         )?;
     }
 
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM products WHERE id = ?1");
+    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
     let product = tx.query_row(&sql, params![input.product_id], map_product)?;
     tx.commit()?;
 

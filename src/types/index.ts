@@ -5,6 +5,7 @@ export interface Product {
   barcode: string | null;
   name: string;
   categoryId: number | null;
+  categoryName?: string | null;
   unit: string;
   priceCents: number;
   costCents: number;
@@ -18,6 +19,15 @@ export interface Product {
   tags?: string | null;
   taxFixedCents: number;
   active: boolean;
+}
+
+/** Filtro rápido anclado en la barra de búsqueda de productos (F10). */
+export interface PinnedFilter {
+  id: string;
+  type: "category" | "tag";
+  value: string;
+  icon?: string;
+  color?: string;
 }
 
 /** Espejo de `models::product::ProductTag` (Rust). */

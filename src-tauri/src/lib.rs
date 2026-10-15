@@ -45,6 +45,7 @@ pub fn run() {
             commands::products::create_product_tag,
             commands::products::update_product_tag,
             commands::products::delete_product_tag,
+            commands::products::list_categories,
             commands::auth::get_terminal_status,
             commands::auth::validate_terminal_session,
             commands::auth::pair_terminal_code,

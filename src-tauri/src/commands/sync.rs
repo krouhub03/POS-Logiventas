@@ -474,6 +474,21 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
 
         let effective_stock = if controls_stock == 0 { 0.0 } else { (stock - pending_sold).max(0.0) };
 
+        let category_str = p["category"].as_str().unwrap_or("General").trim();
+        let category_id: Option<i64> = if !category_str.is_empty() {
+            let _ = tx.execute(
+                "INSERT INTO categories (name, active) VALUES (?1, 1) ON CONFLICT(name) DO NOTHING",
+                params![category_str],
+            );
+            tx.query_row(
+                "SELECT id FROM categories WHERE name = ?1",
+                params![category_str],
+                |r| r.get(0),
+            ).ok()
+        } else {
+            None
+        };
+
         if let Some(local_id) = local_match {
             tx.execute(
                 "UPDATE products SET
@@ -495,8 +510,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     is_bundle = ?15,
                     tags = ?16,
                     tax_fixed_cents = ?17,
+                    category_id = ?18,
                     updated_at = datetime('now')
-                 WHERE id = ?18",
+                 WHERE id = ?19",
                 params![
                     erp_id,
                     sku,
@@ -515,6 +531,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     is_bundle,
                     tags,
                     tax_fixed_cents,
+                    category_id,
                     local_id
                 ],
             )?;
@@ -523,8 +540,8 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "INSERT INTO products (
                     erp_id, sku, barcode, name, unit, is_service,
                     price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload,
-                    controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17)",
+                    controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, category_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
                     erp_id,
                     sku,
@@ -542,7 +559,8 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     allow_negative_stock,
                     is_bundle,
                     tags,
-                    tax_fixed_cents
+                    tax_fixed_cents,
+                    category_id
                 ],
             )?;
         }

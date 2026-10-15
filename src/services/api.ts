@@ -78,6 +78,10 @@ export const api = {
       }),
   },
 
+  categories: {
+    list: () => invoke<string[]>("list_categories"),
+  },
+
   tags: {
     list: () => invoke<ProductTag[]>("list_product_tags"),
     create: (name: string, colorHex: string) =>
