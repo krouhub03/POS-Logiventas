@@ -400,18 +400,10 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
             type="button"
             onClick={() => handleOpenCreateModal(false)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-colors"
-            title="Registrar nuevo producto físico (F8)"
+            title="Registrar nuevo producto o servicio (F8)"
           >
-            <span>+ Nuevo Producto</span>
+            <span>+ Nuevo Producto / Servicio</span>
             <span className="bg-indigo-700/60 px-1 rounded text-[10px] font-mono">F8</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleOpenCreateModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs shadow-sm transition-colors"
-            title="Registrar nuevo servicio exento de stock físico"
-          >
-            <span>+ Nuevo Servicio</span>
           </button>
         </div>
       </header>
