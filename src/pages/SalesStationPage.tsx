@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift } from "../types";
+import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift, Customer } from "../types";
 import { api } from "../services/api";
 import { formatCents, calculateTaxCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
@@ -9,6 +9,7 @@ import { hasPermission } from "../lib/permissions";
 import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
+import { CustomerModal } from "../components/CustomerModal";
 
 interface CartLine {
   id: string;
@@ -18,16 +19,19 @@ interface CartLine {
   unitPriceCents: number;
   quantity: number;
   taxRateBp: number;
+  taxFixedCents?: number;
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
   currentStock?: number;
+  controlsStock?: boolean;
 }
 
 interface TicketTab {
   id: number;
   name: string;
   lines: CartLine[];
+  customer?: Customer | null;
 }
 
 const BagIcon = () => (
@@ -162,6 +166,7 @@ export function SalesStationPage({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCobroOpen, setIsCobroOpen] = useState(false);
   const [isVariosOpen, setIsVariosOpen] = useState(false);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
 
   // Estado de feedback / notificación rápida
   const [feedback, setFeedback] = useState<{
@@ -216,10 +221,10 @@ export function SalesStationPage({
 
   // Enfoque continuo al input de código
   const focusInput = useCallback(() => {
-    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen && editingTicketId === null) {
+    if (isActive && !isSearchOpen && !isCobroOpen && !isVariosOpen && !isCustomerModalOpen && editingTicketId === null) {
       barcodeInputRef.current?.focus();
     }
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId]);
 
   useEffect(() => {
     if (isActive && editingTicketId === null) {
@@ -264,6 +269,18 @@ export function SalesStationPage({
   const updateCurrentTicketLines = (newLines: CartLine[]) => {
     setTickets((prev) =>
       prev.map((t) => (t.id === activeTicketId ? { ...t, lines: newLines } : t))
+    );
+  };
+
+  // Actualizar cliente asignado al ticket activo
+  const updateCurrentTicketCustomer = (customer: Customer | null) => {
+    updateTicketCustomerById(activeTicketId, customer);
+  };
+
+  // Actualizar cliente de cualquier ticket por ID (permite desvincular con 1 clic sin cambiar de tab)
+  const updateTicketCustomerById = (ticketId: number, customer: Customer | null) => {
+    setTickets((prev) =>
+      prev.map((t) => (t.id === ticketId ? { ...t, customer } : t))
     );
   };
 
@@ -382,7 +399,8 @@ export function SalesStationPage({
       const existing = updatedLines[existingIndex];
       const newQty = existing.quantity + quantity;
       const newSubtotal = Math.round(existing.unitPriceCents * newQty);
-      const newTax = calculateTaxCents(newSubtotal, existing.taxRateBp);
+      const fixedTax = Math.round((existing.taxFixedCents || 0) * newQty);
+      const newTax = calculateTaxCents(newSubtotal, existing.taxRateBp) + fixedTax;
       const newTotal = newSubtotal + newTax;
 
       updatedLines[existingIndex] = {
@@ -395,8 +413,9 @@ export function SalesStationPage({
       updateCurrentTicketLines(updatedLines);
       setSelectedLineIndex(existingIndex);
     } else {
+      const prodTaxFixed = product.taxFixedCents || 0;
       const unitSubtotal = Math.round(product.priceCents * quantity);
-      const unitTax = calculateTaxCents(unitSubtotal, product.taxRateBp);
+      const unitTax = calculateTaxCents(unitSubtotal, product.taxRateBp) + Math.round(prodTaxFixed * quantity);
       const newLine: CartLine = {
         id: `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         productId: product.id,
@@ -405,10 +424,12 @@ export function SalesStationPage({
         unitPriceCents: product.priceCents,
         quantity,
         taxRateBp: product.taxRateBp,
+        taxFixedCents: prodTaxFixed,
         subtotalCents: unitSubtotal,
         taxCents: unitTax,
         totalCents: unitSubtotal + unitTax,
         currentStock: product.stock,
+        controlsStock: product.controlsStock,
       };
       const updated = [...cartLines, newLine];
       updateCurrentTicketLines(updated);
@@ -528,7 +549,8 @@ export function SalesStationPage({
     const target = updated[selectedLineIndex];
     const newQty = Math.max(0.01, target.quantity + delta);
     const newSubtotal = Math.round(target.unitPriceCents * newQty);
-    const newTax = calculateTaxCents(newSubtotal, target.taxRateBp);
+    const targetTaxFixed = target.taxFixedCents || 0;
+    const newTax = calculateTaxCents(newSubtotal, target.taxRateBp) + Math.round(targetTaxFixed * newQty);
 
     updated[selectedLineIndex] = {
       ...target,
@@ -573,8 +595,10 @@ export function SalesStationPage({
   };
 
   // Procesar cobro (F12)
-  const handleProcessSale = async (payments: PaymentInput[]) => {
+  const handleProcessSale = async (payments: PaymentInput[], customerId?: number) => {
     if (cartLines.length === 0) return;
+
+    const finalCustomerId = customerId ?? currentTicket?.customer?.id ?? undefined;
 
     const items: CartItemInput[] = cartLines.map((l) => ({
       productId: l.productId,
@@ -583,13 +607,14 @@ export function SalesStationPage({
       quantity: l.quantity,
       unitPriceCents: l.unitPriceCents,
       taxRateBp: l.taxRateBp,
+      taxFixedCents: l.taxFixedCents,
       discountCents: 0,
     }));
 
     try {
       const receipt = await api.sales.create({
         userId: cashier.id,
-        customerId: undefined,
+        customerId: finalCustomerId,
         items,
         payments,
       });
@@ -758,7 +783,7 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen) return;
     if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -771,7 +796,17 @@ export function SalesStationPage({
           document.activeElement.tagName === "SELECT");
       if (isOtherInputFocused) return;
 
-      if (e.key === "F6") {
+      if (e.key === "F2") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (currentTicket?.customer) {
+            updateCurrentTicketCustomer(null);
+            showFeedback("👤 Cliente desvinculado del ticket", "info");
+          }
+        } else {
+          setIsCustomerModalOpen(true);
+        }
+      } else if (e.key === "F6") {
         e.preventDefault();
         handleHoldTicket();
       } else if (e.key === "F7") {
@@ -838,7 +873,7 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
@@ -878,6 +913,13 @@ export function SalesStationPage({
             <span className="text-slate-500 font-medium text-xs">Terminal:</span>
             <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-xs px-2.5 py-1 rounded-md">
               {terminalStatus.cajaCodigo || "CAJA-01"}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 font-medium text-xs">Bodega:</span>
+            <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-xs px-2.5 py-1 rounded-md">
+              {terminalStatus.bodegaNombre || "Principal"}
             </span>
           </div>
 
@@ -1005,14 +1047,39 @@ export function SalesStationPage({
           </button>
 
           {/* F2 Clientes */}
-          <button
-            onClick={() => showFeedback("Módulo de Clientes sincronizado con ERP")}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
-          >
-            <span className="text-slate-400 font-mono text-[10px]">F2</span>
-            <UsersIcon />
-            <span>Clientes</span>
-          </button>
+          <div className="hidden sm:flex items-center rounded-xl overflow-hidden border border-slate-200/60 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setIsCustomerModalOpen(true)}
+              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                currentTicket?.customer
+                  ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200"
+                  : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+              }`}
+              title="Asignar o cambiar cliente para este ticket (F2)"
+            >
+              <span className="text-slate-400 font-mono text-[10px]">F2</span>
+              <UsersIcon />
+              <span className="truncate max-w-[120px]">
+                {currentTicket?.customer ? currentTicket.customer.name : "Clientes"}
+              </span>
+            </button>
+            {currentTicket?.customer && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  updateCurrentTicketCustomer(null);
+                  showFeedback("👤 Cliente desvinculado del ticket", "info");
+                }}
+                className="px-2 py-2 bg-emerald-100 hover:bg-rose-500 hover:text-white text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 dark:hover:bg-rose-600 dark:hover:text-white text-xs font-bold transition-colors cursor-pointer border-l border-emerald-200 dark:border-emerald-800"
+                title="Desvincular cliente con 1 clic (Shift+F2)"
+              >
+                ✕
+              </button>
+            )}
+          </div>
 
           {/* F4 Inventario */}
           {(hasPermission(cashier, "inventario:ajustar") || hasPermission(cashier, "inventario:ver")) && (
@@ -1116,6 +1183,36 @@ export function SalesStationPage({
                     >
                       {t.name}
                     </span>
+                    {t.customer && (
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] bg-emerald-100/90 hover:bg-emerald-200/90 text-emerald-900 dark:bg-emerald-950/90 dark:text-emerald-200 dark:hover:bg-emerald-900 px-1.5 py-0.5 rounded font-mono font-medium transition-colors"
+                        title={`Cliente: ${t.customer.name} (Clic en ✕ para quitar)`}
+                      >
+                        <span className="truncate max-w-[75px]">👤 {t.customer.name.split(" ")[0]}</span>
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            updateTicketCustomerById(t.id, null);
+                            showFeedback(`👤 Cliente desvinculado de ${t.name}`, "info");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              updateTicketCustomerById(t.id, null);
+                              showFeedback(`👤 Cliente desvinculado de ${t.name}`, "info");
+                            }
+                          }}
+                          className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-emerald-700 dark:text-emerald-300 hover:bg-rose-500 hover:text-white transition-colors cursor-pointer text-[9px] font-bold"
+                          title="Quitar cliente de este ticket con 1 clic"
+                        >
+                          ✕
+                        </span>
+                      </span>
+                    )}
                     {t.lines.length > 0 && (
                       <span className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold">
                         {t.lines.length}
@@ -1480,8 +1577,27 @@ export function SalesStationPage({
       <CobroModal
         isOpen={isCobroOpen}
         totalCents={totalCents}
+        initialCustomer={currentTicket?.customer || null}
         onClose={handleCloseCobro}
-        onConfirm={handleProcessSale}
+        onConfirm={(payments, customerId) => handleProcessSale(payments, customerId)}
+      />
+
+      <CustomerModal
+        isOpen={isCustomerModalOpen}
+        currentCustomer={currentTicket?.customer || null}
+        onClose={() => {
+          setIsCustomerModalOpen(false);
+          focusInput();
+        }}
+        onSelect={(selected) => {
+          updateCurrentTicketCustomer(selected);
+          if (selected) {
+            showFeedback(`👤 Cliente asignado: ${selected.name}`, "success");
+          } else {
+            showFeedback("👤 Ticket asignado a Consumidor Final", "info");
+          }
+          focusInput();
+        }}
       />
     </div>
   );

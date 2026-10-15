@@ -12,6 +12,11 @@ export interface Product {
   stock: number;
   minStock: number;
   isService: boolean;
+  controlsStock: boolean;
+  allowNegativeStock: boolean;
+  isBundle: boolean;
+  tags?: string | null;
+  taxFixedCents: number;
   active: boolean;
 }
 
@@ -28,6 +33,11 @@ export interface NewProduct {
   stock?: number;
   minStock?: number;
   isService?: boolean;
+  controlsStock?: boolean;
+  allowNegativeStock?: boolean;
+  isBundle?: boolean;
+  tags?: string | null;
+  taxFixedCents?: number;
 }
 
 /** Espejo de `models::product::UpdateProductInput` (Rust). */
@@ -44,6 +54,11 @@ export interface UpdateProductInput {
   stock?: number;
   minStock?: number;
   isService?: boolean;
+  controlsStock?: boolean;
+  allowNegativeStock?: boolean;
+  isBundle?: boolean;
+  tags?: string | null;
+  taxFixedCents?: number;
   active?: boolean;
 }
 
@@ -95,6 +110,8 @@ export interface TerminalStatus {
   cajaId: string | null;
   cajaNombre: string | null;
   cajaCodigo: string | null;
+  bodegaId?: string | null;
+  bodegaNombre?: string | null;
   empresaId: string | null;
   empresaNombre: string | null;
   empresaNit: string | null;
@@ -142,6 +159,7 @@ export interface CartItemInput {
   quantity: number;
   unitPriceCents: number;
   taxRateBp?: number;
+  taxFixedCents?: number;
   discountCents?: number;
 }
 
@@ -286,3 +304,20 @@ export interface ShiftSummary {
   expectedCashCents: number;
 }
 
+export interface Customer {
+  id: number;
+  name: string;
+  taxId?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  active: boolean;
+}
+
+export interface CreateCustomerInput {
+  name: string;
+  taxId?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+}

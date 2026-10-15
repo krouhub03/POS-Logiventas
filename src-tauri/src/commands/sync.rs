@@ -343,6 +343,16 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     }
 
     let json: Value = res.json().await?;
+
+    if let Some(bodega_nombre) = json["data"]["bodega"]["nombre"].as_str() {
+        if let Ok(conn) = db.conn() {
+            let _ = set_setting(&conn, "bodega_nombre", bodega_nombre);
+            if let Some(bodega_id) = json["data"]["bodega"]["id"].as_str() {
+                let _ = set_setting(&conn, "bodega_id", bodega_id);
+            }
+        }
+    }
+
     let products_array = json["data"]["products"]
         .as_array()
         .ok_or_else(|| AppError::Validation("Formato inválido de productos recibido del ERP".into()))?;
@@ -364,6 +374,11 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         let name = p["name"].as_str().unwrap_or("Sin Nombre");
         let unit = p["unit"].as_str().unwrap_or("pza");
         let is_service = p["is_service"].as_i64().unwrap_or(0);
+        let controls_stock = p["controls_stock"].as_i64().unwrap_or(if is_service == 1 { 0 } else { 1 });
+        let allow_negative_stock = p["allow_negative_stock"].as_i64().unwrap_or(1);
+        let is_bundle = p["is_bundle"].as_i64().unwrap_or(0);
+        let tags = p["tags"].as_str().unwrap_or("");
+        let tax_fixed_cents = p["tax_fixed_cents"].as_i64().unwrap_or(0);
         let price_cents = p["price_cents"].as_i64().unwrap_or(0);
         let cost_cents = p["cost_cents"].as_i64().unwrap_or(0);
         let tax_rate_bp = p["tax_rate_bp"].as_i64().unwrap_or(0);
@@ -456,7 +471,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             0.0
         };
 
-        let effective_stock = if is_service == 1 { 0.0 } else { (stock - pending_sold).max(0.0) };
+        let effective_stock = if controls_stock == 0 { 0.0 } else { (stock - pending_sold).max(0.0) };
 
         if let Some(local_id) = local_match {
             tx.execute(
@@ -474,8 +489,13 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     min_stock = ?11,
                     active = ?12,
                     needs_erp_upload = 0,
+                    controls_stock = ?13,
+                    allow_negative_stock = ?14,
+                    is_bundle = ?15,
+                    tags = ?16,
+                    tax_fixed_cents = ?17,
                     updated_at = datetime('now')
-                 WHERE id = ?13",
+                 WHERE id = ?18",
                 params![
                     erp_id,
                     sku,
@@ -489,6 +509,11 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     effective_stock,
                     min_stock,
                     active,
+                    controls_stock,
+                    allow_negative_stock,
+                    is_bundle,
+                    tags,
+                    tax_fixed_cents,
                     local_id
                 ],
             )?;
@@ -496,8 +521,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             tx.execute(
                 "INSERT INTO products (
                     erp_id, sku, barcode, name, unit, is_service,
-                    price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0)",
+                    price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload,
+                    controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17)",
                 params![
                     erp_id,
                     sku,
@@ -510,7 +536,12 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     tax_rate_bp,
                     effective_stock,
                     min_stock,
-                    active
+                    active,
+                    controls_stock,
+                    allow_negative_stock,
+                    is_bundle,
+                    tags,
+                    tax_fixed_cents
                 ],
             )?;
         }

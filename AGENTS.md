@@ -103,6 +103,15 @@ El POS está diseñado para sucursales con conectividad inestable o intermitente
 ### 3.4. Integración Contable en ERP
 - Al llegar al ERP (`megalider-web-2`), cada venta sincronizada dispara el Motor Contable v6.2 (`generarAsientoContable`), acreditando ingresos e IVA y debitando caja/bancos según el método de pago (`cash`, `card`, `transfer`).
 
+### 3.5. Preservación del Costo Histórico para Devoluciones (NIC 2)
+- Toda venta almacena en `sale_items.unit_cost_cents` el costo del producto vigente en el momento de la emisión.
+- El payload del Outbox incluye `unitCostCents` para que, ante cualquier devolución (Nota Crédito) procesada en el ERP o la terminal, el reingreso al Kardex y la reversión del costo de ventas se calculen con el costo unitario histórico exacto, previniendo descuadres contables y de valuación de inventarios.
+
+### 3.6. Medios de Pago Amigables y Auto-Onboarding (Doc 16)
+- El POS sincroniza los canales de pago normalizados (`cash`, `card`, `transfer`) enlazados a la configuración sin jerga contable del ERP (`megalider-web-2`).
+- Las terminales operan con códigos amigables para el cajero (Efectivo, Nequi, Daviplata, Datáfono, Bancolombia), mientras el Outbox transporta el `puc_code` resuelto automáticamente por el ERP para garantizar asientos contables equilibrados.
+- Ver especificación completa en `docs/03-Tecnico/16-Arquitectura_Contabilidad_Invisible_Medios_Pago_Movimientos.md`.
+
 ---
 
 ## 🛠️ 4. Base de Datos Local y Migraciones SQLite

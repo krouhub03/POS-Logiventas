@@ -44,12 +44,15 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         let item_subtotal = (it.quantity * it.unit_price_cents as f64).round() as i64;
         let item_discount = it.discount_cents.unwrap_or(0);
         let tax_bp = it.tax_rate_bp.unwrap_or(0);
-        // Redondeo bancario al centavo más cercano: (subtotal * bp + 5000) / 10000
-        let item_tax = if tax_bp > 0 {
+        let tax_fixed = it.tax_fixed_cents.unwrap_or(0);
+        // Redondeo bancario al centavo más cercano: (subtotal * bp + 5000) / 10000 + (tax_fixed * qty)
+        let percent_tax = if tax_bp > 0 {
             (item_subtotal * tax_bp + 5000) / 10000
         } else {
             0
         };
+        let fixed_tax = (tax_fixed as f64 * it.quantity).round() as i64;
+        let item_tax = percent_tax + fixed_tax;
         let item_total = item_subtotal + item_tax - item_discount;
 
         subtotal_cents += item_subtotal;
@@ -119,9 +122,19 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
     let mut receipt_items = Vec::new();
 
     for (it, _item_subtotal, item_discount, item_tax, item_total) in calculated_items {
+        let unit_cost_cents: i64 = if let Some(pid) = it.product_id {
+            tx.query_row(
+                "SELECT cost_cents FROM products WHERE id = ?1",
+                params![pid],
+                |r| r.get(0),
+            ).unwrap_or(0)
+        } else {
+            0
+        };
+
         tx.execute(
-            "INSERT INTO sale_items (sale_id, product_id, description, quantity, unit_price_cents, discount_cents, tax_cents, total_cents)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO sale_items (sale_id, product_id, description, quantity, unit_price_cents, discount_cents, tax_cents, total_cents, unit_cost_cents)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 sale_id,
                 it.product_id,
@@ -130,24 +143,25 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
                 it.unit_price_cents,
                 item_discount,
                 item_tax,
-                item_total
+                item_total,
+                unit_cost_cents
             ],
         )?;
 
         let item_row_id = tx.last_insert_rowid();
 
-        // Si es producto físico registrado (no servicio), verificar y descontar inventario
+        // Si es producto registrado, verificar políticas de inventario
         if let Some(pid) = it.product_id {
-            let (is_service, current_stock): (i64, f64) = tx
+            let (controls_stock, allow_negative_stock, current_stock): (i64, i64, f64) = tx
                 .query_row(
-                    "SELECT is_service, stock FROM products WHERE id = ?1",
+                    "SELECT controls_stock, allow_negative_stock, stock FROM products WHERE id = ?1",
                     params![pid],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
-                .unwrap_or((0, 0.0));
+                .unwrap_or((1, 1, 0.0));
 
-            if is_service == 0 {
-                if current_stock < it.quantity {
+            if controls_stock == 1 {
+                if current_stock < it.quantity && allow_negative_stock == 0 {
                     return Err(AppError::Validation(format!(
                         "Stock local insuficiente para '{}'. Disponible: {}, Solicitado: {}",
                         it.description, current_stock, it.quantity
@@ -202,14 +216,14 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
     // 5. Inserción en outbox (sync_queue) dentro de la misma transacción ACID
     let payload_items: Vec<serde_json::Value> = input.items.iter().map(|it| {
-        let (erp_id, sku, barcode): (Option<String>, Option<String>, Option<String>) = if let Some(pid) = it.product_id {
+        let (erp_id, sku, barcode, cost_cents): (Option<String>, Option<String>, Option<String>, i64) = if let Some(pid) = it.product_id {
             tx.query_row(
-                "SELECT erp_id, sku, barcode FROM products WHERE id = ?1",
+                "SELECT erp_id, sku, barcode, cost_cents FROM products WHERE id = ?1",
                 params![pid],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            ).unwrap_or((None, None, None))
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            ).unwrap_or((None, None, None, 0))
         } else {
-            (None, None, None)
+            (None, None, None, 0)
         };
 
         let resolved_sku = sku.or_else(|| it.sku.clone());
@@ -225,17 +239,35 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
             "description": it.description,
             "quantity": it.quantity,
             "unitPriceCents": it.unit_price_cents,
+            "unitCostCents": cost_cents,
             "taxRateBp": it.tax_rate_bp.unwrap_or(0),
             "discountCents": it.discount_cents.unwrap_or(0),
             "totalCents": ((it.quantity * it.unit_price_cents as f64).round() as i64)
         })
     }).collect();
 
+    let customer_info: Option<(String, Option<String>)> = if let Some(cid) = input.customer_id {
+        tx.query_row(
+            "SELECT name, tax_id FROM customers WHERE id = ?1",
+            params![cid],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    } else {
+        None
+    };
+
+    let (customer_name, customer_tax_id) = match customer_info {
+        Some((name, tax_id)) => (Some(name), tax_id),
+        None => (None, None),
+    };
+
     let sale_payload = serde_json::json!({
         "id": sale_id,
         "folio": &folio,
         "userId": input.user_id,
         "customerId": input.customer_id,
+        "customerName": customer_name,
+        "customerTaxId": customer_tax_id,
         "subtotalCents": subtotal_cents,
         "discountCents": discount_cents,
         "taxCents": tax_cents,

@@ -70,6 +70,9 @@ pub fn run() {
             commands::shifts::open_shift,
             commands::shifts::get_shift_summary,
             commands::shifts::close_shift,
+            commands::customers::get_customers,
+            commands::customers::search_customers,
+            commands::customers::create_customer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

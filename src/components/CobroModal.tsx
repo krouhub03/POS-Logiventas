@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from "react";
 import { formatCents, toCents } from "../lib/money";
 import { api } from "../services/api";
-import type { PaymentInput, PaymentMethod } from "../types";
+import type { PaymentInput, PaymentMethod, Customer } from "../types";
+import { CustomerModal } from "./CustomerModal";
 
 interface CobroModalProps {
   totalCents: number;
   isOpen: boolean;
+  initialCustomer?: Customer | null;
   onClose: () => void;
-  onConfirm: (payments: PaymentInput[]) => Promise<void>;
+  onConfirm: (payments: PaymentInput[], customerId?: number) => Promise<void>;
 }
 
 interface AbonoItem {
@@ -19,22 +21,26 @@ interface AbonoItem {
   reference?: string;
 }
 
-export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModalProps) {
+export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onConfirm }: CobroModalProps) {
   const [availableMethods, setAvailableMethods] = useState<PaymentMethod[]>([]);
   const [selectedMethodCode, setSelectedMethodCode] = useState<string>("cash");
   const [pagoInput, setPagoInput] = useState<string>("");
   const [refInput, setRefInput] = useState<string>("");
   const [isSplitMode, setIsSplitMode] = useState(false);
   const [abonos, setAbonos] = useState<AbonoItem[]>([]);
+  const [customer, setCustomer] = useState<Customer | null>(initialCustomer || null);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
 
-  // Cargar medios de pago habilitados al abrir
+  // Sincronizar cliente inicial y reiniciar campos al abrir
   useEffect(() => {
     if (isOpen) {
+      setCustomer(initialCustomer || null);
+      setIsCustomerModalOpen(false);
       setPagoInput((totalCents / 100).toString());
       setRefInput("");
       setIsSplitMode(false);
@@ -71,6 +77,22 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
     selectedMethodCode === "cash" ||
     selectedMethodObj?.type === "EFECTIVO" ||
     selectedMethodCode.toLowerCase().includes("efectivo");
+
+  const isCreditMethod =
+    selectedMethodObj?.type === "CREDITO" ||
+    selectedMethodCode.toLowerCase().includes("credito") ||
+    selectedMethodCode.toLowerCase().includes("credit") ||
+    selectedMethodCode.toLowerCase().includes("fiar");
+
+  const hasCreditAbono = abonos.some(
+    (a) =>
+      a.methodType === "CREDITO" ||
+      a.method.toLowerCase().includes("credit") ||
+      a.method.toLowerCase().includes("credito") ||
+      a.method.toLowerCase().includes("fiar")
+  );
+
+  const requiresCustomer = isCreditMethod || hasCreditAbono;
 
   // Cálculos en modo mixto
   const totalAbonadoCents = abonos.reduce((sum, a) => sum + a.amountCents, 0);
@@ -168,6 +190,13 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
     if (e) e.preventDefault();
     setError(null);
 
+    // Validación crítica de Crédito / Fiar: Requiere Cliente Titular
+    if (requiresCustomer && !customer) {
+      setError("⚠️ Esta venta contiene Crédito (Fiar). Debes seleccionar o registrar el cliente titular de la cuenta por cobrar.");
+      setIsCustomerModalOpen(true);
+      return;
+    }
+
     // Caso 1: Modo Mixto
     if (isSplitMode) {
       // Si aún queda saldo pendiente y el usuario tiene un valor en el input
@@ -188,7 +217,7 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
           amountCents: a.amountCents,
           reference: a.reference,
         }));
-        await onConfirm(paymentsToSend);
+        await onConfirm(paymentsToSend, customer?.id);
         onClose();
       } catch (err: unknown) {
         setError(String(err));
@@ -218,7 +247,7 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
           amountCents: pagoCents,
           reference: refInput.trim() || undefined,
         },
-      ]);
+      ], customer?.id);
       onClose();
     } catch (err: unknown) {
       setError(String(err));
@@ -233,6 +262,13 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         onClose();
+        return;
+      }
+
+      // Atajo F2 para seleccionar o cambiar cliente
+      if (e.key === "F2") {
+        e.preventDefault();
+        setIsCustomerModalOpen(true);
         return;
       }
 
@@ -264,14 +300,17 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
     const c = (code || "").toLowerCase();
     if (t === "EFECTIVO" || c.includes("cash") || c.includes("efectivo")) return "💵";
     if (t === "TARJETA" || c.includes("card") || c.includes("tarjeta")) return "💳";
+    if (t === "CREDITO" || c.includes("credit") || c.includes("fiar")) return "📝";
     if (c.includes("nequi") || c.includes("daviplata") || t === "DIGITAL") return "📱";
     if (t === "BANCO" || c.includes("transfer")) return "🏦";
     return "🏷️";
   };
 
-  const isFormValid = isSplitMode
-    ? totalAbonadoCents >= totalCents
-    : pagoCents >= totalCents && (isCashMethod || pagoCents === totalCents);
+  const isFormValid = (
+    isSplitMode
+      ? totalAbonadoCents >= totalCents
+      : pagoCents >= totalCents && (isCashMethod || pagoCents === totalCents)
+  ) && (!requiresCustomer || !!customer);
 
   return (
     <div
@@ -337,6 +376,83 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
         )}
 
         <div className="p-6 space-y-5">
+          {/* BARRA DE CLIENTE (OBLIGATORIO PARA CRÉDITO / FIAR) */}
+          <div
+            className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
+              requiresCustomer && !customer
+                ? "bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700/80 text-amber-900 dark:text-amber-200"
+                : customer
+                ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
+                : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="text-base">{customer ? "👤" : requiresCustomer ? "⚠️" : "👤"}</span>
+              <div>
+                <div className="text-xs font-bold flex items-center gap-2">
+                  <span>
+                    {customer
+                      ? customer.name
+                      : requiresCustomer
+                      ? "Cliente Requerido para Crédito (Fiar)"
+                      : "Cliente: Consumidor Final"}
+                  </span>
+                  {requiresCustomer && !customer && (
+                    <span className="text-[10px] bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-100 font-bold px-1.5 py-0.5 rounded uppercase">
+                      Obligatorio
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] opacity-80 mt-0.5 flex items-center gap-3">
+                  {customer ? (
+                    <>
+                      {customer.taxId && (
+                        <span>
+                          Doc: <b className="font-mono">{customer.taxId}</b>
+                        </span>
+                      )}
+                      {customer.phone && (
+                        <span>
+                          Tel: <b className="font-mono">{customer.phone}</b>
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span>
+                      {requiresCustomer
+                        ? "Debes asociar a quién se le cargará esta cuenta por cobrar."
+                        : "Asigna un cliente para registrar historial (Opcional)"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsCustomerModalOpen(true)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                  requiresCustomer && !customer
+                    ? "bg-amber-600 hover:bg-amber-500 text-white border-amber-500 shadow-sm"
+                    : "bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700"
+                }`}
+              >
+                <span>{customer ? "Cambiar (F2)" : "Seleccionar Cliente (F2)"}</span>
+              </button>
+              {customer && !requiresCustomer && (
+                <button
+                  type="button"
+                  onClick={() => setCustomer(null)}
+                  className="text-slate-400 hover:text-rose-500 text-sm px-1.5 py-1 rounded cursor-pointer transition-colors"
+                  title="Quitar cliente y volver a Consumidor Final"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* BOTONERA DINÁMICA DE MEDIOS DE PAGO */}
           <div>
             <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
@@ -589,6 +705,8 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
             >
               {loading
                 ? "Procesando…"
+                : requiresCustomer && !customer
+                ? "Asignar Cliente para Fiar"
                 : isSplitMode
                 ? "Confirmar Venta Mixta (Enter)"
                 : "Cobrar e Imprimir (Enter)"}
@@ -596,6 +714,21 @@ export function CobroModal({ totalCents, isOpen, onClose, onConfirm }: CobroModa
           </div>
         </div>
       </div>
+
+      {/* MODAL DE CLIENTES INLINE (F2) */}
+      <CustomerModal
+        isOpen={isCustomerModalOpen}
+        currentCustomer={customer}
+        onClose={() => {
+          setIsCustomerModalOpen(false);
+          setTimeout(() => inputRef.current?.focus(), 50);
+        }}
+        onSelect={(selected) => {
+          setCustomer(selected);
+          setError(null);
+          setTimeout(() => inputRef.current?.focus(), 50);
+        }}
+      />
     </div>
   );
 }

@@ -11,6 +11,7 @@ pub struct CartItemInput {
     pub quantity: f64,
     pub unit_price_cents: i64,
     pub tax_rate_bp: Option<i64>,
+    pub tax_fixed_cents: Option<i64>,
     pub discount_cents: Option<i64>,
 }
 

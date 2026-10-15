@@ -6,7 +6,9 @@ import type {
   CashShift,
   CheckStockItemInput,
   CloseShiftInput,
+  CreateCustomerInput,
   CreateSaleInput,
+  Customer,
   InventoryMovement,
   NewProduct,
   OpenShiftInput,
@@ -114,5 +116,11 @@ export const api = {
     getShiftSummary: () => invoke<ShiftSummary>("get_shift_summary"),
     closeShift: (input: CloseShiftInput) =>
       invoke<CashShift>("close_shift", { input }),
+  },
+
+  customers: {
+    list: () => invoke<Customer[]>("get_customers"),
+    search: (query: string) => invoke<Customer[]>("search_customers", { query }),
+    create: (input: CreateCustomerInput) => invoke<Customer>("create_customer", { input }),
   },
 };

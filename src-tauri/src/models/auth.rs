@@ -8,6 +8,8 @@ pub struct TerminalStatus {
     pub caja_id: Option<String>,
     pub caja_nombre: Option<String>,
     pub caja_codigo: Option<String>,
+    pub bodega_id: Option<String>,
+    pub bodega_nombre: Option<String>,
     pub empresa_id: Option<String>,
     pub empresa_nombre: Option<String>,
     pub empresa_nit: Option<String>,

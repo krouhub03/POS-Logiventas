@@ -38,6 +38,8 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
         caja_id: get_setting(conn, "caja_id"),
         caja_nombre: get_setting(conn, "caja_nombre"),
         caja_codigo: get_setting(conn, "caja_codigo"),
+        bodega_id: get_setting(conn, "bodega_id"),
+        bodega_nombre: get_setting(conn, "bodega_nombre"),
         empresa_id: get_setting(conn, "empresa_id"),
         empresa_nombre: get_setting(conn, "empresa_nombre"),
         empresa_nit: get_setting(conn, "empresa_nit"),
@@ -56,6 +58,8 @@ fn internal_unpair(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     set_setting(conn, "caja_id", "")?;
     set_setting(conn, "caja_nombre", "")?;
     set_setting(conn, "caja_codigo", "")?;
+    set_setting(conn, "bodega_id", "")?;
+    set_setting(conn, "bodega_nombre", "")?;
     Ok(())
 }
 

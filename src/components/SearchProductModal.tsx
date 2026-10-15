@@ -96,7 +96,7 @@ export function SearchProductModal({
             ref={inputRef}
             type="text"
             className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-xl px-4 py-2.5 text-slate-900 dark:text-white font-medium focus:outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500"
-            placeholder="Escribe nombre, código de barras o SKU… (Usa ↑ ↓ para navegar)"
+            placeholder="Escribe nombre, código de barras, SKU o etiqueta (#frio, #combo)… (Usa ↑ ↓ para navegar)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -137,14 +137,39 @@ export function SearchProductModal({
                       }`}
                     >
                       <td className="py-2.5 px-3">{p.barcode || p.sku}</td>
-                      <td className="py-2.5 px-3 font-sans font-medium">{p.name}</td>
+                      <td className="py-2.5 px-3 font-sans font-medium">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span>{p.name}</span>
+                          {!p.controlsStock && (
+                            <span className="bg-cyan-100 dark:bg-cyan-950/80 text-cyan-800 dark:text-cyan-400 border border-cyan-300 dark:border-cyan-800/40 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold">
+                              SERVICIO
+                            </span>
+                          )}
+                          {p.isBundle && (
+                            <span className="bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-400 border border-purple-300 dark:border-purple-800/40 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold">
+                              COMBO
+                            </span>
+                          )}
+                          {p.tags && p.tags.trim().length > 0 && (
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                              {p.tags.split(",").map((t) => t.trim().startsWith("#") ? t.trim() : `#${t.trim()}`).join(" ")}
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400">
                         {formatCents(p.priceCents)}
                       </td>
                       <td className="py-2.5 px-3 text-right text-slate-600 dark:text-slate-400">
-                        <span className={p.stock <= p.minStock ? "text-rose-600 dark:text-rose-400 font-bold" : ""}>
-                          {p.stock} {p.unit}
-                        </span>
+                        {!p.controlsStock ? (
+                          <span className="text-slate-400 dark:text-slate-500 italic text-[11px]">
+                            Intangible
+                          </span>
+                        ) : (
+                          <span className={p.stock <= p.minStock ? "text-rose-600 dark:text-rose-400 font-bold" : ""}>
+                            {p.stock} {p.unit}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

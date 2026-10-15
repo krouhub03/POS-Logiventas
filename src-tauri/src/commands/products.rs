@@ -8,11 +8,17 @@ use crate::models::product::{
 };
 
 const PRODUCT_COLUMNS: &str = "id, sku, barcode, name, category_id, unit, price_cents, cost_cents, \
-     tax_rate_bp, stock, min_stock, is_service, active";
+     tax_rate_bp, stock, min_stock, is_service, active, controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents";
 
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let is_service_int: i64 = r.get(11)?;
     let active_int: i64 = r.get(12)?;
+    let controls_stock_int: i64 = r.get(13).unwrap_or(if is_service_int != 0 { 0 } else { 1 });
+    let allow_negative_stock_int: i64 = r.get(14).unwrap_or(1);
+    let is_bundle_int: i64 = r.get(15).unwrap_or(0);
+    let tags: Option<String> = r.get(16).ok();
+    let tax_fixed_cents: i64 = r.get(17).unwrap_or(0);
+
     Ok(Product {
         id: r.get(0)?,
         sku: r.get(1)?,
@@ -26,18 +32,23 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         stock: r.get(9)?,
         min_stock: r.get(10)?,
         is_service: is_service_int != 0,
+        controls_stock: controls_stock_int != 0,
+        allow_negative_stock: allow_negative_stock_int != 0,
+        is_bundle: is_bundle_int != 0,
+        tags,
+        tax_fixed_cents,
         active: active_int != 0,
     })
 }
 
-/// Lista productos activos. `search` filtra por nombre, SKU o código de barras.
+/// Lista productos activos. `search` filtra por nombre, SKU, código de barras o tags (#frio, etc.).
 #[tauri::command]
 pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec<Product>> {
     let conn = db.conn()?;
     let pattern = format!("%{}%", search.unwrap_or_default().trim());
     let sql = format!(
         "SELECT {PRODUCT_COLUMNS} FROM products \
-         WHERE active = 1 AND (name LIKE ?1 OR sku LIKE ?1 OR barcode LIKE ?1) \
+         WHERE active = 1 AND (name LIKE ?1 OR sku LIKE ?1 OR barcode LIKE ?1 OR tags LIKE ?1) \
          ORDER BY name LIMIT 300"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -90,6 +101,12 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
     let stock = if is_service { 0.0 } else { input.stock.unwrap_or(0.0) };
     let min_stock = if is_service { 0.0 } else { input.min_stock.unwrap_or(0.0) };
 
+    let controls_stock = input.controls_stock.unwrap_or(!is_service);
+    let allow_negative_stock = input.allow_negative_stock.unwrap_or(true);
+    let is_bundle = input.is_bundle.unwrap_or(false);
+    let tags_val = input.tags.as_deref().unwrap_or("").trim().to_string();
+    let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
+
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
@@ -103,8 +120,9 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
 
     tx.execute(
         "INSERT INTO products (sku, barcode, name, category_id, unit, price_cents, cost_cents, \
-         tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1)",
+         tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload, \
+         controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, ?12, ?13, ?14, ?15, ?16)",
         params![
             input.sku.trim(),
             barcode_clean,
@@ -117,13 +135,18 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
             stock,
             min_stock,
             if is_service { 1 } else { 0 },
+            if controls_stock { 1 } else { 0 },
+            if allow_negative_stock { 1 } else { 0 },
+            if is_bundle { 1 } else { 0 },
+            tags_val,
+            tax_fixed_cents,
         ],
     )?;
 
     let id = tx.last_insert_rowid();
 
-    // Si tiene stock inicial y no es servicio, registrar movimiento inicial
-    if !is_service && stock > 0.0 {
+    // Si tiene stock inicial y controla inventario, registrar movimiento inicial
+    if controls_stock && stock > 0.0 {
         tx.execute(
             "INSERT INTO inventory_movements (product_id, kind, quantity, reference) \
              VALUES (?1, 'adjustment', ?2, 'Inventario inicial')",
@@ -159,8 +182,14 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         .filter(|s| !s.is_empty())
         .unwrap_or(if is_service { "serv" } else { "pza" });
 
-    let stock = if is_service { 0.0 } else { input.stock.unwrap_or(0.0) };
-    let min_stock = if is_service { 0.0 } else { input.min_stock.unwrap_or(0.0) };
+    let controls_stock = input.controls_stock.unwrap_or(!is_service);
+    let allow_negative_stock = input.allow_negative_stock.unwrap_or(true);
+    let is_bundle = input.is_bundle.unwrap_or(false);
+    let tags_val = input.tags.as_deref().unwrap_or("").trim().to_string();
+    let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
+
+    let stock = if !controls_stock { 0.0 } else { input.stock.unwrap_or(0.0) };
+    let min_stock = if !controls_stock { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let active_int = if input.active.unwrap_or(true) { 1 } else { 0 };
 
     let mut conn = db.conn()?;
@@ -178,8 +207,10 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         "UPDATE products SET \
          sku = ?1, barcode = ?2, name = ?3, category_id = ?4, unit = ?5, \
          price_cents = ?6, cost_cents = ?7, tax_rate_bp = ?8, stock = ?9, \
-         min_stock = ?10, is_service = ?11, active = ?12, needs_erp_upload = 1, updated_at = datetime('now') \
-         WHERE id = ?13",
+         min_stock = ?10, is_service = ?11, active = ?12, needs_erp_upload = 1, \
+         controls_stock = ?13, allow_negative_stock = ?14, is_bundle = ?15, tags = ?16, tax_fixed_cents = ?17, \
+         updated_at = datetime('now') \
+         WHERE id = ?18",
         params![
             input.sku.trim(),
             barcode_clean,
@@ -193,6 +224,11 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
             min_stock,
             if is_service { 1 } else { 0 },
             active_int,
+            if controls_stock { 1 } else { 0 },
+            if allow_negative_stock { 1 } else { 0 },
+            if is_bundle { 1 } else { 0 },
+            tags_val,
+            tax_fixed_cents,
             input.id,
         ],
     )?;

@@ -15,6 +15,11 @@ pub struct Product {
     pub stock: f64,
     pub min_stock: f64,
     pub is_service: bool,
+    pub controls_stock: bool,
+    pub allow_negative_stock: bool,
+    pub is_bundle: bool,
+    pub tags: Option<String>,
+    pub tax_fixed_cents: i64,
     pub active: bool,
 }
 
@@ -32,6 +37,11 @@ pub struct NewProduct {
     pub stock: Option<f64>,
     pub min_stock: Option<f64>,
     pub is_service: Option<bool>,
+    pub controls_stock: Option<bool>,
+    pub allow_negative_stock: Option<bool>,
+    pub is_bundle: Option<bool>,
+    pub tags: Option<String>,
+    pub tax_fixed_cents: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +59,11 @@ pub struct UpdateProductInput {
     pub stock: Option<f64>,
     pub min_stock: Option<f64>,
     pub is_service: Option<bool>,
+    pub controls_stock: Option<bool>,
+    pub allow_negative_stock: Option<bool>,
+    pub is_bundle: Option<bool>,
+    pub tags: Option<String>,
+    pub tax_fixed_cents: Option<i64>,
     pub active: Option<bool>,
 }
 
