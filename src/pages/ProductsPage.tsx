@@ -18,7 +18,11 @@ interface ProductsPageProps {
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "products" | "services" | "low_stock">("all");
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services">("all");
+  const [catalogTagFilter, setCatalogTagFilter] = useState<string>("all");
+  const [inventoryStatusFilter, setInventoryStatusFilter] = useState<"all" | "optimal" | "low" | "out">("all");
+  const [selectedKardexProduct, setSelectedKardexProduct] = useState<{ id: number; name: string } | null>(null);
+
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [loading, setLoading] = useState(false);
@@ -43,6 +47,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formUnit, setFormUnit] = useState("pza");
   const [formStock, setFormStock] = useState<number>(0);
   const [formMinStock, setFormMinStock] = useState<number>(5);
+  const [formTags, setFormTags] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   // Estado del formulario de ajuste de stock
@@ -70,9 +75,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   }, [search]);
 
   // Cargar historial de movimientos (Kardex)
-  const loadMovements = useCallback(async () => {
+  const loadMovements = useCallback(async (productId?: number) => {
     try {
-      const data = await api.products.listMovements(undefined, 100);
+      const data = await api.products.listMovements(productId, 100);
       setMovements(data);
     } catch (e: unknown) {
       console.error("Error al cargar movimientos:", e);
@@ -109,19 +114,87 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   useEffect(() => {
     if (activeTab === "kardex") {
-      loadMovements();
+      loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined);
     }
-  }, [activeTab, loadMovements]);
+  }, [activeTab, selectedKardexProduct, loadMovements]);
 
-  // Filtrado de productos en memoria
-  const filteredProducts = useMemo(() => {
+  // ==============================================================
+  // CATÁLOGO COMERCIAL: Lista de todos los productos y servicios
+  // ==============================================================
+  const catalogProducts = useMemo(() => {
     return products.filter((p) => {
-      if (typeFilter === "services") return p.isService;
-      if (typeFilter === "products") return !p.isService;
-      if (typeFilter === "low_stock") return !p.isService && p.stock <= p.minStock;
+      if (catalogTypeFilter === "products" && p.isService) return false;
+      if (catalogTypeFilter === "services" && !p.isService) return false;
+      if (catalogTagFilter !== "all") {
+        const itemTags = (p.tags || "").toLowerCase();
+        if (!itemTags.includes(catalogTagFilter.toLowerCase())) return false;
+      }
       return true;
     });
-  }, [products, typeFilter]);
+  }, [products, catalogTypeFilter, catalogTagFilter]);
+
+  // ==============================================================
+  // CONTROL DE EXISTENCIAS: Exclusivo productos físicos en bodega
+  // ==============================================================
+  const physicalProducts = useMemo(() => {
+    return products.filter((p) => !p.isService);
+  }, [products]);
+
+  const inventoryFilteredProducts = useMemo(() => {
+    return physicalProducts.filter((p) => {
+      if (inventoryStatusFilter === "optimal") return p.stock > p.minStock;
+      if (inventoryStatusFilter === "low") return p.stock <= p.minStock && p.stock > 0;
+      if (inventoryStatusFilter === "out") return p.stock <= 0;
+      return true;
+    });
+  }, [physicalProducts, inventoryStatusFilter]);
+
+  // Métricas financieras y de almacén para Existencias (F4)
+  const inventoryKpis = useMemo(() => {
+    let totalCostValuation = 0;
+    let totalRetailValuation = 0;
+    let outCount = 0;
+    let lowCount = 0;
+    let optimalCount = 0;
+
+    for (const p of physicalProducts) {
+      if (p.stock > 0) {
+        totalCostValuation += Math.round(p.stock * p.costCents);
+        totalRetailValuation += Math.round(p.stock * p.priceCents);
+      }
+      if (p.stock <= 0) {
+        outCount++;
+      } else if (p.stock <= p.minStock) {
+        lowCount++;
+      } else {
+        optimalCount++;
+      }
+    }
+
+    return {
+      totalSkus: physicalProducts.length,
+      totalCostValuation,
+      totalRetailValuation,
+      outCount,
+      lowCount,
+      optimalCount,
+    };
+  }, [physicalProducts]);
+
+  // Micro-etiquetas presentes en catálogo para filtros rápidos
+  const availableTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of products) {
+      if (p.tags) {
+        p.tags
+          .split(/[\s,]+/)
+          .map((t) => t.trim().replace(/^#/, ""))
+          .filter(Boolean)
+          .forEach((t) => set.add(t));
+      }
+    }
+    return Array.from(set);
+  }, [products]);
 
   // Abrir formulario para nuevo producto
   const handleOpenCreateModal = (asService = false) => {
@@ -137,6 +210,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormUnit(asService ? "serv" : "pza");
     setFormStock(0);
     setFormMinStock(asService ? 0 : 5);
+    setFormTags("");
     setIsFormOpen(true);
   };
 
@@ -153,7 +227,14 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormUnit(p.unit);
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
+    setFormTags(p.tags || "");
     setIsFormOpen(true);
+  };
+
+  // Navegar al Kardex filtrando por producto
+  const handleViewProductKardex = (p: Product) => {
+    setSelectedKardexProduct({ id: p.id, name: p.name });
+    setActiveTab("kardex");
   };
 
   // Guardar creación o edición
@@ -182,6 +263,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
     try {
       setFormSubmitting(true);
+      const tagsClean = formTags.trim() || null;
       if (editingProduct) {
         // Actualizar
         const updateInput: UpdateProductInput = {
@@ -196,6 +278,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           stock: formIsService ? 0 : formStock,
           minStock: formIsService ? 0 : formMinStock,
           isService: formIsService,
+          tags: tagsClean,
           active: true,
         };
         await api.products.update(updateInput);
@@ -213,6 +296,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           stock: formIsService ? 0 : formStock,
           minStock: formIsService ? 0 : formMinStock,
           isService: formIsService,
+          tags: tagsClean,
         };
         await api.products.create(newInput);
         showNotification(`✓ ${formIsService ? "Servicio" : "Producto"} "${formName}" creado con éxito.`);
@@ -415,8 +499,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         </div>
       )}
 
-      {/* 3. FILTROS Y BÚSQUEDA */}
-      {activeTab !== "kardex" && (
+      {/* 3. FILTROS Y BÚSQUEDA SEGÚN PESTAÑA */}
+      {activeTab === "catalog" && (
         <div className="bg-white dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3 flex-1 max-w-xl">
             <div className="relative flex-1">
@@ -426,7 +510,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
               <input
                 type="text"
                 autoFocus
-                placeholder="Buscar por nombre, código de barras o SKU… (Esc para limpiar)"
+                placeholder="Buscar en catálogo por nombre, SKU, código de barras o #tag… (Esc para limpiar)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
@@ -441,55 +525,166 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 </button>
               )}
             </div>
-
             {loading && <span className="text-xs text-slate-400 animate-pulse">Cargando…</span>}
           </div>
 
-          {/* Filtros de Tipo */}
+          {/* Filtros de Tipo y Tags de Catálogo */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
+              <button
+                type="button"
+                onClick={() => setCatalogTypeFilter("all")}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  catalogTypeFilter === "all"
+                    ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                Todos ({products.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogTypeFilter("products")}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  catalogTypeFilter === "products"
+                    ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                📦 Físicos ({physicalProducts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogTypeFilter("services")}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  catalogTypeFilter === "services"
+                    ? "bg-white dark:bg-slate-900 text-cyan-600 dark:text-cyan-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                🛠️ Servicios ({products.length - physicalProducts.length})
+              </button>
+            </div>
+
+            {availableTags.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
+                <span className="text-[10px] text-slate-400 font-bold px-1.5">Tags:</span>
+                <button
+                  type="button"
+                  onClick={() => setCatalogTagFilter("all")}
+                  className={`px-2 py-0.5 rounded-lg font-semibold text-[11px] transition-colors ${
+                    catalogTagFilter === "all"
+                      ? "bg-indigo-600 text-white font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  Todos
+                </button>
+                {availableTags.slice(0, 5).map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setCatalogTagFilter(catalogTagFilter === tag ? "all" : tag)}
+                    className={`px-2 py-0.5 rounded-lg text-[11px] font-mono transition-colors ${
+                      catalogTagFilter === tag
+                        ? "bg-indigo-600 text-white font-bold"
+                        : "bg-white/60 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                    }`}
+                  >
+                    #{tag}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "inventory" && (
+        <div className="bg-white dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 p-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 flex-1 max-w-xl">
+            {/* Indicador de Bodega Activa */}
+            <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800/60 px-3 py-1.5 rounded-xl shrink-0">
+              <span className="text-base">🏢</span>
+              <div>
+                <div className="text-xs font-bold text-indigo-950 dark:text-indigo-200 leading-none">
+                  Bodega Mostrador Principal
+                </div>
+                <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5">
+                  BOD-01 • Terminal Asignada
+                </div>
+              </div>
+            </div>
+
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                🔍
+              </span>
+              <input
+                type="text"
+                autoFocus
+                placeholder="Buscar existencias por SKU o nombre de producto…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtros de Estado de Stock */}
           <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
             <button
               type="button"
-              onClick={() => setTypeFilter("all")}
+              onClick={() => setInventoryStatusFilter("all")}
               className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
-                typeFilter === "all"
+                inventoryStatusFilter === "all"
                   ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
                   : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
               }`}
             >
-              Todos ({products.length})
+              Todos ({physicalProducts.length})
             </button>
             <button
               type="button"
-              onClick={() => setTypeFilter("products")}
+              onClick={() => setInventoryStatusFilter("optimal")}
               className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
-                typeFilter === "products"
-                  ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                inventoryStatusFilter === "optimal"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
               }`}
             >
-              📦 Físicos ({products.filter((p) => !p.isService).length})
+              🟢 Óptimos ({inventoryKpis.optimalCount})
             </button>
             <button
               type="button"
-              onClick={() => setTypeFilter("services")}
+              onClick={() => setInventoryStatusFilter("low")}
               className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
-                typeFilter === "services"
-                  ? "bg-white dark:bg-slate-900 text-cyan-600 dark:text-cyan-400 shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                inventoryStatusFilter === "low"
+                  ? "bg-amber-500 text-white shadow-xs"
+                  : "text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40"
               }`}
             >
-              🛠️ Servicios ({products.filter((p) => p.isService).length})
+              🟡 Críticos ({inventoryKpis.lowCount})
             </button>
             <button
               type="button"
-              onClick={() => setTypeFilter("low_stock")}
+              onClick={() => setInventoryStatusFilter("out")}
               className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
-                typeFilter === "low_stock"
-                  ? "bg-rose-500 text-white shadow-xs"
-                  : "text-rose-600 dark:text-rose-400 hover:text-rose-800 dark:hover:text-rose-300"
+                inventoryStatusFilter === "out"
+                  ? "bg-rose-600 text-white shadow-xs"
+                  : "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
               }`}
             >
-              ⚠️ Stock Bajo ({products.filter((p) => !p.isService && p.stock <= p.minStock).length})
+              🔴 Agotados ({inventoryKpis.outCount})
             </button>
           </div>
         </div>
@@ -503,42 +698,50 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           </div>
         )}
 
-        {/* TAB 1 & 2: CATÁLOGO Y CONTROL DE INVENTARIO */}
-        {activeTab !== "kardex" && (
+        {/* ==============================================================
+            TAB 1: CATÁLOGO COMERCIAL (PRODUCTOS & SERVICIOS)
+            ============================================================== */}
+        {activeTab === "catalog" && (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
                   <th className="py-3 px-4 w-28">Tipo</th>
                   <th className="py-3 px-4 w-40">Código / SKU</th>
-                  <th className="py-3 px-4">Descripción / Nombre</th>
-                  <th className="py-3 px-4 text-right w-28">Precio Venta</th>
+                  <th className="py-3 px-4">Nombre Comercial</th>
+                  <th className="py-3 px-4 w-44">Etiquetas (Tags)</th>
                   <th className="py-3 px-4 text-right w-28">Costo</th>
-                  <th className="py-3 px-4 text-right w-36">
-                    {activeTab === "inventory" ? "Existencia Actual" : "Existencia / Mínimo"}
-                  </th>
-                  <th className="py-3 px-4 text-center w-36">Acciones</th>
+                  <th className="py-3 px-4 text-right w-28">Precio Venta</th>
+                  <th className="py-3 px-4 text-right w-28">Margen Bruto</th>
+                  <th className="py-3 px-4 text-center w-28">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredProducts.length === 0 ? (
+                {catalogProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-400 dark:text-slate-500">
+                    <td colSpan={8} className="py-12 text-center text-slate-400 dark:text-slate-500">
                       <div className="text-3xl mb-2">🔍</div>
-                      <p className="font-semibold">No se encontraron productos ni servicios.</p>
+                      <p className="font-semibold">No se encontraron productos ni servicios en el catálogo.</p>
                       <button
                         type="button"
                         onClick={() => handleOpenCreateModal(false)}
                         className="mt-3 px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs"
                       >
-                        Crear Primer Producto
+                        Crear Primer Ítem
                       </button>
                     </td>
                   </tr>
                 ) : (
-                  filteredProducts.map((p) => {
-                    const isLowStock = !p.isService && p.stock <= p.minStock;
-                    const isOutStock = !p.isService && p.stock <= 0;
+                  catalogProducts.map((p) => {
+                    const marginPct =
+                      p.priceCents > 0
+                        ? ((p.priceCents - p.costCents) / p.priceCents) * 100
+                        : 0;
+
+                    const itemTags = (p.tags || "")
+                      .split(/[\s,]+/)
+                      .map((t) => t.trim().replace(/^#/, ""))
+                      .filter(Boolean);
 
                     return (
                       <tr
@@ -576,9 +779,25 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           </div>
                         </td>
 
-                        {/* PRECIO VENTA */}
-                        <td className="py-3 px-4 text-right font-black text-sm text-emerald-600 dark:text-emerald-400">
-                          {formatCents(p.priceCents)}
+                        {/* ETIQUETAS (TAGS) */}
+                        <td className="py-3 px-4">
+                          {itemTags.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {itemTags.map((tag) => (
+                                <button
+                                  key={tag}
+                                  type="button"
+                                  onClick={() => setCatalogTagFilter(tag)}
+                                  className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
+                                  title={`Filtrar por #${tag}`}
+                                >
+                                  #{tag}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 text-[10px] italic">Sin tags</span>
+                          )}
                         </td>
 
                         {/* COSTO */}
@@ -586,58 +805,37 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           {formatCents(p.costCents)}
                         </td>
 
-                        {/* EXISTENCIA */}
+                        {/* PRECIO VENTA */}
+                        <td className="py-3 px-4 text-right font-black text-sm text-emerald-600 dark:text-emerald-400">
+                          {formatCents(p.priceCents)}
+                        </td>
+
+                        {/* MARGEN BRUTO */}
                         <td className="py-3 px-4 text-right">
-                          {p.isService ? (
-                            <span className="text-slate-400 dark:text-slate-500 italic text-[11px]">
-                              Exento (Sin stock)
-                            </span>
-                          ) : (
-                            <div>
-                              <div
-                                className={`font-black text-sm ${
-                                  isOutStock
-                                    ? "text-rose-600 dark:text-rose-400"
-                                    : isLowStock
-                                    ? "text-amber-600 dark:text-amber-400"
-                                    : "text-slate-800 dark:text-slate-200"
-                                }`}
-                              >
-                                {p.stock} {p.unit}
-                              </div>
-                              <div className="text-[10px] text-slate-400 dark:text-slate-500">
-                                Mín: {p.minStock} {p.unit}
-                              </div>
-                            </div>
-                          )}
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-md font-mono font-bold text-[11px] ${
+                              marginPct >= 25
+                                ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/50"
+                                : marginPct >= 10
+                                ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50"
+                                : "bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/50"
+                            }`}
+                          >
+                            {marginPct >= 0 ? `+${marginPct.toFixed(1)}%` : `${marginPct.toFixed(1)}%`}
+                          </span>
                         </td>
 
                         {/* ACCIONES */}
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
-                            {/* Editar */}
                             <button
                               type="button"
                               onClick={() => handleOpenEditModal(p)}
                               className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-[11px] transition-colors"
-                              title="Modificar producto o servicio"
+                              title="Modificar ficha de producto o servicio"
                             >
                               ✏️ Editar
                             </button>
-
-                            {/* Ajustar stock (solo si no es servicio) */}
-                            {!p.isService && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenAdjustModal(p)}
-                                className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-300 font-bold text-[11px] transition-colors"
-                                title="Ajuste rápido de inventario físico"
-                              >
-                                📊 Ajustar
-                              </button>
-                            )}
-
-                            {/* Eliminar */}
                             <button
                               type="button"
                               onClick={() => handleDeleteProduct(p)}
@@ -657,6 +855,205 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           </div>
         )}
 
+        {/* ==============================================================
+            TAB 2: CONTROL DE EXISTENCIAS & BODEGAS (F4)
+            ============================================================== */}
+        {activeTab === "inventory" && (
+          <div className="space-y-4">
+            {/* 4 TARJETAS KPI DE ALMACÉN */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {/* 1. SKUs Físicos */}
+              <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-center text-lg">
+                  📦
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Artículos en Bodega
+                  </div>
+                  <div className="text-base font-black text-slate-900 dark:text-white">
+                    {inventoryKpis.totalSkus} <span className="text-xs font-normal text-slate-400">SKUs Físicos</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Inversión en Costo */}
+              <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-lg">
+                  💰
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Inversión Almacén (Costo)
+                  </div>
+                  <div className="text-base font-black text-slate-900 dark:text-white">
+                    {formatCents(inventoryKpis.totalCostValuation)}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Venta Proyectada */}
+              <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800/60 flex items-center justify-center text-lg">
+                  📈
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                    Potencial de Venta
+                  </div>
+                  <div className="text-base font-black text-emerald-700 dark:text-emerald-300">
+                    {formatCents(inventoryKpis.totalRetailValuation)}
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Quiebres de Stock */}
+              <div className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/70 border border-rose-200 dark:border-rose-800/60 flex items-center justify-center text-lg">
+                  ⚠️
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                    Alertas de Reposición
+                  </div>
+                  <div className="text-base font-black text-rose-700 dark:text-rose-300">
+                    {inventoryKpis.outCount} <span className="text-xs font-normal">agotados</span> • {inventoryKpis.lowCount} <span className="text-xs font-normal">críticos</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* TABLA DE OPERACIÓN DE EXISTENCIAS */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="py-3 px-4 w-28">Estado</th>
+                    <th className="py-3 px-4 w-40">Código / SKU</th>
+                    <th className="py-3 px-4">Producto en Almacén</th>
+                    <th className="py-3 px-4 text-right w-36">Existencia Actual</th>
+                    <th className="py-3 px-4 text-right w-28">Stock Mínimo</th>
+                    <th className="py-3 px-4 text-right w-28">Costo Unit.</th>
+                    <th className="py-3 px-4 text-right w-36">Valor en Bodega</th>
+                    <th className="py-3 px-4 text-center w-40">Acciones de Almacén</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {inventoryFilteredProducts.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-slate-400 dark:text-slate-500">
+                        <div className="text-3xl mb-2">📦</div>
+                        <p className="font-semibold">No hay artículos físicos en esta vista de inventario.</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    inventoryFilteredProducts.map((p) => {
+                      const isOutStock = p.stock <= 0;
+                      const isLowStock = !isOutStock && p.stock <= p.minStock;
+                      const lineValuationCents = p.stock > 0 ? Math.round(p.stock * p.costCents) : 0;
+
+                      return (
+                        <tr
+                          key={p.id}
+                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
+                        >
+                          {/* ESTADO / SEMÁFORO */}
+                          <td className="py-3 px-4">
+                            {isOutStock ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60">
+                                🔴 Agotado
+                              </span>
+                            ) : isLowStock ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60">
+                                🟡 Crítico
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                                🟢 Óptimo
+                              </span>
+                            )}
+                          </td>
+
+                          {/* CÓDIGO / SKU */}
+                          <td className="py-3 px-4 font-mono font-bold text-slate-700 dark:text-slate-300">
+                            <div>{p.barcode || p.sku}</div>
+                            {p.barcode && p.sku !== p.barcode && (
+                              <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                                SKU: {p.sku}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* PRODUCTO */}
+                          <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
+                            <div className="text-sm">{p.name}</div>
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                              Unidad: {p.unit}
+                              {p.tags && ` • #${p.tags.split(/[\s,]+/).join(" #")}`}
+                            </div>
+                          </td>
+
+                          {/* EXISTENCIA ACTUAL */}
+                          <td className="py-3 px-4 text-right">
+                            <div
+                              className={`font-black text-sm ${
+                                isOutStock
+                                  ? "text-rose-600 dark:text-rose-400"
+                                  : isLowStock
+                                  ? "text-amber-600 dark:text-amber-400"
+                                  : "text-slate-900 dark:text-white"
+                              }`}
+                            >
+                              {p.stock} <span className="text-xs font-normal text-slate-400">{p.unit}</span>
+                            </div>
+                          </td>
+
+                          {/* STOCK MÍNIMO */}
+                          <td className="py-3 px-4 text-right text-slate-500 dark:text-slate-400 font-mono">
+                            {p.minStock} {p.unit}
+                          </td>
+
+                          {/* COSTO UNITARIO */}
+                          <td className="py-3 px-4 text-right text-slate-500 dark:text-slate-400 font-mono">
+                            {formatCents(p.costCents)}
+                          </td>
+
+                          {/* VALOR EN BODEGA */}
+                          <td className="py-3 px-4 text-right font-black text-slate-900 dark:text-white font-mono">
+                            {formatCents(lineValuationCents)}
+                          </td>
+
+                          {/* ACCIONES DE ALMACÉN */}
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAdjustModal(p)}
+                                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-300 font-bold text-[11px] transition-colors"
+                                title="Ajuste rápido de conteo físico"
+                              >
+                                📝 Conteo
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleViewProductKardex(p)}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-300 font-bold text-[11px] transition-colors"
+                                title="Ver historial de movimientos de este producto"
+                              >
+                                📜 Kardex
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* TAB 3: HISTORIAL DE MOVIMIENTOS (KARDEX) */}
         {activeTab === "kardex" && (
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
@@ -665,13 +1062,34 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 <h2 className="text-sm font-bold text-slate-900 dark:text-white">
                   Historial de Movimientos de Inventario (Kardex)
                 </h2>
-                <p className="text-[11px] text-slate-400">
-                  Auditoría completa de salidas por venta, ajustes manuales, entradas y mermas.
-                </p>
+                <div className="text-[11px] text-slate-400">
+                  {selectedKardexProduct ? (
+                    <span className="flex items-center gap-2 mt-0.5">
+                      <span>
+                        Movimientos filtrados de:{" "}
+                        <strong className="text-indigo-600 dark:text-indigo-400">
+                          {selectedKardexProduct.name}
+                        </strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedKardexProduct(null);
+                          loadMovements();
+                        }}
+                        className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md"
+                      >
+                        ✕ Ver todos los movimientos
+                      </button>
+                    </span>
+                  ) : (
+                    "Auditoría completa de salidas por venta, ajustes manuales, entradas y mermas."
+                  )}
+                </div>
               </div>
               <button
                 type="button"
-                onClick={loadMovements}
+                onClick={() => loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined)}
                 className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold"
               >
                 🔄 Actualizar
@@ -1012,6 +1430,46 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                   </div>
                 </div>
               )}
+
+              {/* ETIQUETAS (TAGS) PARA BÚSQUEDA RÁPIDA */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <span>🏷️ Micro-Etiquetas (Tags)</span>
+                    <span className="text-[10px] text-slate-400 font-normal">Separadas por coma</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-mono">Búsqueda rápida con #</span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Ej. frio, promo, combo, importado, rapido"
+                  value={formTags}
+                  onChange={(e) => setFormTags(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] text-slate-400 font-semibold">Sugerencias:</span>
+                  {["frio", "promo", "combo", "granel", "rapido", "importado"].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => {
+                        const current = formTags
+                          .split(",")
+                          .map((x) => x.trim())
+                          .filter(Boolean);
+                        if (!current.includes(t)) {
+                          current.push(t);
+                          setFormTags(current.join(", "));
+                        }
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-indigo-950 text-slate-700 dark:text-slate-300 hover:text-indigo-600 font-mono transition-colors cursor-pointer"
+                    >
+                      +{t}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* BOTONES DE ACCIÓN */}
               <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
