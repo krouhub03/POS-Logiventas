@@ -279,7 +279,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock \
+            "SELECT sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags \
              FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -294,6 +294,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "tax_rate_bp": r.get::<_, i64>(7)?,
                 "stock": r.get::<_, f64>(8)?,
                 "min_stock": r.get::<_, f64>(9)?,
+                "tags": r.get::<_, Option<String>>(10)?.unwrap_or_default(),
             }))
         })?;
         rows.filter_map(|r| r.ok()).collect()
