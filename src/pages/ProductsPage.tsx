@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
 import { useModals } from "../contexts/ModalContext";
@@ -27,11 +27,57 @@ const PRESET_TAG_COLORS = [
   { name: "Pizarra (General)", hex: "#64748b" },
 ];
 
+/**
+ * Parsea y normaliza la cadena de etiquetas separada por comas sin romper
+ * nombres compuestos con espacios como "Más Vendido", "Promo 2x1" o "Vegano / Orgánico".
+ * Recombina fragmentaciones accidentales usando la lista de etiquetas maestras (knownTags).
+ */
+export function parseTags(tagsStr: string | null | undefined, knownTags?: ProductTag[]): string[] {
+  if (!tagsStr || !tagsStr.trim()) return [];
+
+  let tokens: string[];
+  if (tagsStr.includes(",") || tagsStr.includes(";")) {
+    tokens = tagsStr
+      .split(/[,;]+/)
+      .map((t) => t.trim().replace(/^#/, ""))
+      .filter(Boolean);
+  } else {
+    const clean = tagsStr.trim().replace(/^#/, "");
+    tokens = clean ? [clean] : [];
+  }
+
+  if (knownTags && knownTags.length > 0 && tokens.length > 1) {
+    const healed: string[] = [];
+    let i = 0;
+    while (i < tokens.length) {
+      let matched = false;
+      if (i + 1 < tokens.length) {
+        const combined = `${tokens[i]} ${tokens[i + 1]}`.toLowerCase();
+        const found = knownTags.find((kt) => kt.name.toLowerCase() === combined);
+        if (found) {
+          healed.push(found.name);
+          i += 2;
+          matched = true;
+        }
+      }
+      if (!matched) {
+        healed.push(tokens[i]);
+        i++;
+      }
+    }
+    return healed;
+  }
+
+  return tokens;
+}
+
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services">("all");
-  const [catalogTagFilter, setCatalogTagFilter] = useState<string>("all");
+  const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
+  const [isTagFilterOpen, setIsTagFilterOpen] = useState(false);
+  const tagFilterRef = useRef<HTMLDivElement>(null);
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState<"all" | "optimal" | "low" | "out">("all");
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<{ id: number; name: string } | null>(null);
 
@@ -180,12 +226,24 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   };
 
+  // Cerrar menú desplegable de filtros de etiquetas al hacer clic fuera
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (tagFilterRef.current && !tagFilterRef.current.contains(event.target as Node)) {
+        setIsTagFilterOpen(false);
+      }
+    }
+    if (isTagFilterOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isTagFilterOpen]);
+
   // Alternar tag activo en el formulario de producto
   const toggleFormTag = (tagName: string) => {
-    const current = formTags
-      .split(/[\s,]+/)
-      .map((x) => x.trim().replace(/^#/, ""))
-      .filter(Boolean);
+    const current = parseTags(formTags, dbTags);
     const exists = current.some((x) => x.toLowerCase() === tagName.toLowerCase());
     let next: string[];
     if (exists) {
@@ -261,13 +319,16 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     return products.filter((p) => {
       if (catalogTypeFilter === "products" && p.isService) return false;
       if (catalogTypeFilter === "services" && !p.isService) return false;
-      if (catalogTagFilter !== "all") {
-        const itemTags = (p.tags || "").toLowerCase();
-        if (!itemTags.includes(catalogTagFilter.toLowerCase())) return false;
+      if (selectedTagsFilter.length > 0) {
+        const itemTags = parseTags(p.tags, dbTags).map((t) => t.toLowerCase());
+        const hasMatch = selectedTagsFilter.some((filterTag) =>
+          itemTags.includes(filterTag.toLowerCase())
+        );
+        if (!hasMatch) return false;
       }
       return true;
     });
-  }, [products, catalogTypeFilter, catalogTagFilter]);
+  }, [products, catalogTypeFilter, selectedTagsFilter, dbTags]);
 
   // ==============================================================
   // CONTROL DE EXISTENCIAS: Exclusivo productos físicos en bodega
@@ -325,13 +386,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
     for (const p of products) {
       if (p.tags) {
-        p.tags
-          .split(/[\s,]+/)
-          .map((t) => t.trim().replace(/^#/, ""))
-          .filter(Boolean)
-          .forEach((t) => {
-            if (!list.includes(t)) list.push(t);
-          });
+        parseTags(p.tags, dbTags).forEach((t) => {
+          if (!list.includes(t)) list.push(t);
+        });
       }
     }
     return list;
@@ -368,7 +425,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormUnit(p.unit);
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
-    setFormTags(p.tags || "");
+    setFormTags(parseTags(p.tags, dbTags).join(", "));
     setIsFormOpen(true);
   };
 
@@ -718,36 +775,124 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
               </button>
             </div>
 
-            {availableTags.length > 0 && (
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 text-xs">
-                <span className="text-[10px] text-slate-400 font-bold px-1.5">Tags:</span>
+            {/* SELECTOR DESPLEGABLE MULTI-SELECCIÓN DE ETIQUETAS */}
+            <div className="relative flex items-center gap-1.5" ref={tagFilterRef}>
+              <button
+                type="button"
+                onClick={() => setIsTagFilterOpen((prev) => !prev)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                  selectedTagsFilter.length > 0
+                    ? "bg-indigo-50 dark:bg-indigo-950/70 border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300"
+                    : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+              >
+                <span>🏷️</span>
+                <span>
+                  {selectedTagsFilter.length === 0
+                    ? "Filtrar por etiquetas"
+                    : selectedTagsFilter.length === 1
+                    ? `#${selectedTagsFilter[0]}`
+                    : `${selectedTagsFilter.length} etiquetas`}
+                </span>
+                {selectedTagsFilter.length > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[10px] flex items-center justify-center font-black">
+                    {selectedTagsFilter.length}
+                  </span>
+                )}
+                <span className="text-[9px] text-slate-400">▼</span>
+              </button>
+
+              {/* Botón rápido para limpiar filtro de etiquetas */}
+              {selectedTagsFilter.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setCatalogTagFilter("all")}
-                  className={`px-2 py-0.5 rounded-lg font-semibold text-[11px] transition-colors ${
-                    catalogTagFilter === "all"
-                      ? "bg-indigo-600 text-white font-bold"
-                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-                  }`}
+                  onClick={() => setSelectedTagsFilter([])}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-bold hover:bg-rose-100 dark:hover:bg-rose-900/60 transition-colors shadow-xs cursor-pointer"
+                  title="Limpiar todas las etiquetas seleccionadas"
                 >
-                  Todos
+                  <span>✕</span>
+                  <span>Limpiar</span>
                 </button>
-                {availableTags.slice(0, 5).map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => setCatalogTagFilter(catalogTagFilter === tag ? "all" : tag)}
-                    className={`px-2 py-0.5 rounded-lg text-[11px] font-mono transition-colors ${
-                      catalogTagFilter === tag
-                        ? "bg-indigo-600 text-white font-bold"
-                        : "bg-white/60 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300 hover:text-indigo-600"
-                    }`}
-                  >
-                    #{tag}
-                  </button>
-                ))}
-              </div>
-            )}
+              )}
+
+              {/* Menú Desplegable Multi-Selección */}
+              {isTagFilterOpen && (
+                <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-30 p-2.5 animate-in fade-in zoom-in-95">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800 px-1">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                      Etiquetas ({availableTags.length})
+                    </span>
+                    {selectedTagsFilter.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTagsFilter([])}
+                        className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                      >
+                        Limpiar ({selectedTagsFilter.length})
+                      </button>
+                    )}
+                  </div>
+
+                  {availableTags.length === 0 ? (
+                    <div className="p-4 text-center text-slate-400 text-xs italic">
+                      No hay etiquetas disponibles
+                    </div>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto space-y-1 pr-1">
+                      {availableTags.map((tag) => {
+                        const isSelected = selectedTagsFilter.includes(tag);
+                        const color = tagColorMap.get(tag.toLowerCase().trim()) || "#6366f1";
+                        return (
+                          <label
+                            key={tag}
+                            className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl cursor-pointer text-xs font-semibold transition-colors ${
+                              isSelected
+                                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-900 dark:text-indigo-200 font-bold"
+                                : "hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  if (isSelected) {
+                                    setSelectedTagsFilter(selectedTagsFilter.filter((t) => t !== tag));
+                                  } else {
+                                    setSelectedTagsFilter([...selectedTagsFilter, tag]);
+                                  }
+                                }}
+                                className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 cursor-pointer"
+                              />
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-xs"
+                                style={{ backgroundColor: color }}
+                              />
+                              <span>#{tag}</span>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between px-1">
+                    <span className="text-[10px] text-slate-400">
+                      {selectedTagsFilter.length === 0
+                        ? "Ninguna seleccionada"
+                        : `${selectedTagsFilter.length} seleccionada(s)`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsTagFilterOpen(false)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold cursor-pointer"
+                    >
+                      Listo
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -890,10 +1035,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         ? ((p.priceCents - p.costCents) / p.priceCents) * 100
                         : 0;
 
-                    const itemTags = (p.tags || "")
-                      .split(/[\s,]+/)
-                      .map((t) => t.trim().replace(/^#/, ""))
-                      .filter(Boolean);
+                    const itemTags = parseTags(p.tags, dbTags);
 
                     return (
                       <tr
@@ -937,18 +1079,31 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                             <div className="flex flex-wrap gap-1">
                               {itemTags.map((tag) => {
                                 const tagColor = tagColorMap.get(tag.toLowerCase().trim()) || "#6366f1";
+                                const isSelected = selectedTagsFilter.includes(tag);
                                 return (
                                   <button
                                     key={tag}
                                     type="button"
-                                    onClick={() => setCatalogTagFilter(tag)}
-                                    style={{
-                                      backgroundColor: `${tagColor}18`,
-                                      borderColor: `${tagColor}40`,
-                                      color: tagColor,
+                                    onClick={() => {
+                                      if (isSelected) {
+                                        setSelectedTagsFilter(selectedTagsFilter.filter((t) => t !== tag));
+                                      } else {
+                                        setSelectedTagsFilter([...selectedTagsFilter, tag]);
+                                      }
                                     }}
-                                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border hover:opacity-80 transition-opacity shadow-sm"
-                                    title={`Filtrar por #${tag}`}
+                                    style={{
+                                      backgroundColor: isSelected ? tagColor : `${tagColor}18`,
+                                      borderColor: isSelected ? tagColor : `${tagColor}40`,
+                                      color: isSelected ? "#ffffff" : tagColor,
+                                    }}
+                                    className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border hover:opacity-85 transition-all shadow-xs cursor-pointer ${
+                                      isSelected ? "ring-2 ring-indigo-400 font-black" : ""
+                                    }`}
+                                    title={
+                                      isSelected
+                                        ? `Quitar filtro #${tag}`
+                                        : `Filtrar por #${tag}`
+                                    }
                                   >
                                     #{tag}
                                   </button>
@@ -1611,10 +1766,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 {dbTags.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
                     {dbTags.map((t) => {
-                      const activeTags = formTags
-                        .split(/[\s,]+/)
-                        .map((x) => x.trim().replace(/^#/, "").toLowerCase())
-                        .filter(Boolean);
+                      const activeTags = parseTags(formTags, dbTags).map((x) => x.toLowerCase());
                       const isSelected = activeTags.includes(t.name.toLowerCase());
 
                       return (
