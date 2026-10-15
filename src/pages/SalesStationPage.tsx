@@ -343,23 +343,27 @@ export function SalesStationPage({
     const target = tickets.find((t) => t.id === targetId);
     if (!target) return;
 
-    // Si solo hay 1 ticket (el mínimo obligatorio): se vacían sus productos
+    // Si solo hay 1 ticket (el mínimo obligatorio): se vacían sus productos y se desvincula el cliente
     if (tickets.length <= 1) {
-      if (target.lines.length === 0) {
+      if (target.lines.length === 0 && !target.customer) {
         showFeedback("El ticket ya está vacío. Siempre debe haber al menos 1 ticket activo.");
         return;
       }
       const ok = await confirm({
         title: "Vaciar Ticket Actual",
-        message: `¿Desea vaciar los productos de ${target.name}? Esta acción no se puede deshacer.`,
+        message: target.customer
+          ? `¿Desea vaciar los productos y desvincular al cliente ${target.customer.name} de ${target.name}?`
+          : `¿Desea vaciar los productos de ${target.name}? Esta acción no se puede deshacer.`,
         variant: "warning",
         confirmText: "Sí, Vaciar Ticket",
-        cancelText: "Mantener Productos",
+        cancelText: "Mantener Ticket",
       });
       if (ok) {
-        updateCurrentTicketLines([]);
+        setTickets((prev) =>
+          prev.map((t) => (t.id === target.id ? { ...t, lines: [], customer: null } : t))
+        );
         setSelectedLineIndex(-1);
-        showFeedback(`${target.name} vaciado`);
+        showFeedback(`${target.name} vaciado y cliente desvinculado`);
         focusInput();
       }
       return;
@@ -625,7 +629,9 @@ export function SalesStationPage({
         setTickets(remaining);
         setActiveTicketId(remaining[0].id);
       } else {
-        updateCurrentTicketLines([]);
+        setTickets((prev) =>
+          prev.map((t) => (t.id === activeTicketId ? { ...t, lines: [], customer: null } : t))
+        );
       }
       setSelectedLineIndex(-1);
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
