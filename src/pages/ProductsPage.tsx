@@ -781,11 +781,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     type="button"
                     onClick={() => {
                       setFormIsService(false);
-                      if (formUnit === "serv") setFormUnit("pza");
+                      if (["serv", "hr", "día", "mes", "sesión", "cons", "dom", "ev"].includes(formUnit)) {
+                        setFormUnit("pza");
+                      }
                     }}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                       !formIsService
-                        ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20"
+                        ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20 shadow-xs"
                         : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
                     }`}
                   >
@@ -797,13 +799,15 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     type="button"
                     onClick={() => {
                       setFormIsService(true);
-                      setFormUnit("serv");
+                      if (["pza", "kg", "g", "lt", "ml", "caja", "paq", "m"].includes(formUnit)) {
+                        setFormUnit("serv");
+                      }
                       setFormStock(0);
                       setFormMinStock(0);
                     }}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
                       formIsService
-                        ? "bg-cyan-50 dark:bg-cyan-950/60 border-cyan-500 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/20"
+                        ? "bg-cyan-50 dark:bg-cyan-950/60 border-cyan-500 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/20 shadow-xs"
                         : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
                     }`}
                   >
@@ -923,26 +927,30 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
               {/* CAMPOS ESPECÍFICOS DE PRODUCTO FÍSICO */}
               {!formIsService && (
-                <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
-                  <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                    📦 Control de Existencias e Inventario
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                    <span>📦 Control de Existencias e Inventario</span>
+                    <span className="text-[10px] font-normal text-slate-400">Control de stock en bodega</span>
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Unidad
+                        Unidad de Medida
                       </label>
                       <select
                         value={formUnit}
                         onChange={(e) => setFormUnit(e.target.value)}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold"
+                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         <option value="pza">Pieza (pza)</option>
+                        <option value="und">Unidad (und)</option>
                         <option value="kg">Kilogramo (kg)</option>
                         <option value="g">Gramo (g)</option>
                         <option value="lt">Litro (lt)</option>
+                        <option value="ml">Mililitro (ml)</option>
                         <option value="caja">Caja (caja)</option>
                         <option value="paq">Paquete (paq)</option>
+                        <option value="m">Metro (m)</option>
                       </select>
                     </div>
 
@@ -956,7 +964,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         min="0"
                         value={formStock}
                         onChange={(e) => setFormStock(Number(e.target.value))}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold"
+                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
 
@@ -970,8 +978,44 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         min="0"
                         value={formMinStock}
                         onChange={(e) => setFormMinStock(Number(e.target.value))}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold"
+                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* CAMPOS ESPECÍFICOS DE SERVICIO */}
+              {formIsService && (
+                <div className="p-3.5 bg-cyan-50/50 dark:bg-cyan-950/30 rounded-xl border border-cyan-200 dark:border-cyan-800/60 space-y-3">
+                  <div className="text-[11px] font-bold text-cyan-800 dark:text-cyan-300 uppercase tracking-wide flex items-center justify-between">
+                    <span>🛠️ Unidad y Modalidad de Servicio</span>
+                    <span className="text-[10px] font-normal text-cyan-600 dark:text-cyan-400">Exento de Inventario Físico</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Unidad de Cobro
+                      </label>
+                      <select
+                        value={formUnit}
+                        onChange={(e) => setFormUnit(e.target.value)}
+                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                      >
+                        <option value="serv">Servicio (serv)</option>
+                        <option value="hr">Hora (hr)</option>
+                        <option value="día">Día (día)</option>
+                        <option value="mes">Mes (mes)</option>
+                        <option value="sesión">Sesión (sesión)</option>
+                        <option value="cons">Consulta / Asesoría (cons)</option>
+                        <option value="dom">Domicilio (dom)</option>
+                        <option value="ev">Evento (ev)</option>
+                        <option value="und">Unidad / Tarifa (und)</option>
+                      </select>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                      💡 Los servicios no descuentan existencias físicas de bodega. En caja podrás cobrar por horas, visitas o tarifas fijas.
                     </div>
                   </div>
                 </div>
@@ -982,16 +1026,26 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 >
                   Cancelar (Esc)
                 </button>
                 <button
                   type="submit"
                   disabled={formSubmitting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md transition-all disabled:opacity-50"
+                  className={`px-5 py-2 rounded-xl text-white text-xs font-black shadow-md transition-all disabled:opacity-50 cursor-pointer ${
+                    formIsService
+                      ? "bg-cyan-600 hover:bg-cyan-700"
+                      : "bg-indigo-600 hover:bg-indigo-700"
+                  }`}
                 >
-                  {formSubmitting ? "Guardando…" : editingProduct ? "Guardar Cambios" : "Crear Registro"}
+                  {formSubmitting
+                    ? "Guardando…"
+                    : editingProduct
+                    ? "Guardar Cambios"
+                    : formIsService
+                    ? "Crear Servicio"
+                    : "Crear Producto"}
                 </button>
               </div>
             </form>
