@@ -1,153 +1,164 @@
 # 📘 Manual Operativo de Usuario — Logiventa POS
 
-Guía visual y paso a paso para cajeros, supervisores y administradores de punto de venta.
+Guía visual y paso a paso para cajeros, supervisores y administradores del punto de venta de escritorio **Logiventa POS**.
 
 ---
 
 ## 📑 Contenido del Manual
 
-1. [Primeros Pasos y Desbloqueo de Caja](#1-primeros-pasos-y-desbloqueo-de-caja)
-2. [Flujo de Venta Rápida (Estación de Cobro)](#2-flujo-de-venta-rápida-estación-de-cobro)
-3. [Manejo de Múltiples Clientes (Pestañas de Tickets)](#3-manejo-de-múltiples-clientes-pestañas-de-tickets)
-4. [Venta de Artículos Varios / Sin Código](#4-venta-de-artículos-varios--sin-código)
-5. [Cobro y Formas de Pago](#5-cobro-y-formas-de-pago)
-6. [Catálogo de Productos y Servicios](#6-catálogo-de-productos-y-servicios)
-7. [Ajustes de Inventario y Existencias](#7-ajustes-de-inventario-y-existencias)
-8. [Configuración de Periféricos (Impresora y Cajón)](#8-configuración-de-periféricos-impresora-y-cajón)
-9. [Sincronización Automática con el ERP y Controles de Pantalla](#9-sincronización-automática-con-el-erp-y-controles-de-pantalla)
+1. [Desbloqueo de Caja con PIN](#1-desbloqueo-de-caja-con-pin)
+2. [Apertura de Turno de Caja (Base Inicial)](#2-apertura-de-turno-de-caja-base-inicial)
+3. [Flujo de Venta Rápida (Estación de Cobro `F1`)](#3-flujo-de-venta-rápida-estación-de-cobro-f1)
+4. [Manejo de Múltiples Clientes en Fila (Tickets en Espera `F6`)](#4-manejo-de-múltiples-clientes-en-fila-tickets-en-espera-f6)
+5. [Asignación de Clientes al Ticket (`F2`)](#5-asignación-de-clientes-al-ticket-f2)
+6. [Buscador Rápido (`F10`) y Venta de Artículos Varios (`Insert`)](#6-buscador-rápido-f10-y-venta-de-artículos-varios-insert)
+7. [Cobro y Medios de Pago Dinámicos (`F12`)](#7-cobro-y-medios-de-pago-dinámicos-f12)
+8. [Cierre de Turno y Arqueo de Caja (Corte Z)](#8-cierre-de-turno-y-arqueo-de-caja-corte-z)
+9. [Catálogo de Productos, Servicios y Etiquetas (`F3`)](#9-catálogo-de-productos-servicios-y-etiquetas-f3)
+10. [Control de Existencias y Kardex (`F4`)](#10-control-de-existencias-y-kardex-f4)
+11. [Configuración de Hardware, Medios de Pago y Actualizaciones (`F7`)](#11-configuración-de-hardware-medios-de-pago-y-actualizaciones-f7)
 
 ---
 
-## 1. Primeros Pasos y Desbloqueo de Caja
+## 1. Desbloqueo de Caja con PIN
 
-Al encender el equipo o cuando la caja se encuentra inactiva, verás la **Pantalla de Bloqueo**:
+Al encender el equipo o cuando la terminal se encuentra bloqueada, verás la **Pantalla de Selección de Operador**:
 
-1. **Identifica tu usuario**: Selecciona tu nombre en la lista de cajeros disponibles.
-2. **Ingresa tu PIN**: Digita tu clave de 4 dígitos usando el teclado físico o pulsando los números en pantalla.
-3. **Desbloqueo automático**: Al ingresar el cuarto dígito correcto, el sistema abrirá de inmediato la **Estación de Ventas (`F1`)** con el campo del escáner enfocado y listo.
+1. **Selecciona tu usuario**: Los cajeros más frecuentes aparecen primero con su tarjeta de perfil y rol asignado.
+2. **Ingresa tu PIN**: Digita tu clave secreta de **4 dígitos** usando el teclado físico o los botones numéricos en pantalla.
+3. **Acceso inmediato**: Al completar el cuarto dígito correcto, el sistema validará tu sesión sin necesidad de presionar `Enter`.
 
-> 💡 **Tip:** En cualquier momento de tu turno puedes presionar la tecla **`Escape`** o el botón rojo **"🔒 Bloquear"** en la esquina superior para proteger tu sesión si necesitas ausentarte de la caja.
-
----
-
-## 2. Flujo de Venta Rápida (Estación de Cobro)
-
-La estación de ventas está diseñada para una velocidad de cobro ultrarrápida:
-
-### A. Escanear Productos con Pistola
-- Pasa el código de barras por el lector. El sistema emitirá un **pitido corto de confirmación** y agregará el producto inmediatamente.
-- **No necesitas dar clic en la barra de búsqueda**: El sistema cuenta con captura en cuña inteligente; aunque el cursor esté en otro lugar, el escaneo se procesará de forma automática.
-
-### B. Vender por Cantidades (`CANTIDAD*CODIGO`)
-- Si un cliente lleva 6 piezas del mismo producto, escribe en el teclado `6*` y luego escanea el código (o escribe el código y presiona `Enter`). El sistema agregará las 6 piezas en una sola línea.
-
-### C. Modificar Cantidades en el Ticket
-- Usa las teclas **`Flecha Arriba`** y **`Flecha Abajo`** para moverte entre los productos de la lista.
-- Presiona **`Ctrl` + `+`** para sumar una pieza.
-- Presiona **`Ctrl` + `-`** para restar una pieza.
-- Presiona **`Supr` (Delete)** para quitar el producto seleccionado de la lista.
-
-### D. Cancelar o Limpiar Ticket
-- Si te equivocaste escribiendo un código, presiona **`Escape`** para borrar el texto escrito.
-- Si el campo ya está vacío y presionas **`Escape`**, el sistema abrirá un modal seguro preguntándote si deseas vaciar el ticket. Presiona **`Enter`** para confirmar o **`Esc`** para cancelar.
+> 💡 **Tip de Seguridad:** Si necesitas retirarte momentáneamente del mostrador, haz clic en tu nombre/avatar o en el botón **"🔒 Bloquear"** en la barra superior para bloquear la pantalla sin cerrar tu turno ni perder los tickets abiertos.
 
 ---
 
-## 3. Manejo de Múltiples Clientes (Pestañas de Tickets)
+## 2. Apertura de Turno de Caja (Base Inicial)
 
-Si un cliente olvidó un producto y va a buscarlo mientras otros clientes esperan en fila:
+Si es el inicio de la jornada y la caja no tiene un turno abierto, el sistema mostrará automáticamente la ventana de **Apertura de Turno**:
 
-1. Presiona el botón **`+`** junto a las pestañas de tickets arriba a la izquierda.
-2. Se abrirá **`Ticket 2`** en blanco para que puedas cobrarle de inmediato al siguiente cliente.
-3. Cuando el primer cliente regrese, haz clic en **`Ticket 1`** o usa los atajos para retomar su cuenta con todos sus productos intactos.
-4. **Protección permanente:** Aunque cambies de ticket, vayas a consultar productos o cierres el programa por error, los tickets abiertos **jamás se borran**.
-
----
-
-## 4. Venta de Artículos Varios / Sin Código
-
-Para cobrar un producto que no tiene código de barras o es un servicio esporádico:
-
-1. Presiona la tecla **`Insert`** (o haz clic en el botón amarillo **"INS Varios"**).
-2. Escribe el nombre o concepto (ej. *Copia a color*, *Bolsa de hielo*).
-3. Escribe el precio de venta y la cantidad.
-4. Presiona **`Enter`** para agregarlo directamente al ticket actual.
+1. **Cuenta el dinero base**: Verifica los billetes y monedas con los que recibes el cajón para dar cambio.
+2. **Ingresa la Base Inicial**: Escribe el monto en efectivo (o selecciona uno de los montos rápidos sugeridos) y agrega una nota opcional si lo deseas.
+3. **Confirmar Apertura**: Haz clic en **"Abrir Turno de Caja"** (o presiona `Enter`). El sistema generará el folio de tu turno y habilitará la Estación de Ventas (`F1`).
 
 ---
 
-## 5. Cobro y Formas de Pago
+## 3. Flujo de Venta Rápida (Estación de Cobro `F1`)
 
-Una vez ingresados todos los artículos del cliente:
+La estación de ventas está diseñada para cobrar en segundos sin usar el ratón:
 
-1. Presiona la tecla **`F12`** o haz clic en el botón gigante verde **"F12 COBRAR"**.
-2. Se abrirá el modal de cobro mostrando el total grande en pantalla.
-3. Elige el método de pago:
-   - **Efectivo**: Escribe el monto con el que paga el cliente. El sistema calculará el cambio al instante.
-   - **Tarjeta**: Selecciona tarjeta y escribe la referencia del voucher.
-   - **Transferencia**: Selecciona transferencia y registra el número de comprobante.
-4. Presiona **`Enter`** para autorizar el cobro:
-   - Si tienes configurada una impresora térmica, se imprimirá el ticket de venta.
-   - Si tienes cajón monedero, este se abrirá automáticamente para guardar el dinero.
-   - El ticket quedará registrado con su folio y la pantalla se preparará para el siguiente cliente.
+### A. Escanear Productos con Pistola Lectora
+- Pasa el código de barras por el lector. Escucharás un **pitido corto de confirmación** y el artículo aparecerá al instante en el ticket.
+- **Captura inteligente sin clic**: Aunque hayas hecho clic fuera de la barra de búsqueda, el POS detecta automáticamente la lectura del escáner y procesa el código.
 
----
+### B. Vender por Multiplicador (`CANTIDAD*CODIGO`)
+- Si un cliente lleva varias unidades iguales (ej. 6 bebidas), escribe `6*` en el teclado y escanea el código de barras (o digita el código y presiona `Enter`). Se agregarán las 6 unidades en una sola línea.
 
-## 6. Catálogo de Productos y Servicios (`F3`)
+### C. Modificar Cantidades o Eliminar Líneas en el Ticket
+- Usa las teclas **`Flecha Arriba`** y **`Flecha Abajo`** para desplazarte por las líneas del ticket.
+- Presiona **`+`** para sumar 1 unidad al producto seleccionado.
+- Presiona **`-`** para restar 1 unidad.
+- **Edición exacta**: También puedes hacer **doble clic** sobre la cantidad de cualquier fila para escribir un número exacto (incluyendo decimales para productos a granel como `1.25` kg).
+- Presiona **`Supr` (`Delete`)** para quitar el producto seleccionado del ticket.
 
-Presiona **`F3`** para abrir el gestor de catálogo:
-
-- **Buscar**: Escribe cualquier parte del nombre, SKU o código de barras.
-- **Filtrar**: Usa los botones superiores para ver solo *📦 Físicos*, *🛠️ Servicios* o *⚠️ Stock Bajo*.
-- **Crear Nuevo (`F8` o `Alt+N`)**:
-  - Selecciona **[📦 Producto Físico]** si es un artículo que almacenas en estantería (requiere existencia y stock mínimo).
-  - Selecciona **[🛠️ Servicio]** si es una mano de obra, flete o servicio que no maneja existencias físicas.
-  - Asigna precios, costo y tasa de IVA.
-- **Editar**: Haz clic en el botón **"✏️ Editar"** de cualquier producto para cambiar precios o datos.
-- **Eliminar**: Haz clic en **"🗑️"**. El sistema te pedirá confirmación y lo desactivará de forma segura sin borrar ventas pasadas.
+### D. Limpiar Código o Vaciar Ticket (`Escape`)
+- Si escribiste mal un código en la barra, presiona **`Escape`** una vez para borrar el texto escrito.
+- Si la barra ya está vacía y presionas **`Escape`**, el sistema te preguntará si deseas vaciar o cerrar el ticket actual (`Enter` para confirmar, `Esc` para cancelar).
 
 ---
 
-## 7. Ajustes de Inventario y Existencias (`F4`)
+## 4. Manejo de Múltiples Clientes en Fila (Tickets en Espera `F6`)
 
-Presiona **`F4`** para ir directamente al control de almacén:
+Si un cliente está buscando más productos o su medio de pago mientras hay fila en mostrador:
 
-- En la columna de existencias verás en color rojo los artículos agotados y en ámbar los que están por debajo de su stock mínimo.
-- **Ajustar Existencia**: Haz clic en **"📊 Ajustar"** en la fila del producto:
-  1. Ingresa la nueva cantidad física que contaste en la tienda.
-  2. Selecciona el motivo (*Conteo físico*, *Merma/Daño*, *Entrada directa*, *Devolución*).
-  3. Haz clic en **"Aplicar Ajuste"**.
-- **Kardex**: En la pestaña **"📜 Kardex / Movimientos"** puedes auditar todos los movimientos históricos con fecha, hora y motivo.
+1. Presiona la tecla **`F6`** (o haz clic en el botón **`+`** junto a las pestañas superiores).
+2. El ticket actual quedará guardado en espera y se abrirá un nuevo **`Ticket 2`** limpio para cobrarle de inmediato al siguiente cliente.
+3. Puedes cambiar entre tickets abiertos haciendo clic en sus pestañas superiores e incluso **renombrar una pestaña** haciendo doble clic sobre su título (ej. *"Mesa 3"* o *"Señor Juan"*).
+4. **Persistencia garantizada**: Aunque vayas al catálogo (`F3`), bloquees la pantalla o reinicies la aplicación, los productos de todos tus tickets en espera permanecen intactos.
 
 ---
 
-## 8. Configuración de Periféricos (Impresora y Cajón) (`F7`)
+## 5. Asignación de Clientes al Ticket (`F2`)
 
-Presiona **`F7`** para configurar tu hardware comercial:
+Para registrar la venta a nombre de un cliente específico:
 
-- **Impresora Térmica**: Selecciona el ancho de papel (58 mm para tickets pequeños o 80 mm para estándar), el puerto de conexión (USB / COM / Red) y presiona **"Imprimir Ticket de Prueba"**.
-- **Cajón Portamonedas**: Activa la apertura automática al cobrar en efectivo y usa el botón **"Abrir Cajón de Prueba"** para verificar el pulso RJ11.
+1. Presiona la tecla **`F2`** (o haz clic en el botón de cliente en la estación de ventas).
+2. **Buscar cliente**: Escribe el nombre, NIT/Cédula o teléfono del cliente y selecciónalo con `Enter`.
+3. **Crear nuevo cliente**: Si el cliente no existe, completa sus datos básicos en la pestaña de registro rápido y guárdalo; quedará asignado automáticamente al ticket actual.
+4. **Desvincular cliente**: Si deseas regresar el ticket a *Consumidor Final*, presiona **`Shift` + `F2`**.
 
 ---
 
-## 9. Sincronización Automática con el ERP y Controles de Pantalla
+## 6. Buscador Rápido (`F10`) y Venta de Artículos Varios (`Insert`)
 
-El sistema opera de forma transparente y bidireccional con el ERP central en la nube (**Megalider**):
+### A. Buscador Visual por Nombre o Etiqueta (`F10`)
+- Si un producto no tiene código de barras legible, presiona **`F10`**.
+- Escribe parte del nombre o filtra por **Etiquetas de Color (`#Oferta`, `#Frío`, `#Combo`)**.
+- Muévete con las flechas del teclado y presiona **`Enter`** para agregarlo al ticket.
 
-### A. Sincronización en Segundo Plano Automática
-- **Catálogo y Precios**: Cada vez que se crean, modifican o ajustan precios en el ERP, el POS actualiza automáticamente su base local cada pocos segundos.
-- **Bajas y Eliminaciones**: Si un producto es eliminado o marcado como inactivo en el ERP, se oculta de forma inmediata de las búsquedas de caja (`F10`) en el POS para prevenir cobros de mercancía descontinuada.
-- **Nuevos Productos Creados en Caja**: Si registras un nuevo producto directamente en el POS (`F3`), el sistema lo sube automáticamente al ERP, creándolo en el catálogo central y asignándole inventario inicial en la bodega de la caja.
-- **Ventas Despachadas**: Cada venta confirmada en el POS se encola localmente y se envía al ERP en cuanto hay conexión, descontando el inventario de la bodega y registrando los asientos contables pertinentes.
+### B. Venta de Artículo Común / Varios (`Insert`)
+- Para cobrar un concepto eventual no registrado en el catálogo, presiona la tecla **`Insert`**.
+- Escribe la descripción, el precio unitario y la cantidad, y presiona **`Enter`**.
 
-### B. Indicador Visual de Conectividad
-En la esquina superior derecha verás en todo momento el estado de tu terminal:
-- 🟢 **Al día**: Todo el catálogo local y las ventas están sincronizados al 100% con la nube.
-- 🟡 **Sincronizando (N)**: Hay ventas en tránsito enviándose hacia el ERP.
-- ⚪ **Modo local (N)**: No hay conexión a internet o el servidor no responde. Puedes seguir cobrando con total normalidad; las ventas se acumulan de forma segura en tu equipo y se subirán al reconectar.
-- **Botón `🔄`**: Permite forzar una sincronización manual inmediata de catálogo y ventas con un solo clic.
+---
 
-### C. Controles de Ventana (Modo Kiosco)
-La barra superior incluye botones compactos de acceso rápido:
-- **`⛶` (Pantalla Completa - F11)**: Oculta la barra de tareas de Windows para evitar distracciones o salidas accidentales de la pantalla de cobro.
-- **`—` (Minimizar)**: Minimiza la ventana a la barra del sistema si necesitas consultar otra aplicación autorizada.
+## 7. Cobro y Medios de Pago Dinámicos (`F12`)
 
+Una vez listos los productos del ticket:
+
+1. Presiona **`F12`** (o `Ctrl + Espacio` / botón verde **"COBRAR"**).
+   - *Nota:* Si el ticket incluye un producto con últimas existencias, el POS verificará automáticamente que otra caja no lo haya vendido en ese instante.
+2. **Selecciona el Medio de Pago**:
+   - **Efectivo**: Ingresa el monto recibido o usa los botones de billetes rápidos. El sistema mostrará en grande el **Cambio / Vuelto** a entregar.
+   - **Medios Electrónicos / Digitales (Tarjeta, Nequi, Daviplata, Transferencia)**: Selecciona el medio habilitado en tu terminal e ingresa la referencia del comprobante si aplica.
+   - **Pago Mixto / Dividido**: Puedes combinar varios medios de pago en una misma compra (ej. una parte en Efectivo y el resto por Transferencia) hasta cubrir el total.
+3. Presiona **`Enter`** para finalizar la venta:
+   - Se imprimirá el recibo en la impresora térmica y se abrirá el cajón portamonedas.
+
+---
+
+## 8. Cierre de Turno y Arqueo de Caja (Corte Z)
+
+Al terminar tu turno o al cierre del local:
+
+1. Haz clic en el botón de **Turno / Corte de Caja** en la barra superior de la estación de ventas.
+2. El sistema mostrará el **Resumen del Turno**:
+   - Base inicial de apertura.
+   - Total de ventas en efectivo, tarjetas y medios digitales.
+   - **Efectivo esperado en cajón** (`Base Inicial + Ventas en Efectivo`).
+3. **Declaración de Efectivo Físico**: Cuenta los billetes y monedas reales del cajón e ingresa el monto total en **"Efectivo Contado / Declarado"**.
+4. El sistema mostrará en tiempo real si el arqueo está **Cuadrado (`$0`)**, o si existe algún **Sobrante** o **Faltante**, permitiéndote añadir observaciones antes de confirmar el cierre definitivo del turno.
+
+---
+
+## 9. Catálogo de Productos, Servicios y Etiquetas (`F3`)
+
+Presiona **`F3`** para administrar los productos (requiere permiso `inventario:ver`):
+
+- **Búsqueda y Filtros**: Busca por nombre, SKU o código de barras, filtra por *📦 Físicos* o *🛠️ Servicios*, o despliega el selector de **Etiquetas (`#tags`)** para filtrar por múltiples etiquetas a la vez.
+- **Crear o Editar Producto (`F8` o `Alt+N`)**:
+  - Elige si es **📦 Producto Físico** (controla stock) o **🛠️ Servicio** (no descuenta inventario).
+  - Usa el botón generador para asignar un SKU o código de barras automático si el artículo no trae código de fábrica.
+  - Define precio de venta, costo, tasa de IVA (0%, 5%, 16%, 19%), unidad de medida (`pza`, `kg`, `g`, `lt`, `caja`, `paq`, `serv`) y asígnale etiquetas visuales.
+- **Gestor de Etiquetas Maestras**: Desde el botón **"🏷️ Etiquetas"**, puedes crear nuevas etiquetas personalizadas eligiendo su nombre y color representativo.
+
+---
+
+## 10. Control de Existencias y Kardex (`F4`)
+
+Presiona **`F4`** para auditar y ajustar el almacén local:
+
+- **Semáforo de Existencias**: Filtra rápidamente entre todos los productos, *Óptimos*, *⚠️ Stock Bajo* o *🔴 Agotados*.
+- **Ajustar Stock Manualmente**: Haz clic en **"📊 Ajustar"** sobre cualquier artículo físico, ingresa la nueva cantidad real contada e indica el motivo (*Conteo físico*, *Merma / Daño*, *Entrada directa*, *Devolución*).
+- **Kardex de Movimientos**: Cambia a la pestaña **"📜 Kardex / Movimientos"** para consultar la bitácora completa de entradas, salidas por venta y ajustes manuales con fecha, hora y referencia.
+
+---
+
+## 11. Configuración de Hardware, Medios de Pago y Actualizaciones (`F7`)
+
+Presiona **`F7`** para abrir el panel de configuración de la terminal (requiere permiso `pos:configuracion`):
+
+- **🖨️ Impresora Térmica**: Configura el ancho de papel (58 mm u 80 mm), puerto o nombre de impresora, número de copias, datos del encabezado/pie de ticket y ejecuta **"Imprimir Ticket de Prueba"**.
+- **🗄️ Cajón Portamonedas**: Activa o desactiva el disparo automático al cobrar en efectivo y prueba la apertura con **"Abrir Cajón de Prueba"**.
+- **💳 Medios de Pago**: Sincroniza el catálogo de formas de pago desde el servidor central y usa los interruptores individuales para **habilitar o deshabilitar** qué medios aparecen disponibles en el modal de cobro (`F12`) de esta caja específica.
+- **🔗 Terminal**: Consulta los datos de la caja y bodega vinculada, sincroniza manualmente la lista de cajeros/PINs o desvincula la terminal de forma segura.
+- **⚙️ General y Actualizaciones**: Alterna entre **Modo Claro y Modo Oscuro**, consulta la versión instalada y verifica o instala nuevas actualizaciones del sistema con un clic.

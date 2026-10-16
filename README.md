@@ -1,8 +1,8 @@
 # 🚀 Logiventa POS — Sistema de Punto de Venta de Escritorio
 
-Sistema de Punto de Venta (POS) de alto rendimiento, arquitectura **Offline-First** y diseño ergonómico inspirado en Eleventa, construido para el ecosistema **Megalider** con **Tauri 2 + React 19 + TypeScript + Vite** y base de datos local **SQLite embebida (`rusqlite`)**.
+Sistema de Punto de Venta (POS) de alto rendimiento, arquitectura **Offline-First** y diseño ergonómico de mostrador, construido con **Tauri 2 + React 19 + TypeScript + Vite** y base de datos local **SQLite embebida (`rusqlite`)**.
 
-Diseñado para operar en entornos comerciales exigentes (cigarrerías, minimarkets, retail y servicios) donde la velocidad de cobro, la estabilidad ante caídas de internet y la compatibilidad con periféricos comerciales son críticas.
+Diseñado para operar en entornos comerciales exigentes (cigarrerías, minimarkets, retail y servicios) donde la velocidad de cobro, la autonomía ante caídas de internet y la compatibilidad con periféricos comerciales son críticas.
 
 ---
 
@@ -18,31 +18,35 @@ Diseñado para operar en entornos comerciales exigentes (cigarrerías, minimarke
 8. [Comandos de Desarrollo y Compilación](#-comandos-de-desarrollo-y-compilación)
 9. [Base de Datos y Migraciones](#-base-de-datos-y-migraciones)
 10. [Hardware y Periféricos Compatibles](#-hardware-y-periféricos-compatibles)
+11. [Actualizaciones Automáticas (Tauri 2 Updater)](#-actualizaciones-automáticas-tauri-2-updater)
 
 ---
 
 ## ✨ Características Principales
 
-- **Arquitectura 100% Offline-First**: Nunca bloquea una venta, cobro o apertura de caja si se cae la conexión a internet. Todas las operaciones se confirman localmente en SQLite bajo transacciones atómicas ACID.
-- **Sincronización Bidireccional Automática con ERP Megalider**: Demonio de fondo en Rust ejecutándose concurrentemente cada 15s. Sincroniza productos creados en caja hacia la nube, descarga actualizaciones de precios y catálogo, oculta de inmediato productos dados de baja en el ERP y despacha ventas locales vía Outbox con descuento automático en la bodega asignada e integración al Motor Contable v6.2.
-- **Estación de Ventas Eleventa-Style**:
-  - Visor gigante de total a cobrar con soporte de múltiples tickets simultáneos (siempre al menos 1 ticket activo).
-  - Captura inteligente del escáner de código de barras (wedge interceptor global), incluso si el cursor no está enfocado en la barra de búsqueda.
-  - Persistencia total: los productos ingresados en los tickets nunca se borran al cambiar de pantalla o cerrar la app, a menos que se cancele el ticket o se complete el cobro.
-  - Feedback acústico mediante Web Audio API sintetizado (tonos de éxito, advertencia de existencias agotadas y error).
-- **Gestión Dual de Productos y Servicios**:
-  - **Productos Físicos**: Control estricto de existencias, stock mínimo, alertas de desabasto, cálculo de costo y registro de movimientos de almacén.
-  - **Servicios**: Exentos de inventario físico (horas, mantenimientos, fletes, comisiones), se facturan en caja sin exigir stock físico.
-- **Auditoría de Inventario y Kardex**: Registro transaccional de ventas, compras, ajustes manuales, mermas y conteos físicos.
-- **Modales UI Estándar sin Bloqueo del Navegador**: Erradicación total de `window.alert()` y `window.confirm()` nativos en favor de modales accesibles con teclado (`Enter` / `Esc`), animaciones fluidas y diseño corporativo Megalider.
-- **Controles de Pantalla y Modo Kiosk (`⛶` / `—` / F11)**: Botones compactos icon-only de Pantalla Completa y Minimizar que ocultan la barra de tareas de Windows para operar en modo estación dedicada sin distracciones.
-- **Tema Visual Dual (Modo Claro / Modo Oscuro)**: Paleta de alto contraste optimizada para monitores de punto de venta e iluminación variable.
+- **Arquitectura 100% Offline-First**: Nunca bloquea una venta, cobro, apertura o cierre de turno si se cae la conexión a internet. Todas las operaciones se confirman localmente en SQLite bajo transacciones atómicas ACID.
+- **Demonio de Sincronización Continua en Rust**: Tarea concurrente en segundo plano ejecutándose cada 15s que despacha la cola local (`sync_queue`), sube productos creados en caja, descarga catálogo y medios de pago, sincroniza deltas de inventario y gestiona reservas temporales de stock crítico.
+- **Control de Turnos de Caja y Arqueo (Z-Report)**: Apertura obligatoria de turno con base inicial en efectivo, seguimiento en tiempo real de recaudos por medio de pago y cierre de turno con declaración de efectivo contado y cálculo de diferencias (sobrante/faltante).
+- **Estación de Ventas de Alta Velocidad**:
+  - Visor de total a cobrar con soporte de múltiples tickets en espera simultáneos (`F6` / pestañas dinámicas).
+  - Captura inteligente del escáner de código de barras (*Keyboard Wedge Interceptor* global), incluso si el cursor no está enfocado en la barra de búsqueda.
+  - Persistencia total: la vista de ventas permanece viva en memoria y los tickets se respaldan en `localStorage`, evitando pérdidas al cambiar de módulo o reiniciar la aplicación.
+  - Feedback acústico mediante Web Audio API sintetizado (tonos de éxito, advertencia de existencias y error).
+- **Gestión de Productos, Servicios, Combos y Etiquetas (`#tags`)**:
+  - **Productos Físicos y Combos**: Control de existencias, stock mínimo, políticas de stock negativo, impuestos porcentuales (BP) e impuestos nominales fijos por unidad (`tax_fixed_cents`).
+  - **Servicios**: Exentos de inventario físico (`is_service = 1`, `controls_stock = 0`).
+  - **Etiquetas Maestras (`product_tags`)**: Clasificación visual con colores hexadecimales para filtrado instantáneo en catálogo y buscador rápido (`F10`).
+- **Directorio de Clientes en Caja (`F2`)**: Búsqueda rápida por nombre, documento fiscal (NIT/CC) o teléfono, creación inmediata de clientes en mostrador y vinculación/desvinculación al ticket actual.
+- **Seguridad RBAC Granular y Bloqueo por PIN**:
+  - Desbloqueo rápido por cajero con PIN de 4 dígitos y ordenamiento inteligente por frecuencia de uso (`login_count`).
+  - Permisos granulares por operador (`inventario:ver`, `inventario:ajustar`, `pos:configuracion`) y validación periódica de sesión activa.
+- **Modales UI Estándar y Modo Kiosco (`F11`)**: Cero uso de `window.alert()` / `window.confirm()`, soporte de Modo Claro/Oscuro y controles de ventana integrados.
 
 ---
 
 ## 🏛️ Arquitectura del Sistema
 
-El sistema utiliza una separación estricta de responsabilidades entre el frontend de presentación y el backend de escritorio:
+El sistema utiliza una separación estricta de responsabilidades entre el frontend de presentación y el backend nativo en Rust:
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -63,13 +67,13 @@ El sistema utiliza una separación estricta de responsabilidades entre el fronte
           ┌─────────────────┴─────────────────┐
           ▼                                   ▼
 ┌──────────────────┐               ┌─────────────────────┐
-│  SQLite Local    │               │  Megalider ERP API  │
-│  (Offline-First) │               │   (Cloud Sync)      │
+│  SQLite Local    │               │   API REST Remota   │
+│  (Offline-First) │               │ (`/api/pos/v1/*`)   │
 └──────────────────┘               └─────────────────────┘
 ```
 
 1. **Backend Rust (`src-tauri/`)**:
-   - Posee el **100% de la lógica de negocio**: cálculo de importes, impuestos, descuentos, control de stock, cuadre de caja, seguridad de PIN y operaciones SQLite transaccionales.
+   - Posee el **100% de la lógica de negocio**: cálculo de importes, impuestos, descuentos, control de stock, turnos de caja, seguridad de PIN y operaciones SQLite transaccionales.
    - Administra la base de datos embebida SQLite con modo WAL (`PRAGMA journal_mode = WAL`) y llaves foráneas forzadas (`PRAGMA foreign_keys = ON`).
    - Ubicación de la BD en producción: `%APPDATA%\com.briankrou.pos-logiventa\logiventa.db`.
 2. **Frontend React 19 (`src/`)**:
@@ -81,37 +85,34 @@ El sistema utiliza una separación estricta de responsabilidades entre el fronte
 ## 📦 Módulos del Sistema
 
 ### 1. Estación de Ventas (`F1`)
-- Panel de lectura de códigos de barras (soporta códigos del fabricante o formato `CANTIDAD*CODIGO`, ej. `5*75010001`).
-- Pestañas de tickets dinámicos: Permite pausar una venta para atender a otro cliente agregando pestañas (`Ticket 1`, `Ticket 2`, etc.).
-- Modal de Cobro (`F12`): Métodos de pago (Efectivo, Tarjeta, Transferencia, Mixto), cálculo automático de cambio, desglose de subtotal e IVA.
-- Modal de Artículo Común / Varios (`Insert`): Para registrar ventas de productos no catalogados rápidamente con descripción y precio libre.
-- Modal de Búsqueda Rápida de Productos (`F10`): Explorador visual por nombre con selección inmediata mediante teclado.
+- Lectura de códigos de barras (soporta códigos estándar o formato multiplicador `CANTIDAD*CODIGO`, ej. `5*75010001`).
+- Gestión de múltiples tickets en espera (`F6` o botón `+`) para atender a varios clientes simultáneamente.
+- Asignación de cliente al ticket (`F2` para buscar/crear, `Shift+F2` para desvincular).
+- Modal de Búsqueda Rápida de Productos (`F10`) con filtrado por nombre, código o etiquetas de color (`#tags`).
+- Modal de Artículo Común / Varios (`Insert`) para cobros rápidos de ítems no catalogados.
+- Modal de Cobro (`F12` o `Ctrl+Espacio`): Verificación previa de stock crítico, selección de medios de pago dinámicos (Efectivo, Tarjeta, Transferencia, Billeteras Digitales, Mixto), cálculo de cambio y disparo de impresora/cajón.
 
-### 2. Catálogo de Productos y Servicios (`F3`)
-- Búsqueda reactiva instantánea por texto, SKU o código de barras.
-- Filtros por tipo: *Todos*, *📦 Físicos*, *🛠️ Servicios* y *⚠️ Stock Bajo / Agotado*.
-- Formulario de alta y edición:
-  - Selector [📦 Producto Físico] / [🛠️ Servicio].
-  - Generador automático de SKU / Código de barras para productos sin código de fábrica.
-  - Precios de venta, costo y tasas de IVA (0%, 5%, 16%, 19%).
-  - Configuración de existencias iniciales, stock mínimo y unidades (`pza`, `kg`, `g`, `lt`, `caja`, `paq`, `serv`).
-- Eliminación segura (*Soft Delete*): Desactiva productos sin alterar la integridad de ventas históricas.
+### 2. Gestión de Turnos de Caja y Arqueo (`OpenShiftModal` / `CloseShiftModal`)
+- **Apertura de Turno**: Al iniciar sesión con PIN, si no hay un turno abierto en la terminal, solicita la base inicial de efectivo (`opening_cents`) y genera el folio del turno.
+- **Cierre de Turno y Arqueo (Z-Report)**: Muestra el resumen del turno en curso, recibe el efectivo físico contado por el cajero (`declared_cents`), calcula diferencias y cierra la sesión local y remotamente.
 
-### 3. Control de Existencias y Kardex (`F4`)
-- Panel de existencias en tiempo real con semáforo visual de stock crítico.
-- Modal de Ajuste de Inventario: Conteo físico, mermas, caducidades o entradas directas con justificación obligatoria.
-- Kardex de Movimientos: Historial detallado con fecha, hora, tipo de movimiento (*Venta*, *Ajuste*, *Entrada*), cantidad (+/-) y referencia del folio.
+### 3. Catálogo de Productos, Servicios y Etiquetas (`F3`)
+- Búsqueda reactiva por texto, SKU, código de barras y filtro multi-selección por **Etiquetas (`#tags`)**.
+- Filtros rápidos por tipo (*Todos*, *📦 Físicos*, *🛠️ Servicios*).
+- Creación y edición (`F8` o `Alt+N`) con generador automático de SKU/código de barras, precios, costos, IVA (0%, 5%, 16%, 19%), unidades (`pza`, `kg`, `g`, `lt`, `caja`, `paq`, `serv`) y asignación de etiquetas.
+- Gestor integrado de **Etiquetas Maestras** con paleta de colores hexadecimales.
 
-### 4. Configuración de Hardware y Terminal (`F7`)
-- **Impresora de Tickets**: Conexión a impresoras térmicas ESC/POS (58mm / 80mm), puerto USB/Serial/Red, corte automático de papel e impresión de prueba.
-- **Cajón de Dinero**: Disparo de pulso eléctrico RJ11 al cobrar en efectivo y botón de prueba de apertura.
-- **Lector de Códigos**: Configuración de sufijo (Enter) y modo emulación teclado.
-- **Enlace ERP**: Visualización de estado de vinculación, caja asignada, sucursal, sincronización manual de operadores y desvinculación segura.
+### 4. Control de Existencias y Kardex (`F4`)
+- Semáforo visual de stock en tiempo real (*Óptimo*, *Stock Bajo*, *Agotado*).
+- Modal de Ajuste de Inventario con motivo obligatorio (*Conteo físico*, *Merma/Daño*, *Entrada directa*, *Devolución*).
+- Pestaña de **Kardex / Movimientos** con historial auditable por producto, fecha, cantidad (+/-), usuario y folio de referencia.
 
-### 5. Control de Acceso y Bloqueo de Caja (`Esc`)
-- Bloqueo instantáneo con teclado o botón.
-- Desbloqueo mediante teclado numérico en pantalla o teclado físico con PIN de 4 dígitos.
-- Identificación clara del cajero activo y sucursal.
+### 5. Configuración de Hardware, Medios de Pago y Terminal (`F7`)
+- **Impresora Térmica**: Configuración ESC/POS (58mm / 80mm), puerto USB/Serial/Red, copias, corte automático e impresión de ticket de prueba.
+- **Cajón Portamonedas**: Apertura automática al cobrar en efectivo y botón de pulso de prueba RJ11.
+- **Escáner**: Configuración de prefijos/sufijos y captura global.
+- **Medios de Pago**: Sincronización de canales de cobro desde el servidor y switches individuales (`terminal_enabled`) para habilitar o deshabilitar medios específicos en esta caja física.
+- **Terminal y General**: Estado de vinculación M2M, sincronización de cajeros, tema visual (Claro/Oscuro) y buscador manual de actualizaciones de software.
 
 ---
 
@@ -122,43 +123,45 @@ La interfaz está diseñada para operarse el 100% del tiempo sin necesidad de ut
 | Tecla / Atajo | Módulo | Acción |
 |---|---|---|
 | **`F1`** | Global | Ir a la Estación de Ventas / Volver a Cobro |
-| **`F3`** | Global | Ir al Catálogo de Productos y Servicios |
-| **`F4`** | Global | Ir al Control de Inventario y Existencias |
-| **`F7`** | Global | Ir a la Configuración de Periféricos y Hardware |
+| **`F2`** | Ventas | Abrir modal para asignar o crear Cliente en el ticket actual |
+| **`Shift` + `F2`** | Ventas | Desvincular el cliente asignado al ticket actual |
+| **`F3`** | Global | Ir al Catálogo de Productos, Servicios y Etiquetas (requiere `inventario:ver`) |
+| **`F4`** | Global | Ir al Control de Inventario y Kardex (requiere `inventario:ver` / `inventario:ajustar`) |
+| **`F6`** | Ventas | Poner ticket actual en espera / Crear nueva pestaña de ticket |
+| **`F7`** | Global | Ir a Configuración de Hardware y Medios de Pago (requiere `pos:configuracion`) |
 | **`F8`** o `Alt+N` | Productos | Abrir modal para crear nuevo producto o servicio |
-| **`F10`** | Ventas | Abrir buscador de productos por nombre |
-| **`F11`** | Global | Alternar Pantalla Completa (Oculta barra de tareas de Windows) |
-| **`F12`** o `Ctrl+Espacio` | Ventas | Abrir modal de cobro y pago del ticket actual |
+| **`F10`** | Ventas | Abrir buscador rápido de productos por nombre o etiqueta |
+| **`F11`** | Global | Alternar Pantalla Completa (Modo Kiosco sin barra de tareas) |
+| **`F12`** o `Ctrl+Espacio` | Ventas | Verificar stock y abrir modal de cobro del ticket actual |
 | **`Insert`** | Ventas | Agregar artículo común o varios sin código |
 | **`Delete`** / `Supr` | Ventas | Eliminar la línea de producto seleccionada del ticket |
-| **`Ctrl` + `+`** | Ventas | Incrementar en 1 la cantidad del producto seleccionado |
-| **`Ctrl` + `-`** | Ventas | Decrementar en 1 la cantidad del producto seleccionado |
-| **`Flecha Arriba / Abajo`** | Ventas | Navegar entre los productos agregados al ticket |
-| **`Enter`** | Ventas | Agregar producto escaneado / Confirmar modales |
-| **`Escape`** | Global | Limpiar código escaneado ➔ Cancelar ticket ➔ Volver |
+| **`+`** / `NumpadAdd` | Ventas | Incrementar en 1 la cantidad del producto seleccionado |
+| **`-`** / `NumpadSubtract` | Ventas | Decrementar en 1 la cantidad del producto seleccionado |
+| **`Flecha Arriba / Abajo`** | Ventas | Navegar entre las líneas de productos agregadas al ticket |
+| **`Enter`** | Ventas | Procesar código escaneado / Confirmar modales |
+| **`Escape`** | Global | Limpiar input de código ➔ Cancelar/eliminar ticket actual ➔ Volver a Ventas |
 
 ---
 
 ## 💰 Convenciones Financieras y de Dominio
 
-Por regla estricta de diseño para evitar errores de redondeo en operaciones comerciales:
+Por regla estricta de diseño para evitar errores de redondeo IEEE 754 en operaciones comerciales:
 
 1. **Moneda en Centavos Enteros**:
    - En SQLite: columna de tipo `INTEGER`.
    - En Rust: tipo `i64`.
    - En TypeScript: tipo `number` entero.
    - **Queda prohibido el uso de coma flotante (`f32`, `f64`, `number` decimal) para importes monetarios**.
-   - Para conversión y presentación en UI, se emplean exclusivamente las utilidades de `src/lib/money.ts`:
-     - `formatCents(cents: number)`: `$1,250.00`
-     - `toCents(amount: number | string)`: Convierte texto o decimal a entero sin error de precisión.
-2. **Impuestos en Puntos Base (Basis Points - BP)**:
+   - Para conversión y presentación en UI, se emplean exclusivamente las utilidades de `src/lib/money.ts` (`formatCents`, `toCents`, `calculateTaxCents`).
+2. **Impuestos en Puntos Base (Basis Points - BP) y Nominales**:
    - `1% = 100 bp` (ejemplos: `1600` = 16.00%, `1900` = 19.00%, `500` = 5.00%, `0` = 0.00%).
-   - Cálculo en Rust con redondeo bancario: `impuesto = (subtotal * tax_bp + 5000) / 10000`.
+   - Soporte adicional para impuesto fijo unitario (`tax_fixed_cents`).
+   - Cálculo en Rust con redondeo bancario: `impuesto = ((subtotal * tax_bp + 5000) / 10000) + round(tax_fixed_cents * quantity)`.
 3. **Cantidades y Granel**:
-   - `quantity` y `stock` se manejan en `REAL` (`f64`) para permitir ventas pesadas (ej. 1.250 kg).
-4. **Integridad de Venta (Zero-Difference Cuadre)**:
+   - `quantity` y `stock` se manejan en `REAL` (`f64`) para permitir ventas pesadas o fraccionadas (ej. `1.250 kg`).
+4. **Integridad de Venta y Costo Histórico**:
    - `total_cents == subtotal_cents + tax_cents - discount_cents`.
-   - La suma de los pagos asociados debe ser mayor o igual al total antes de autorizar la transacción.
+   - Cada línea de venta persiste `unit_cost_cents` con el costo vigente al momento del cobro.
 
 ---
 
@@ -166,62 +169,77 @@ Por regla estricta de diseño para evitar errores de redondeo en operaciones com
 
 ```
 POS-Logiventa/
+├── docs/                         # Documentación del POS
+│   ├── ARQUITECTURA_TECNICA.md   # Especificación de ingeniería, esquema SQLite e IPC
+│   └── MANUAL_DE_USUARIO.md      # Guía paso a paso para cajeros y administradores
 ├── src/                          # Capa de Presentación (React 19 + TypeScript)
-│   ├── assets/                   # Recursos visuales
-│   ├── components/               # Componentes de UI
-│   │   ├── ui/modal/             # Sistema estándar de modales (ModalRoot, ConfirmModal, etc.)
-│   │   ├── CashierLockScreen.tsx # Pantalla de bloqueo con PIN de 4 dígitos
-│   │   ├── CobroModal.tsx        # Modal de cobro multimétodo
-│   │   ├── PairingScreen.tsx     # Pantalla de vinculación inicial con el ERP
-│   │   ├── SearchProductModal.tsx# Buscador de productos
-│   │   └── VariosModal.tsx       # Venta rápida de artículos varios
+│   ├── components/               # Componentes de UI e interacción
+│   │   ├── ui/modal/             # Sistema estándar de modales (ModalRoot, ConfirmModal, AlertModal)
+│   │   ├── CashierLockScreen.tsx # Pantalla de bloqueo y selección de cajero con PIN de 4 dígitos
+│   │   ├── CloseShiftModal.tsx   # Modal de arqueo de caja y cierre de turno (Z-Report)
+│   │   ├── CobroModal.tsx        # Modal de cobro multimétodo dinámico
+│   │   ├── CustomerModal.tsx     # Buscador y alta rápida de clientes (F2)
+│   │   ├── OpenShiftModal.tsx    # Apertura obligatoria de turno con base inicial
+│   │   ├── PairingScreen.tsx     # Pantalla de vinculación inicial M2M de la terminal
+│   │   ├── SearchProductModal.tsx# Buscador rápido de catálogo y etiquetas (F10)
+│   │   ├── UpdateNotificationBanner.tsx # Banner no intrusivo de actualización lista
+│   │   └── VariosModal.tsx       # Venta rápida de artículos varios (Insert)
 │   ├── contexts/                 # Contextos de estado global
-│   │   ├── ModalContext.tsx      # Proveedor y hook useModals()
-│   │   └── ThemeContext.tsx      # Modo Claro / Modo Oscuro
-│   ├── lib/                      # Utilidades de frontend
-│   │   ├── money.ts              # Conversión y formateo en centavos
-│   │   └── sound.ts              # Síntesis de audio Web Audio API
+│   │   ├── ModalContext.tsx      # Proveedor y hook imperativo useModals()
+│   │   ├── ThemeContext.tsx      # Modo Claro / Modo Oscuro
+│   │   └── UpdaterContext.tsx    # Gestión de auto-actualizaciones Tauri 2
+│   ├── lib/                      # Utilidades de dominio en frontend
+│   │   ├── money.ts              # Conversión, formateo y cálculo de impuestos en centavos
+│   │   ├── permissions.ts        # Evaluador RBAC de permisos de cajero (hasPermission)
+│   │   ├── sound.ts              # Síntesis acústica con Web Audio API
+│   │   └── tags.ts               # Parser y normalizador de etiquetas de productos
 │   ├── pages/                    # Pantallas principales del sistema
-│   │   ├── ProductsPage.tsx      # Catálogo, inventario y kardex (F3/F4)
-│   │   ├── SalesStationPage.tsx  # Estación de ventas Eleventa-Style (F1)
-│   │   └── SettingsPage.tsx      # Configuración de hardware y enlace (F7)
-│   ├── services/                 # Servicios y comunicación IPC
-│   │   └── api.ts                # Único punto de acceso tipado a Rust (invoke)
-│   ├── types/                    # Tipos TypeScript espejo de Rust
+│   │   ├── ProductsPage.tsx      # Catálogo, etiquetas, inventario y kardex (F3/F4)
+│   │   ├── SalesStationPage.tsx  # Estación de ventas principal (F1)
+│   │   └── SettingsPage.tsx      # Configuración de periféricos, medios de pago y enlace (F7)
+│   ├── services/                 # Gateway IPC
+│   │   └── api.ts                # Único punto de acceso tipado a comandos y eventos de Rust
+│   ├── types/                    # Contratos TypeScript espejo de Rust
 │   │   └── index.ts              # Definiciones completas de DTOs
-│   ├── App.tsx                   # Controlador de navegación y vistas vivas
-│   ├── main.tsx                  # Entrada de la aplicación React
-│   └── index.css                 # Estilos Tailwind CSS
+│   ├── App.tsx                   # Orquestador de sesión, turno activo, RBAC y vistas
+│   └── main.tsx                  # Punto de entrada React
 ├── src-tauri/                    # Capa de Negocio y Sistema (Rust + Tauri 2)
-│   ├── migrations/               # Migraciones SQLite versionadas
-│   │   ├── 0001_initial.sql      # Tablas base: users, products, sales, etc.
-│   │   ├── 0002_terminal_settings.sql # Configuración de terminal y caja
-│   │   ├── 0003_hardware_settings.sql # Periféricos, ticket e impresora
-│   │   ├── 0004_product_services.sql  # Soporte para servicios y existencias
-│   │   ├── 0005_sync_queue.sql   # Cola de sincronización outbox (M2M)
-│   │   ├── 0006_product_erp_id.sql # Mapeo erp_id para productos
-│   │   └── 0007_product_sync_flag.sql # Bandera needs_erp_upload
+│   ├── migrations/               # Migraciones SQLite versionadas e inmutables (0001 a 0016)
+│   │   ├── 0001_initial.sql                       # Tablas base: users, products, sales, sale_items, payments, cash_sessions
+│   │   ├── 0002_terminal_settings.sql             # Ajustes de vinculación de terminal y cajeros
+│   │   ├── 0003_hardware_settings.sql             # Parámetros de impresora térmica, cajón y escáner
+│   │   ├── 0004_product_services.sql              # Soporte para servicios (is_service) y stock mínimo
+│   │   ├── 0005_sync_queue.sql                    # Cola transaccional Outbox (sync_queue)
+│   │   ├── 0006_product_erp_id.sql                # Mapeo de clave externa erp_id en products
+│   │   ├── 0007_product_sync_flag.sql             # Bandera needs_erp_upload para altas en caja
+│   │   ├── 0008_payment_methods.sql               # Tabla payment_methods con mapeo contable PUC
+│   │   ├── 0009_cash_shifts.sql                   # Campos de turno y arqueo en cash_sessions
+│   │   ├── 0010_dynamic_payments.sql              # Pagos dinámicos y switch local terminal_enabled
+│   │   ├── 0011_user_permissions.sql              # Permisos RBAC granulares en users
+│   │   ├── 0012_pos_profiles_and_granular_rbac.sql# Tabla pos_profiles y métricas login_count
+│   │   ├── 0013_clean_dummy_profiles.sql          # Depuración de perfiles iniciales
+│   │   ├── 0014_product_policies_and_tags.sql     # Políticas de stock, combos, tags y tax_fixed_cents
+│   │   ├── 0015_sale_items_historical_cost.sql    # Costo unitario histórico unit_cost_cents en sale_items
+│   │   └── 0016_product_tags.sql                  # Catálogo maestro de etiquetas con color (product_tags)
 │   ├── src/
-│   │   ├── commands/             # Comandos Tauri #[tauri::command]
-│   │   │   ├── auth.rs           # Autenticación de cajeros y enlace M2M
-│   │   │   ├── products.rs       # CRUD de productos, servicios y kardex
-│   │   │   ├── sales.rs          # Creación transaccional de ventas y pagos
-│   │   │   ├── settings.rs       # Gestión de ajustes de hardware
-│   │   │   ├── sync.rs           # Sincronización outbox y catálogo
-│   │   │   └── system.rs         # Info del sistema y modo pantalla completa
-│   │   ├── db/                   # Conexión SQLite y runner de migraciones
-│   │   │   ├── migrations.rs     # Ejecutor atómico de scripts SQL
-│   │   │   └── mod.rs            # Pool y conexión rusqlite
-│   │   ├── models/               # DTOs y estructuras serializables
-│   │   │   ├── sync.rs           # Modelos de sync y payloads
-│   │   │   └── ...               # Modelos de ventas, productos, etc.
-│   │   ├── error.rs              # Manejo centralizado de errores
-│   │   ├── lib.rs                # Registro de comandos, plugins y demonio sync
-│   │   └── main.rs               # Punto de entrada de la aplicación Rust
+│   │   ├── commands/             # Comandos #[tauri::command]
+│   │   │   ├── auth.rs           # Vinculación M2M, sincronización de usuarios, login PIN y heartbeat
+│   │   │   ├── customers.rs      # Listado, búsqueda y creación de clientes locales
+│   │   │   ├── products.rs       # CRUD de productos, servicios, etiquetas (tags), ajustes y kardex
+│   │   │   ├── sales.rs          # Creación transaccional de ventas, pagos y encolado Outbox
+│   │   │   ├── settings.rs       # Configuración de periféricos y pruebas de impresora/cajón
+│   │   │   ├── shifts.rs         # Apertura, resumen y cierre de turnos de caja (Z-Report)
+│   │   │   ├── sync.rs           # Demonio de sincronización, reservas de stock, catálogo y medios de pago
+│   │   │   └── system.rs         # Información de versión, pantalla completa y reinicio
+│   │   ├── db/                   # Conexión SQLite y runner atómico de migraciones
+│   │   ├── models/               # Estructuras y DTOs serializables (Serde)
+│   │   ├── error.rs              # Manejo centralizado de errores (AppError / AppResult)
+│   │   ├── lib.rs                # Inicialización de plugins, BD, Sync Daemon y generate_handler![]
+│   │   └── main.rs               # Binario principal
 │   ├── Cargo.toml                # Dependencias de Rust
-│   └── tauri.conf.json           # Configuración de ventana y permisos Tauri
-├── AGENTS.md                     # Directivas de desarrollo para agentes IA
-└── package.json                  # Dependencias de Node.js
+│   └── tauri.conf.json           # Configuración de ventana, bundle y Tauri Updater
+├── AGENTS.md                     # Directivas y reglas para agentes de desarrollo
+└── package.json                  # Scripts y dependencias de frontend
 ```
 
 ---
@@ -252,22 +270,22 @@ npm install
 
 | Comando | Descripción |
 |---|---|
-| `npm run tauri dev` | Inicia la aplicación en modo desarrollo con recarga en vivo (HMR) |
+| `npm run tauri dev` | Inicia la aplicación de escritorio en modo desarrollo con recarga en vivo (HMR) |
 | `npm run typecheck` | Ejecuta la verificación estricta de tipos de TypeScript (`tsc --noEmit`) |
-| `npm run test:rust` | Corre los tests unitarios del backend Rust (`cargo test`) |
-| `npm run tauri build` | Compila los binarios optimizados y genera el instalador MSI / EXE |
+| `npm run test:rust` | Corre los tests unitarios y de migraciones del backend Rust (`cargo test`) |
+| `npm run tauri build` | Compila los binarios optimizados y genera el instalador NSIS / MSI |
 
 ---
 
 ## 🗄️ Base de Datos y Migraciones
 
-- **Motor**: SQLite embebido compilado estáticamente mediante `rusqlite`.
+- **Motor**: SQLite embebido compilado estáticamente mediante `rusqlite` (`bundled`).
 - **Ruta local**:
   - En Windows: `%APPDATA%\com.briankrou.pos-logiventa\logiventa.db`
   - En pruebas unitarias: En memoria temporal (`:memory:`).
 - **Regla de Inmutabilidad de Migraciones**:
   - Nunca modificar un archivo `.sql` ya publicado.
-  - Para agregar cambios de esquema, crear un archivo `src-tauri/migrations/000(N+1)_nombre.sql` y registrarlo en el runner `src-tauri/src/db/migrations.rs`.
+  - Para agregar cambios de esquema, crear un archivo `src-tauri/migrations/00(N+1)_nombre.sql` y registrarlo en `src-tauri/src/db/migrations.rs`.
 
 ---
 
@@ -277,7 +295,7 @@ npm install
 |---|---|---|
 | **Impresoras Térmicas** | ESC/POS estándar (USB, Serial COM, Red TCP) | 58mm y 80mm con o sin cortador automático |
 | **Cajón Portamonedas** | Disparo por solenoide RJ11 / RJ12 | Conectado directamente a la impresora térmica |
-| **Lectores de Código** | Emulación teclado (Keyboard Wedge) USB / 2.4G | 1D (EAN-13, Code 128, UPC) y 2D (QR) |
+| **Lectores de Código** | Emulación teclado (Keyboard Wedge) USB / 2.4G / Bluetooth | 1D (EAN-13, Code 128, UPC) y 2D (QR) |
 | **Pantallas Táctiles** | Driver Windows estándar | Compatible con monitores POS de 15" y 17" |
 
 ---
@@ -304,12 +322,9 @@ El punto de venta cuenta con auto-actualización silenciosa en segundo plano med
    ```
 
    Los artefactos firmados se generarán en `src-tauri/target/release/bundle/nsis/` junto con el archivo de manifiesto `latest.json`.
-   Basta con subir estos archivos al release correspondiente de GitHub (`https://github.com/krouhub03/POS-Logiventas/releases`).
 
 ---
 
 ## 📄 Licencia
 
-Desarrollado para el ecosistema **Megalider POS**. Todos los derechos reservados.#   P O S - L o g i v e n t a s 
- 
- 
+Desarrollado para el ecosistema **Logiventa POS**. Todos los derechos reservados.
