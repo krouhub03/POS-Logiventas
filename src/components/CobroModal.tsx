@@ -190,9 +190,9 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     if (e) e.preventDefault();
     setError(null);
 
-    // Validación crítica de Crédito / Fiar: Requiere Cliente Titular
+    // Validación crítica de Venta a Crédito: Requiere Cliente Titular de la Cartera
     if (requiresCustomer && !customer) {
-      setError("⚠️ Esta venta contiene Crédito (Fiar). Debes seleccionar o registrar el cliente titular de la cuenta por cobrar.");
+      setError("⚠️ Esta venta incluye Crédito Comercial. Debes seleccionar o registrar el cliente titular de la cuenta por cobrar (CxC).");
       setIsCustomerModalOpen(true);
       return;
     }
@@ -376,7 +376,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         )}
 
         <div className="p-6 space-y-5">
-          {/* BARRA DE CLIENTE (OBLIGATORIO PARA CRÉDITO / FIAR) */}
+          {/* BARRA DE CLIENTE (OBLIGATORIO PARA VENTA A CRÉDITO) */}
           <div
             className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
               requiresCustomer && !customer
@@ -394,7 +394,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                     {customer
                       ? customer.name
                       : requiresCustomer
-                      ? "Cliente Requerido para Crédito (Fiar)"
+                      ? "Cliente Requerido para Venta a Crédito (CxC)"
                       : "Cliente: Consumidor Final"}
                   </span>
                   {requiresCustomer && !customer && (
@@ -420,7 +420,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   ) : (
                     <span>
                       {requiresCustomer
-                        ? "Debes asociar a quién se le cargará esta cuenta por cobrar."
+                        ? "Debes asociar el titular al que se le cargará esta cuenta por cobrar."
                         : "Asigna un cliente para registrar historial (Opcional)"}
                     </span>
                   )}
@@ -706,7 +706,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
               {loading
                 ? "Procesando…"
                 : requiresCustomer && !customer
-                ? "Asignar Cliente para Fiar"
+                ? "Asignar Cliente para Crédito"
                 : isSplitMode
                 ? "Confirmar Venta Mixta (Enter)"
                 : "Cobrar e Imprimir (Enter)"}

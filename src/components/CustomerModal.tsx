@@ -168,7 +168,7 @@ export function CustomerModal({
                 )}
               </h2>
               <p className="text-[11px] text-emerald-100/80">
-                Selecciona el titular para créditos (fiar), historial de compras y cuentas por cobrar
+                Selecciona el titular para ventas a crédito, historial comercial y cuentas por cobrar (CxC)
               </p>
             </div>
           </div>

@@ -391,6 +391,15 @@ pub async fn close_shift(
         }
     }
 
+    // Respaldo Preventivo de Base de Datos Local (Auto-Backup SQLite)
+    // Protege a la tienda/PyME ante fallas de disco o apagones tras consolidar el arqueo
+    if let Ok(conn) = db.conn() {
+        let backup_query = "VACUUM INTO ?1";
+        // Si SQLite soporta VACUUM INTO, genera backup atómico con fecha del turno
+        let backup_name = format!("backup_turno_{}.db", folio.replace(['/', '\\', ':', '*'], "-"));
+        let _ = conn.execute(backup_query, params![backup_name]);
+    }
+
     Ok(CashShift {
         id: shift_id,
         folio,

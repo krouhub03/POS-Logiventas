@@ -556,10 +556,10 @@ pub async fn login_cashier_user_pin(db: State<'_, Db>, user_id: i64, pin: String
         }
     }
 
-    // 3. Validación de PIN contra SQLite local (con datos frescos o en caché)
+    // 3. Validación de PIN contra SQLite local con protección Rate-Limiting contra fuerza bruta
     let conn = db.conn()?;
     let mut stmt = conn.prepare(
-        "SELECT id, erp_user_id, username, full_name, email, role, active, pin_hash, permissions, erp_profile_name, login_count, erp_role_code
+        "SELECT id, erp_user_id, username, full_name, email, role, active, pin_hash, permissions, erp_profile_name, login_count, erp_role_code, failed_pin_attempts, locked_until
          FROM users WHERE id = ?1 AND active = 1 AND (erp_role_code IS NULL OR erp_role_code != 'CLIENTE') AND role != 'customer'",
     )?;
 
@@ -584,24 +584,66 @@ pub async fn login_cashier_user_pin(db: State<'_, Db>, user_id: i64, pin: String
                 login_count: r.get(10)?,
             },
             r.get::<_, Option<String>>(7)?,
+            r.get::<_, i64>(12).unwrap_or(0),
+            r.get::<_, Option<String>>(13)?,
         ))
     }).map_err(|_| AppError::Auth(format!("El usuario '{}' no está autorizado o tiene rol CLIENTE", user_full_name)))?;
 
-    let (mut cashier_user, pin_hash_opt) = user_row;
+    let (mut cashier_user, pin_hash_opt, failed_attempts, locked_until) = user_row;
+
+    // Verificar si el operador se encuentra temporalmente bloqueado por intentos sucesivos
+    if let Some(lock_time_str) = locked_until {
+        let is_locked: bool = conn
+            .query_row(
+                "SELECT datetime('now') < ?1",
+                params![lock_time_str],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+
+        if is_locked {
+            return Err(AppError::Auth(format!(
+                "⛔ Acceso suspendido temporalmente para {}. Demasiados intentos erróneos. Espera 60 segundos.",
+                cashier_user.full_name
+            )));
+        }
+    }
+
     let pin_hash = pin_hash_opt.ok_or_else(|| {
         AppError::Auth(format!("El usuario '{}' no tiene un PIN configurado en el ERP", cashier_user.full_name))
     })?;
 
     if bcrypt::verify(trimmed_pin, &pin_hash).unwrap_or(false) {
-        // Incrementar métrica de uso y fecha de último login en terminal física
+        // Éxito: resetear contador de fallos y actualizar estadísticas de acceso
         let _ = conn.execute(
-            "UPDATE users SET login_count = COALESCE(login_count, 0) + 1, last_login_at = datetime('now') WHERE id = ?1",
+            "UPDATE users SET login_count = COALESCE(login_count, 0) + 1, last_login_at = datetime('now'), failed_pin_attempts = 0, locked_until = NULL WHERE id = ?1",
             params![user_id],
         );
         cashier_user.login_count = Some(cashier_user.login_count.unwrap_or(0) + 1);
         Ok(cashier_user)
     } else {
-        Err(AppError::Auth(format!("PIN incorrecto para {}", cashier_user.full_name)))
+        let new_failed = failed_attempts + 1;
+        if new_failed >= 5 {
+            // Bloqueo temporal de 60 segundos tras 5 intentos erróneos
+            let _ = conn.execute(
+                "UPDATE users SET failed_pin_attempts = ?1, locked_until = datetime('now', '+60 seconds') WHERE id = ?2",
+                params![new_failed, user_id],
+            );
+            Err(AppError::Auth(format!(
+                "⛔ PIN incorrecto. Has superado 5 intentos. El usuario '{}' ha sido bloqueado por 60 segundos por seguridad.",
+                cashier_user.full_name
+            )))
+        } else {
+            let _ = conn.execute(
+                "UPDATE users SET failed_pin_attempts = ?1 WHERE id = ?2",
+                params![new_failed, user_id],
+            );
+            let intentos_restantes = 5 - new_failed;
+            Err(AppError::Auth(format!(
+                "PIN incorrecto para {}. Te quedan {} intentos antes del bloqueo temporal.",
+                cashier_user.full_name, intentos_restantes
+            )))
+        }
     }
 }
 
@@ -614,17 +656,33 @@ pub fn login_cashier_pin(db: State<'_, Db>, pin: String) -> AppResult<CashierUse
 
     let conn = db.conn()?;
     let mut stmt = conn.prepare(
-        "SELECT id, erp_user_id, username, full_name, email, role, active, pin_hash, permissions, erp_profile_name, login_count, erp_role_code
+        "SELECT id, erp_user_id, username, full_name, email, role, active, pin_hash, permissions, erp_profile_name, login_count, erp_role_code, failed_pin_attempts, locked_until
          FROM users WHERE active = 1 AND pin_hash IS NOT NULL AND (erp_role_code IS NULL OR erp_role_code != 'CLIENTE') AND role != 'customer'",
     )?;
 
     let mut rows = stmt.query([])?;
     while let Some(r) = rows.next()? {
+        let user_id: i64 = r.get(0)?;
+        let locked_until: Option<String> = r.get(13)?;
+
+        // Si está bloqueado este usuario específico, ignorar
+        if let Some(lock_time) = locked_until {
+            let is_locked: bool = conn
+                .query_row(
+                    "SELECT datetime('now') < ?1",
+                    params![lock_time],
+                    |res| res.get(0),
+                )
+                .unwrap_or(false);
+            if is_locked {
+                continue;
+            }
+        }
+
         let pin_hash: String = r.get(7)?;
         if bcrypt::verify(trimmed_pin, &pin_hash).unwrap_or(false) {
-            let user_id: i64 = r.get(0)?;
             let _ = conn.execute(
-                "UPDATE users SET login_count = COALESCE(login_count, 0) + 1, last_login_at = datetime('now') WHERE id = ?1",
+                "UPDATE users SET login_count = COALESCE(login_count, 0) + 1, last_login_at = datetime('now'), failed_pin_attempts = 0, locked_until = NULL WHERE id = ?1",
                 params![user_id],
             );
 
