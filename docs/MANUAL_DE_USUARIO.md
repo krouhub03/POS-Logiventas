@@ -27,8 +27,9 @@ Al encender el equipo o cuando la terminal se encuentra bloqueada, verás la **P
 1. **Selecciona tu usuario**: Los cajeros más frecuentes aparecen primero con su tarjeta de perfil y rol asignado.
 2. **Ingresa tu PIN**: Digita tu clave secreta de **4 dígitos** usando el teclado físico o los botones numéricos en pantalla.
 3. **Acceso inmediato**: Al completar el cuarto dígito correcto, el sistema validará tu sesión sin necesidad de presionar `Enter`.
+4. **Protección de Seguridad**: Por seguridad, si se ingresa un PIN incorrecto **5 veces seguidas**, la cuenta quedará suspendida temporalmente durante **60 segundos** para evitar intentos no autorizados.
 
-> 💡 **Tip de Seguridad:** Si necesitas retirarte momentáneamente del mostrador, haz clic en tu nombre/avatar o en el botón **"🔒 Bloquear"** en la barra superior para bloquear la pantalla sin cerrar tu turno ni perder los tickets abiertos.
+> 💡 **Tip de Seguridad:** Si necesitas retirarte momentáneamente del mostrador, haz clic en tu nombre/avatar o presiona el botón **"🔒 Bloquear"** en la barra superior para bloquear la pantalla sin cerrar tu turno ni perder los tickets abiertos. El relevo de cajero puede ingresar con su propio PIN sobre el mismo turno activo y cada venta registrará individualmente quién la emitió.
 
 ---
 
@@ -83,8 +84,9 @@ Para registrar la venta a nombre de un cliente específico:
 
 1. Presiona la tecla **`F2`** (o haz clic en el botón de cliente en la estación de ventas).
 2. **Buscar cliente**: Escribe el nombre, NIT/Cédula o teléfono del cliente y selecciónalo con `Enter`.
-3. **Crear nuevo cliente**: Si el cliente no existe, completa sus datos básicos en la pestaña de registro rápido y guárdalo; quedará asignado automáticamente al ticket actual.
-4. **Desvincular cliente**: Si deseas regresar el ticket a *Consumidor Final*, presiona **`Shift` + `F2`**.
+3. **Estado de Cuenta y Crédito**: Si el cliente tiene cuenta activa, el sistema mostrará su **Cupo de Crédito Autorizado** y su **Saldo Deudor Actual**.
+4. **Crear nuevo cliente**: Si el cliente no existe, completa sus datos básicos en la pestaña de registro rápido y guárdalo; quedará asignado automáticamente al ticket actual.
+5. **Desvincular cliente**: Si deseas regresar el ticket a *Consumidor Final*, presiona **`Shift` + `F2`**.
 
 ---
 
@@ -110,9 +112,10 @@ Una vez listos los productos del ticket:
 2. **Selecciona el Medio de Pago**:
    - **Efectivo**: Ingresa el monto recibido o usa los botones de billetes rápidos. El sistema mostrará en grande el **Cambio / Vuelto** a entregar.
    - **Medios Electrónicos / Digitales (Tarjeta, Nequi, Daviplata, Transferencia)**: Selecciona el medio habilitado en tu terminal e ingresa la referencia del comprobante si aplica.
-   - **Pago Mixto / Dividido**: Puedes combinar varios medios de pago en una misma compra (ej. una parte en Efectivo y el resto por Transferencia) hasta cubrir el total.
+   - **Venta a Crédito / Cuenta por Cobrar (CxC)**: Si el cliente cuenta con cupo disponible, selecciona esta opción para registrar la deuda en su estado de cuenta comercial.
+   - **Pago Mixto / Dividido**: Puedes combinar varios medios de pago en una misma compra (ej. una parte en Efectivo y el resto por Transferencia o Crédito) hasta cubrir el total.
 3. Presiona **`Enter`** para finalizar la venta:
-   - Se imprimirá el recibo en la impresora térmica y se abrirá el cajón portamonedas.
+   - Se imprimirá el recibo en la impresora térmica indicando el cajero responsable y se abrirá el cajón portamonedas.
 
 ---
 
@@ -127,6 +130,7 @@ Al terminar tu turno o al cierre del local:
    - **Efectivo esperado en cajón** (`Base Inicial + Ventas en Efectivo`).
 3. **Declaración de Efectivo Físico**: Cuenta los billetes y monedas reales del cajón e ingresa el monto total en **"Efectivo Contado / Declarado"**.
 4. El sistema mostrará en tiempo real si el arqueo está **Cuadrado (`$0`)**, o si existe algún **Sobrante** o **Faltante**, permitiéndote añadir observaciones antes de confirmar el cierre definitivo del turno.
+5. **Copia de Seguridad Preventiva Automática**: Al confirmar el cierre Z, el sistema genera automáticamente un respaldo inmutable de la base de datos SQLite (`backup_turno_{FOLIO}.db`) en la terminal local para máxima protección contra pérdidas de datos.
 
 ---
 

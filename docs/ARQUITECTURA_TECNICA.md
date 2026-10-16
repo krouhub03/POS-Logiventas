@@ -81,16 +81,17 @@ Para erradicar cualquier error acumulativo de coma flotante IEEE 754:
   let tax_cents = pct_tax + fixed_tax;
   ```
 
-### 3.3. Cuadre Transaccional Obligatorio y Costo Histórico
+### 3.3. Cuadre Transaccional Obligatorio, Costo Histórico y Trazabilidad de Cajero
 Toda venta valida en Rust antes del `COMMIT`:
 $$\text{Total} = \text{Subtotal} + \text{Impuestos} - \text{Descuentos}$$
 $$\sum \text{Pagos} \ge \text{Total}$$
 $$\text{Cambio} = \sum \text{Pagos} - \text{Total}$$
-Además, cada registro en `sale_items` congela en `unit_cost_cents` el `cost_cents` vigente del producto al instante de la venta.
+- **Costo Histórico**: Cada registro en `sale_items` congela en `unit_cost_cents` el `cost_cents` vigente del producto al instante de la venta.
+- **Trazabilidad Individual de Cajero**: Cada venta almacena `user_id` del operador autenticado con PIN al momento de cobrar, y el Outbox serializa `userId`, `erpUserId` y `cajeroNombre`. Esto permite que varios cajeros compartan el mismo turno (`session_id`) durante relevos sin perder la autoría individual de cada ticket en reportes de auditoría y comisiones.
 
 ---
 
-## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0016`)
+## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0017`)
 
 La base de datos SQLite se almacena en `%APPDATA%\com.briankrou.pos-logiventa\logiventa.db`.
 
@@ -251,6 +252,7 @@ El runner aplica secuencialmente las 16 migraciones dentro de transacciones indi
 14. `0014_product_policies_and_tags.sql`: Columnas `controls_stock`, `allow_negative_stock`, `is_bundle`, `tags` y `tax_fixed_cents` en `products`.
 15. `0015_sale_items_historical_cost.sql`: Columna `unit_cost_cents` en `sale_items`.
 16. `0016_product_tags.sql`: Tabla `product_tags` con colores hexadecimales predefinidos.
+17. `0017_pin_rate_limiting.sql`: Columnas `failed_pin_attempts` y `locked_until` en `users` para protección contra fuerza bruta local (suspensión de 60s tras 5 intentos fallidos).
 
 ---
 
@@ -292,7 +294,13 @@ stateDiagram-v2
    - `F3` (Catálogo): Requiere `inventario:ver`.
    - `F4` (Ajustes de Inventario / Kardex): Requiere `inventario:ver` o `inventario:ajustar`.
    - `F7` (Configuración de Hardware y Terminal): Requiere `pos:configuracion`.
-2. **Latido de Seguridad (Session Heartbeat cada 15s)**:
+2. **Protección Anti Fuerza Bruta de PIN Local (Rate Limiting)**:
+   - Al intentar autenticar en `commands/auth.rs`, el sistema verifica `failed_pin_attempts` y `locked_until`.
+   - Si se registran **5 intentos erróneos consecutivos**, el usuario queda bloqueado localmente durante **60 segundos**, impidiendo ataques automatizados o de tanteo sobre el teclado numérico de la terminal.
+3. **Respaldo Automático Preventivo al Cierre de Turno (`commands/shifts.rs`)**:
+   - Durante la emisión del Z-Report de cierre de turno (`close_shift`), SQLite ejecuta un snapshot atómico en caliente mediante `VACUUM INTO 'backup_turno_{FOLIO}.db'`.
+   - Garantiza que ante un fallo de hardware catastrófico o corrupción del disco, siempre exista una copia exacta e inmutable del estado contable y de inventario al momento del corte.
+4. **Latido de Seguridad (Session Heartbeat cada 15s)**:
    - `App.tsx` invoca periódicamente `api.auth.validateSession(activeCashier.erpUserId)`.
    - Si la caja fue desvinculada o el usuario activo fue desactivado/degradado remotamente (`activeCashierRevoked: true`), el POS cierra la sesión de inmediato y bloquea la pantalla.
 
