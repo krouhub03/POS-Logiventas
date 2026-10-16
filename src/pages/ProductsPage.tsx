@@ -1527,530 +1527,567 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       </div>
 
       {/* ==============================================================
-          MODAL: CREAR O EDITAR PRODUCTO / SERVICIO
+          MODAL: CREAR O EDITAR PRODUCTO / SERVICIO / COMBO
           ============================================================== */}
       {isFormOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <header className="px-6 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>{editingProduct ? "✏️ Modificar" : "✨ Nuevo"}</span>
-                <span>{formIsService ? "Servicio" : "Producto"}</span>
-              </h2>
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-4xl lg:max-w-5xl max-h-[92vh] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95">
+            <header className="px-6 py-3.5 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="text-xl">
+                  {editingProduct ? "✏️" : formIsBundle ? "🍱" : formIsService ? "🛠️" : "✨"}
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>{editingProduct ? "Modificar" : "Nuevo"}</span>
+                    <span>{formIsBundle ? "Combo / Kit" : formIsService ? "Servicio" : "Producto"}</span>
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-medium">
+                    {formIsBundle
+                      ? "Configura la receta de componentes con descuento atómico de inventario"
+                      : formIsService
+                      ? "Artículo facturable sin control de existencias físicas en bodega"
+                      : "Artículo con control de existencias y kardex de bodega"}
+                  </p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-base font-bold cursor-pointer"
+                title="Cerrar (Esc)"
               >
                 ✕
               </button>
             </header>
 
-            <form onSubmit={handleSaveProduct} className="p-6 space-y-4">
-              {/* SELECTOR DE TIPO (PRODUCTO FÍSICO VS SERVICIO VS COMBO) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Tipo de Registro
-                </label>
-                <div className="grid grid-cols-3 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormIsService(false);
-                      setFormIsBundle(false);
-                      if (["serv", "hr", "día", "mes", "sesión", "cons", "dom", "ev"].includes(formUnit)) {
-                        setFormUnit("pza");
-                      }
-                    }}
-                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                      !formIsService && !formIsBundle
-                        ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20 shadow-xs"
-                        : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                    }`}
-                  >
-                    <span>📦 Físico</span>
-                    <span className="text-[9px] text-slate-400 font-normal">Stock Directo</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormIsService(true);
-                      setFormIsBundle(false);
-                      if (["pza", "kg", "g", "lt", "ml", "caja", "paq", "m"].includes(formUnit)) {
-                        setFormUnit("serv");
-                      }
-                      setFormStock(0);
-                      setFormMinStock(0);
-                    }}
-                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                      formIsService
-                        ? "bg-cyan-50 dark:bg-cyan-950/60 border-cyan-500 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/20 shadow-xs"
-                        : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                    }`}
-                  >
-                    <span>🛠️ Servicio</span>
-                    <span className="text-[9px] text-slate-400 font-normal">Sin Stock</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFormIsService(false);
-                      setFormIsBundle(true);
-                      setFormUnit("pza");
-                    }}
-                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                      formIsBundle
-                        ? "bg-purple-50 dark:bg-purple-950/60 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20 shadow-xs"
-                        : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-                    }`}
-                  >
-                    <span>🍱 Combo / Kit</span>
-                    <span className="text-[9px] text-purple-500 font-normal">Receta Hijos</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* CÓDIGO DE BARRAS & SKU */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Código de Barras
-                    </label>
+            <form onSubmit={handleSaveProduct} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+                {/* SELECTOR DE TIPO (PRODUCTO FÍSICO VS SERVICIO VS COMBO) */}
+                <div className="bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
+                    Tipo de Registro
+                  </label>
+                  <div className="grid grid-cols-3 gap-2.5">
                     <button
                       type="button"
-                      onClick={() => setFormBarcode(Date.now().toString().slice(-8))}
-                      className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline"
+                      onClick={() => {
+                        setFormIsService(false);
+                        setFormIsBundle(false);
+                        if (["serv", "hr", "día", "mes", "sesión", "cons", "dom", "ev"].includes(formUnit)) {
+                          setFormUnit("pza");
+                        }
+                      }}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                        !formIsService && !formIsBundle
+                          ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20 shadow-xs"
+                          : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                      }`}
                     >
-                      Generar aleatorio
+                      <span className="flex items-center gap-1.5">📦 Físico</span>
+                      <span className="text-[9px] text-slate-400 font-normal">Stock Directo</span>
                     </button>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Escanear o ingresar…"
-                    value={formBarcode}
-                    onChange={(e) => setFormBarcode(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    SKU / Clave Interna *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. PROD-001"
-                    value={formSku}
-                    onChange={(e) => setFormSku(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* NOMBRE / DESCRIPCIÓN */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Nombre del {formIsService ? "Servicio" : "Producto"} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder={
-                    formIsService
-                      ? "Ej. Mantenimiento Preventivo, Asesoría, Domicilio"
-                      : "Ej. Coca Cola 600ml, Azúcar 1kg, Cuaderno 100 Hojas"
-                  }
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              {/* PRECIO DE VENTA Y COSTO */}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-                    Precio Venta ($) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    required
-                    placeholder="0.00"
-                    value={formPriceStr}
-                    onChange={(e) => setFormPriceStr(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-emerald-300 dark:border-emerald-800 text-xs font-mono font-black text-emerald-700 dark:text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Costo ($)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    value={formCostStr}
-                    onChange={(e) => setFormCostStr(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    IVA (Impuesto)
-                  </label>
-                  <select
-                    value={formTaxRateBp}
-                    onChange={(e) => setFormTaxRateBp(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value={0}>0% (Exento)</option>
-                    <option value={500}>5% (Reducido)</option>
-                    <option value={1600}>16% (IVA)</option>
-                    <option value={1900}>19% (General)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* CAMPOS ESPECÍFICOS DE PRODUCTO FÍSICO SIMPLE */}
-              {!formIsService && !formIsBundle && (
-                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
-                  <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide flex items-center justify-between">
-                    <span>📦 Control de Existencias e Inventario</span>
-                    <span className="text-[10px] font-normal text-slate-400">Control de stock en bodega</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Unidad de Medida
-                      </label>
-                      <select
-                        value={formUnit}
-                        onChange={(e) => setFormUnit(e.target.value)}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="pza">Pieza (pza)</option>
-                        <option value="und">Unidad (und)</option>
-                        <option value="kg">Kilogramo (kg)</option>
-                        <option value="g">Gramo (g)</option>
-                        <option value="lt">Litro (lt)</option>
-                        <option value="ml">Mililitro (ml)</option>
-                        <option value="caja">Caja (caja)</option>
-                        <option value="paq">Paquete (paq)</option>
-                        <option value="m">Metro (m)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        {editingProduct ? "Existencia Actual" : "Existencia Inicial"}
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={formStock}
-                        onChange={(e) => setFormStock(Number(e.target.value))}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Stock Mínimo
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={formMinStock}
-                        onChange={(e) => setFormMinStock(Number(e.target.value))}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* SECCIÓN ESPECÍFICA DE PRODUCTO COMPUESTO / COMBO */}
-              {formIsBundle && (
-                <div className="p-4 bg-purple-50/70 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🍱</span>
-                      <div>
-                        <span className="text-xs font-bold text-purple-900 dark:text-purple-200 block">
-                          Receta / Insumos del Combo
-                        </span>
-                        <span className="text-[10px] text-purple-700/70 dark:text-purple-300/70">
-                          Al vender este combo se descontará el stock de cada uno de sus componentes
-                        </span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider block">
-                        Stock Armable
-                      </span>
-                      <span className="text-sm font-mono font-black text-purple-800 dark:text-purple-300">
-                        {calculatedBundleStock} combos
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* SELECTOR PARA AÑADIR NUEVO COMPONENTE */}
-                  <div className="flex gap-2 items-end pt-1">
-                    <div className="flex-1">
-                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                        Seleccionar Producto Insumo
-                      </label>
-                      <select
-                        value={selectedChildProductId}
-                        onChange={(e) => setSelectedChildProductId(e.target.value ? Number(e.target.value) : "")}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-none"
-                      >
-                        <option value="">-- Seleccionar producto del catálogo --</option>
-                        {products
-                          .filter((p) => !p.isService && !p.isBundle && (!editingProduct || p.id !== editingProduct.id))
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} ({p.sku}) • Stock: {p.stock} {p.unit}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-
-                    <div className="w-24">
-                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                        Cantidad
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0.01"
-                        value={selectedChildQty}
-                        onChange={(e) => setSelectedChildQty(Number(e.target.value))}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none text-center"
-                      />
-                    </div>
 
                     <button
                       type="button"
                       onClick={() => {
-                        if (!selectedChildProductId || selectedChildQty <= 0) return;
-                        const child = products.find((p) => p.id === selectedChildProductId);
-                        if (!child) return;
-
-                        const existsIdx = formComponents.findIndex((c) => c.childProductId === child.id);
-                        if (existsIdx >= 0) {
-                          const updated = [...formComponents];
-                          updated[existsIdx].quantity += selectedChildQty;
-                          setFormComponents(updated);
-                        } else {
-                          setFormComponents([
-                            ...formComponents,
-                            {
-                              childProductId: child.id,
-                              childName: child.name,
-                              childSku: child.sku,
-                              childStock: child.stock,
-                              childUnit: child.unit,
-                              quantity: selectedChildQty,
-                            },
-                          ]);
+                        setFormIsService(true);
+                        setFormIsBundle(false);
+                        if (["pza", "kg", "g", "lt", "ml", "caja", "paq", "m"].includes(formUnit)) {
+                          setFormUnit("serv");
                         }
-                        setSelectedChildProductId("");
-                        setSelectedChildQty(1);
+                        setFormStock(0);
+                        setFormMinStock(0);
                       }}
-                      disabled={!selectedChildProductId || selectedChildQty <= 0}
-                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                        formIsService
+                          ? "bg-cyan-50 dark:bg-cyan-950/60 border-cyan-500 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/20 shadow-xs"
+                          : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                      }`}
                     >
-                      + Añadir
+                      <span className="flex items-center gap-1.5">🛠️ Servicio</span>
+                      <span className="text-[9px] text-slate-400 font-normal">Sin Stock</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormIsService(false);
+                        setFormIsBundle(true);
+                        setFormUnit("pza");
+                      }}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                        formIsBundle
+                          ? "bg-purple-50 dark:bg-purple-950/60 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20 shadow-xs"
+                          : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">🍱 Combo / Kit</span>
+                      <span className="text-[9px] text-purple-500 font-normal">Receta Hijos</span>
                     </button>
                   </div>
-
-                  {/* LISTA DE COMPONENTES AGREGADOS */}
-                  <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
-                    {formComponents.length === 0 ? (
-                      <p className="text-[11px] text-purple-700/60 dark:text-purple-400/60 italic text-center py-2">
-                        Aún no has agregado insumos a este combo.
-                      </p>
-                    ) : (
-                      formComponents.map((comp, idx) => (
-                        <div
-                          key={comp.childProductId}
-                          className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900/60 text-xs"
-                        >
-                          <div>
-                            <span className="font-bold text-slate-900 dark:text-white">{comp.childName}</span>
-                            <span className="text-[10px] text-slate-400 font-mono ml-2">SKU: {comp.childSku}</span>
-                            <div className="text-[10px] text-slate-500">
-                              Stock en almacén: {comp.childStock} {comp.childUnit}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950 px-2 py-0.5 rounded">
-                              {comp.quantity} {comp.childUnit} / combo
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setFormComponents(formComponents.filter((_, i) => i !== idx));
-                              }}
-                              className="text-rose-500 hover:text-rose-700 text-xs font-bold p-1 cursor-pointer"
-                              title="Quitar componente"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
                 </div>
-              )}
 
-              {/* CAMPOS ESPECÍFICOS DE SERVICIO */}
-              {formIsService && (
-                <div className="p-3.5 bg-cyan-50/50 dark:bg-cyan-950/30 rounded-xl border border-cyan-200 dark:border-cyan-800/60 space-y-3">
-                  <div className="text-[11px] font-bold text-cyan-800 dark:text-cyan-300 uppercase tracking-wide flex items-center justify-between">
-                    <span>🛠️ Unidad y Modalidad de Servicio</span>
-                    <span className="text-[10px] font-normal text-cyan-600 dark:text-cyan-400">Exento de Inventario Físico</span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                {/* GRID PRINCIPAL RESPONSIVO (2 COLUMNAS EN ESCRITORIO/TABLET, 1 EN PANTALLAS PEQUEÑAS) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                  {/* COLUMNA IZQUIERDA: IDENTIFICACIÓN, NOMBRE Y PRECIOS (lg:col-span-6) */}
+                  <div className="lg:col-span-6 space-y-4">
+                    {/* CÓDIGO DE BARRAS & SKU */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                            Código de Barras
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setFormBarcode(Date.now().toString().slice(-8))}
+                            className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline cursor-pointer"
+                          >
+                            Generar aleatorio
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Escanear o ingresar…"
+                          value={formBarcode}
+                          onChange={(e) => setFormBarcode(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          SKU / Clave Interna *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ej. PROD-001"
+                          value={formSku}
+                          onChange={(e) => setFormSku(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* NOMBRE / DESCRIPCIÓN */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Unidad de Cobro
+                        Nombre del {formIsService ? "Servicio" : formIsBundle ? "Combo" : "Producto"} *
                       </label>
-                      <select
-                        value={formUnit}
-                        onChange={(e) => setFormUnit(e.target.value)}
-                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                      >
-                        <option value="serv">Servicio (serv)</option>
-                        <option value="hr">Hora (hr)</option>
-                        <option value="día">Día (día)</option>
-                        <option value="mes">Mes (mes)</option>
-                        <option value="sesión">Sesión (sesión)</option>
-                        <option value="cons">Consulta / Asesoría (cons)</option>
-                        <option value="dom">Domicilio (dom)</option>
-                        <option value="ev">Evento (ev)</option>
-                        <option value="und">Unidad / Tarifa (und)</option>
-                      </select>
+                      <input
+                        type="text"
+                        required
+                        placeholder={
+                          formIsService
+                            ? "Ej. Mantenimiento Preventivo, Asesoría, Domicilio"
+                            : formIsBundle
+                            ? "Ej. Combo Familiar 2x1, Paquete Escolar Básico"
+                            : "Ej. Coca Cola 600ml, Azúcar 1kg, Cuaderno 100 Hojas"
+                        }
+                        value={formName}
+                        onChange={(e) => setFormName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
                     </div>
 
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
-                      💡 Los servicios no descuentan existencias físicas de bodega. En caja podrás cobrar por horas, visitas o tarifas fijas.
+                    {/* PRECIO DE VENTA Y COSTO */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+                          Precio Venta ($) *
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          required
+                          placeholder="0.00"
+                          value={formPriceStr}
+                          onChange={(e) => setFormPriceStr(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-emerald-300 dark:border-emerald-800 text-xs font-mono font-black text-emerald-700 dark:text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Costo ($)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={formCostStr}
+                          onChange={(e) => setFormCostStr(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          IVA (Impuesto)
+                        </label>
+                        <select
+                          value={formTaxRateBp}
+                          onChange={(e) => setFormTaxRateBp(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value={0}>0% (Exento)</option>
+                          <option value={500}>5% (Reducido)</option>
+                          <option value={1600}>16% (IVA)</option>
+                          <option value={1900}>19% (General)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* COLUMNA DERECHA: EXISTENCIAS / RECETA DE COMBO / ETIQUETAS (lg:col-span-6) */}
+                  <div className="lg:col-span-6 space-y-4">
+                    {/* CAMPOS ESPECÍFICOS DE PRODUCTO FÍSICO SIMPLE */}
+                    {!formIsService && !formIsBundle && (
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+                        <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide flex items-center justify-between">
+                          <span>📦 Control de Existencias e Inventario</span>
+                          <span className="text-[10px] font-normal text-slate-400">Control de stock en bodega</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              Unidad
+                            </label>
+                            <select
+                              value={formUnit}
+                              onChange={(e) => setFormUnit(e.target.value)}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <option value="pza">Pieza (pza)</option>
+                              <option value="und">Unidad (und)</option>
+                              <option value="kg">Kilogramo (kg)</option>
+                              <option value="g">Gramo (g)</option>
+                              <option value="lt">Litro (lt)</option>
+                              <option value="ml">Mililitro (ml)</option>
+                              <option value="caja">Caja (caja)</option>
+                              <option value="paq">Paquete (paq)</option>
+                              <option value="m">Metro (m)</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              {editingProduct ? "Exist. Actual" : "Exist. Inicial"}
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={formStock}
+                              onChange={(e) => setFormStock(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              Stock Mínimo
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={formMinStock}
+                              onChange={(e) => setFormMinStock(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECCIÓN ESPECÍFICA DE PRODUCTO COMPUESTO / COMBO */}
+                    {formIsBundle && (
+                      <div className="p-4 bg-purple-50/70 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800/60 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">🍱</span>
+                            <div>
+                              <span className="text-xs font-bold text-purple-900 dark:text-purple-200 block">
+                                Receta / Insumos del Combo
+                              </span>
+                              <span className="text-[10px] text-purple-700/70 dark:text-purple-300/70">
+                                Descuenta automáticamente el stock de cada componente
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider block">
+                              Stock Armable
+                            </span>
+                            <span className="text-sm font-mono font-black text-purple-800 dark:text-purple-300">
+                              {calculatedBundleStock} combos
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* SELECTOR PARA AÑADIR NUEVO COMPONENTE */}
+                        <div className="flex gap-2 items-end pt-1">
+                          <div className="flex-1">
+                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                              Seleccionar Producto Insumo
+                            </label>
+                            <select
+                              value={selectedChildProductId}
+                              onChange={(e) => setSelectedChildProductId(e.target.value ? Number(e.target.value) : "")}
+                              className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-none"
+                            >
+                              <option value="">-- Seleccionar producto del catálogo --</option>
+                              {products
+                                .filter((p) => !p.isService && !p.isBundle && (!editingProduct || p.id !== editingProduct.id))
+                                .map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name} ({p.sku}) • Stock: {p.stock} {p.unit}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+
+                          <div className="w-20">
+                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                              Cantidad
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0.01"
+                              value={selectedChildQty}
+                              onChange={(e) => setSelectedChildQty(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none text-center"
+                            />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!selectedChildProductId || selectedChildQty <= 0) return;
+                              const child = products.find((p) => p.id === selectedChildProductId);
+                              if (!child) return;
+
+                              const existsIdx = formComponents.findIndex((c) => c.childProductId === child.id);
+                              if (existsIdx >= 0) {
+                                const updated = [...formComponents];
+                                updated[existsIdx].quantity += selectedChildQty;
+                                setFormComponents(updated);
+                              } else {
+                                setFormComponents([
+                                  ...formComponents,
+                                  {
+                                    childProductId: child.id,
+                                    childName: child.name,
+                                    childSku: child.sku,
+                                    childStock: child.stock,
+                                    childUnit: child.unit,
+                                    quantity: selectedChildQty,
+                                  },
+                                ]);
+                              }
+                              setSelectedChildProductId("");
+                              setSelectedChildQty(1);
+                            }}
+                            disabled={!selectedChildProductId || selectedChildQty <= 0}
+                            className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                          >
+                            + Añadir
+                          </button>
+                        </div>
+
+                        {/* LISTA DE COMPONENTES AGREGADOS */}
+                        <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+                          {formComponents.length === 0 ? (
+                            <p className="text-[11px] text-purple-700/60 dark:text-purple-400/60 italic text-center py-2">
+                              Aún no has agregado insumos a este combo.
+                            </p>
+                          ) : (
+                            formComponents.map((comp, idx) => (
+                              <div
+                                key={comp.childProductId}
+                                className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900/60 text-xs"
+                              >
+                                <div>
+                                  <span className="font-bold text-slate-900 dark:text-white">{comp.childName}</span>
+                                  <span className="text-[10px] text-slate-400 font-mono ml-2">SKU: {comp.childSku}</span>
+                                  <div className="text-[10px] text-slate-500">
+                                    Stock en almacén: {comp.childStock} {comp.childUnit}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className="font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950 px-2 py-0.5 rounded">
+                                    {comp.quantity} {comp.childUnit} / combo
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFormComponents(formComponents.filter((_, i) => i !== idx));
+                                    }}
+                                    className="text-rose-500 hover:text-rose-700 text-xs font-bold p-1 cursor-pointer"
+                                    title="Quitar componente"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CAMPOS ESPECÍFICOS DE SERVICIO */}
+                    {formIsService && (
+                      <div className="p-3.5 bg-cyan-50/50 dark:bg-cyan-950/30 rounded-xl border border-cyan-200 dark:border-cyan-800/60 space-y-3">
+                        <div className="text-[11px] font-bold text-cyan-800 dark:text-cyan-300 uppercase tracking-wide flex items-center justify-between">
+                          <span>🛠️ Unidad y Modalidad de Servicio</span>
+                          <span className="text-[10px] font-normal text-cyan-600 dark:text-cyan-400">Exento de Inventario Físico</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              Unidad de Cobro
+                            </label>
+                            <select
+                              value={formUnit}
+                              onChange={(e) => setFormUnit(e.target.value)}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                            >
+                              <option value="serv">Servicio (serv)</option>
+                              <option value="hr">Hora (hr)</option>
+                              <option value="día">Día (día)</option>
+                              <option value="mes">Mes (mes)</option>
+                              <option value="sesión">Sesión (sesión)</option>
+                              <option value="cons">Consulta / Asesoría (cons)</option>
+                              <option value="dom">Domicilio (dom)</option>
+                              <option value="ev">Evento (ev)</option>
+                              <option value="und">Unidad / Tarifa (und)</option>
+                            </select>
+                          </div>
+
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                            💡 Los servicios no descuentan existencias físicas de bodega. En caja podrás cobrar por horas, visitas o tarifas fijas.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ETIQUETAS MAESTRAS (TAGS CON NOMBRE Y COLOR) */}
+                    <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <span>🏷️ Etiquetas del Producto</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Pulsa para activar o desactivar</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setIsTagsModalOpen(true)}
+                          className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <span>⚙️ Gestionar Etiquetas</span>
+                        </button>
+                      </div>
+
+                      {/* Chips seleccionables de dbTags */}
+                      {dbTags.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pt-1">
+                          {dbTags.map((t) => {
+                            const activeTags = parseTags(formTags, dbTags).map((x) => x.toLowerCase());
+                            const isSelected = activeTags.includes(t.name.toLowerCase());
+
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => toggleFormTag(t.name)}
+                                style={{
+                                  backgroundColor: isSelected ? t.colorHex : undefined,
+                                  borderColor: t.colorHex,
+                                  color: isSelected ? "#ffffff" : undefined,
+                                }}
+                                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                                  isSelected
+                                    ? "shadow-xs scale-102 font-black"
+                                    : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:scale-102"
+                                }`}
+                              >
+                                <span
+                                  className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? "bg-white" : ""}`}
+                                  style={{ backgroundColor: isSelected ? undefined : t.colorHex }}
+                                />
+                                <span>{t.name}</span>
+                                {isSelected && <span className="text-[10px]">✓</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-400 italic py-1">
+                          No hay etiquetas maestras registradas aún.
+                        </div>
+                      )}
+
+                      {/* Input de texto complementario */}
+                      <div className="pt-1">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                          <span>Etiquetas asignadas actualmente:</span>
+                          <span className="font-mono">Búsqueda rápida en POS con #</span>
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Ninguna etiqueta seleccionada"
+                          value={formTags}
+                          onChange={(e) => setFormTags(e.target.value)}
+                          className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
-              )}
+              </div>
 
-              {/* ETIQUETAS MAESTRAS (TAGS CON NOMBRE Y COLOR) */}
-              <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>🏷️ Etiquetas del Producto</span>
-                    <span className="text-[10px] text-slate-400 font-normal">Pulsa para activar o desactivar</span>
-                  </label>
+              {/* FOOTER FIJO CON BOTONES DE ACCIÓN */}
+              <footer className="px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
+                <div className="text-[11px] text-slate-400 hidden sm:block">
+                  <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 font-mono text-[10px]">Esc</kbd> para cancelar
+                </div>
+                <div className="flex items-center gap-3 ml-auto">
                   <button
                     type="button"
-                    onClick={() => setIsTagsModalOpen(true)}
-                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
+                    onClick={() => setIsFormOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                   >
-                    <span>⚙️ Gestionar Etiquetas</span>
+                    Cancelar (Esc)
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={formSubmitting}
+                    className={`px-6 py-2 rounded-xl text-white text-xs font-black shadow-md transition-all disabled:opacity-50 cursor-pointer ${
+                      formIsBundle
+                        ? "bg-purple-600 hover:bg-purple-700"
+                        : formIsService
+                        ? "bg-cyan-600 hover:bg-cyan-700"
+                        : "bg-indigo-600 hover:bg-indigo-700"
+                    }`}
+                  >
+                    {formSubmitting
+                      ? "Guardando…"
+                      : editingProduct
+                      ? "Guardar Cambios"
+                      : formIsBundle
+                      ? "Crear Combo"
+                      : formIsService
+                      ? "Crear Servicio"
+                      : "Crear Producto"}
                   </button>
                 </div>
-
-                {/* Chips seleccionables de dbTags */}
-                {dbTags.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
-                    {dbTags.map((t) => {
-                      const activeTags = parseTags(formTags, dbTags).map((x) => x.toLowerCase());
-                      const isSelected = activeTags.includes(t.name.toLowerCase());
-
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => toggleFormTag(t.name)}
-                          style={{
-                            backgroundColor: isSelected ? t.colorHex : undefined,
-                            borderColor: t.colorHex,
-                            color: isSelected ? "#ffffff" : undefined,
-                          }}
-                          className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                            isSelected
-                              ? "shadow-xs scale-102 font-black"
-                              : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:scale-102"
-                          }`}
-                        >
-                          <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${isSelected ? "bg-white" : ""}`}
-                            style={{ backgroundColor: isSelected ? undefined : t.colorHex }}
-                          />
-                          <span>{t.name}</span>
-                          {isSelected && <span className="text-[10px]">✓</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400 italic py-1">
-                    No hay etiquetas maestras registradas aún.
-                  </div>
-                )}
-
-                {/* Input de texto complementario */}
-                <div className="pt-1">
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                    <span>Etiquetas asignadas actualmente:</span>
-                    <span className="font-mono">Búsqueda rápida en POS con #</span>
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="Ninguna etiqueta seleccionada"
-                    value={formTags}
-                    onChange={(e) => setFormTags(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* BOTONES DE ACCIÓN */}
-              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsFormOpen(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                >
-                  Cancelar (Esc)
-                </button>
-                <button
-                  type="submit"
-                  disabled={formSubmitting}
-                  className={`px-5 py-2 rounded-xl text-white text-xs font-black shadow-md transition-all disabled:opacity-50 cursor-pointer ${
-                    formIsService
-                      ? "bg-cyan-600 hover:bg-cyan-700"
-                      : "bg-indigo-600 hover:bg-indigo-700"
-                  }`}
-                >
-                  {formSubmitting
-                    ? "Guardando…"
-                    : editingProduct
-                    ? "Guardar Cambios"
-                    : formIsService
-                    ? "Crear Servicio"
-                    : "Crear Producto"}
-                </button>
-              </div>
+              </footer>
             </form>
           </div>
         </div>
