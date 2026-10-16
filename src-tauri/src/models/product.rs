@@ -99,3 +99,26 @@ pub struct ProductTag {
     pub active: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductComponentDto {
+    pub id: i64,
+    pub parent_product_id: i64,
+    pub child_product_id: i64,
+    pub child_name: String,
+    pub child_sku: String,
+    pub child_barcode: Option<String>,
+    pub child_stock: f64,
+    pub child_unit: String,
+    pub quantity: f64,
+    pub order_index: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveProductComponentItem {
+    pub child_product_id: i64,
+    pub quantity: f64,
+    pub order_index: Option<i64>,
+}
+

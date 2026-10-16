@@ -107,6 +107,9 @@ erDiagram
     PRODUCTS ||--o{ SALE_ITEMS : "vendido_en"
     PRODUCTS ||--o{ INVENTORY_MOVEMENTS : "afecta_kardex"
     CUSTOMERS ||--o{ SALES : "compra"
+    CUSTOMERS ||--o{ CUSTOMER_PAYMENTS : "abona_a_cartera"
+    PRODUCTS ||--o{ PRODUCT_COMPONENTS : "padre_combo"
+    PRODUCTS ||--o{ PRODUCT_COMPONENTS : "insumo_hijo"
     SALES ||--|{ SALE_ITEMS : "contiene"
     SALES ||--|{ PAYMENTS : "recibe_pago"
     PAYMENT_METHODS ||--o{ PAYMENTS : "canal_de_cobro"
@@ -220,6 +223,28 @@ erDiagram
         integer terminal_enabled
     }
 
+    PRODUCT_COMPONENTS {
+        integer id PK
+        integer parent_product_id FK
+        integer child_product_id FK
+        real quantity
+        integer order_index
+        text created_at
+    }
+
+    CUSTOMER_PAYMENTS {
+        integer id PK
+        text folio UK
+        integer customer_id FK
+        integer cash_session_id FK
+        integer user_id FK
+        integer amount_cents
+        text payment_method_id
+        text payment_method_name
+        text notes
+        text created_at
+    }
+
     SYNC_QUEUE {
         integer id PK
         text entity_type
@@ -234,7 +259,7 @@ erDiagram
 ```
 
 ### 4.2. Historial de Migraciones (`src-tauri/src/db/migrations.rs`)
-El runner aplica secuencialmente las 16 migraciones dentro de transacciones individuales actualizando `PRAGMA user_version`:
+El runner aplica secuencialmente las 19 migraciones dentro de transacciones individuales actualizando `PRAGMA user_version`:
 
 1. `0001_initial.sql`: Tablas nucleares (`users`, `categories`, `products`, `customers`, `cash_sessions`, `sales`, `sale_items`, `payments`, `inventory_movements`, `settings`).
 2. `0002_terminal_settings.sql`: Columnas `erp_user_id` y llaves de vinculación M2M en `settings`.
@@ -253,6 +278,8 @@ El runner aplica secuencialmente las 16 migraciones dentro de transacciones indi
 15. `0015_sale_items_historical_cost.sql`: Columna `unit_cost_cents` en `sale_items`.
 16. `0016_product_tags.sql`: Tabla `product_tags` con colores hexadecimales predefinidos.
 17. `0017_pin_rate_limiting.sql`: Columnas `failed_pin_attempts` y `locked_until` en `users` para protección contra fuerza bruta local (suspensión de 60s tras 5 intentos fallidos).
+18. `0018_product_components.sql`: Tabla `product_components` para recetas, combos y kits con explosión atómica de inventario.
+19. `0019_customer_credit_and_payments.sql`: Soporte integral de cartera de clientes (`credit_limit_cents`, `current_balance_cents`, `is_credit_blocked`, `credit_days`, `notes`) y tabla `customer_payments` para abonos en caja.
 
 ---
 

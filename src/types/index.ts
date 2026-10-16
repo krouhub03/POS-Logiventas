@@ -324,11 +324,17 @@ export interface ShiftSummary {
 
 export interface Customer {
   id: number;
+  erpId?: string | null;
   name: string;
   taxId?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
+  creditLimitCents: number;
+  currentBalanceCents: number;
+  isCreditBlocked: boolean;
+  creditDays: number;
+  notes?: string | null;
   active: boolean;
 }
 
@@ -338,4 +344,62 @@ export interface CreateCustomerInput {
   email?: string | null;
   phone?: string | null;
   address?: string | null;
+  creditLimitCents?: number;
+  creditDays?: number;
+  notes?: string | null;
+}
+
+export interface UpdateCustomerCreditInput {
+  id: number;
+  creditLimitCents: number;
+  isCreditBlocked: boolean;
+  creditDays: number;
+  notes?: string | null;
+}
+
+export interface RecordCustomerPaymentInput {
+  customerId: number;
+  userId: number;
+  paymentMethodId?: string | null;
+  method: string;
+  amountCents: number;
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface CustomerPayment {
+  id: number;
+  folio: string;
+  customerId: number;
+  customerName: string;
+  sessionId?: number | null;
+  userId: number;
+  paymentMethodId?: string | null;
+  method?: string | null;
+  amountCents: number;
+  previousBalanceCents: number;
+  newBalanceCents: number;
+  reference?: string | null;
+  notes?: string | null;
+  createdAt: string;
+}
+
+/** Componente integrante de un combo/kit (receta local). */
+export interface ProductComponent {
+  id: number;
+  parentProductId: number;
+  childProductId: number;
+  childName: string;
+  childSku: string;
+  childBarcode?: string | null;
+  childStock: number;
+  childUnit: string;
+  quantity: number;
+  orderIndex: number;
+}
+
+export interface SaveProductComponentItem {
+  childProductId: number;
+  quantity: number;
+  orderIndex?: number;
 }

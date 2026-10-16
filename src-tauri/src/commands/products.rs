@@ -4,12 +4,25 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::product::{
-    InventoryMovementDto, NewProduct, Product, ProductTag, StockAdjustmentInput, UpdateProductInput,
+    InventoryMovementDto, NewProduct, Product, ProductComponentDto, ProductTag, SaveProductComponentItem,
+    StockAdjustmentInput, UpdateProductInput,
 };
 
 const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
      p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, p.is_bundle, p.tags, p.tax_fixed_cents, c.name";
 const PRODUCT_FROM: &str = "products p LEFT JOIN categories c ON c.id = p.category_id";
+
+/// Calcula dinámicamente el stock disponible de un combo basado en sus componentes hijos.
+pub fn calculate_bundle_stock(conn: &rusqlite::Connection, parent_id: i64) -> rusqlite::Result<Option<f64>> {
+    let mut stmt = conn.prepare(
+        "SELECT MIN(CAST(p_child.stock / pc.quantity AS REAL))
+         FROM product_components pc
+         JOIN products p_child ON p_child.id = pc.child_product_id
+         WHERE pc.parent_product_id = ?1 AND p_child.active = 1",
+    )?;
+    let val: Option<f64> = stmt.query_row(params![parent_id], |r| r.get(0)).ok().flatten();
+    Ok(val)
+}
 
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let is_service_int: i64 = r.get(11)?;
@@ -70,8 +83,17 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
          ORDER BY p.name LIMIT 300"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![pattern], map_product)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    let mut products = stmt.query_map(params![pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;
+
+    for p in &mut products {
+        if p.is_bundle {
+            if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, p.id) {
+                p.stock = bundle_stock.max(0.0);
+            }
+        }
+    }
+
+    Ok(products)
 }
 
 /// Busca un producto por código de barras exacto (flujo de escáner).
@@ -81,7 +103,15 @@ pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<
     let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.active = 1 AND p.barcode = ?1");
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query_map(params![barcode.trim()], map_product)?;
-    Ok(rows.next().transpose()?)
+    let mut product = rows.next().transpose()?;
+    if let Some(ref mut p) = product {
+        if p.is_bundle {
+            if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, p.id) {
+                p.stock = bundle_stock.max(0.0);
+            }
+        }
+    }
+    Ok(product)
 }
 
 /// Obtiene un producto por ID.
@@ -89,13 +119,21 @@ pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<
 pub fn get_product(db: State<'_, Db>, id: i64) -> AppResult<Product> {
     let conn = db.conn()?;
     let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
-    conn.query_row(&sql, params![id], map_product)
+    let mut product = conn.query_row(&sql, params![id], map_product)
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
                 AppError::Validation(format!("Producto con ID {} no encontrado", id))
             }
             other => AppError::Database(other),
-        })
+        })?;
+
+    if product.is_bundle {
+        if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, product.id) {
+            product.stock = bundle_stock.max(0.0);
+        }
+    }
+
+    Ok(product)
 }
 
 /// Crea un nuevo producto o servicio.
@@ -472,4 +510,83 @@ pub fn delete_product_tag(db: State<'_, Db>, id: i64) -> AppResult<()> {
     )?;
     Ok(())
 }
+
+/// Obtiene la lista de componentes de un producto compuesto (combo/kit).
+#[tauri::command]
+pub fn get_product_components(db: State<'_, Db>, parent_id: i64) -> AppResult<Vec<ProductComponentDto>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT pc.id, pc.parent_product_id, pc.child_product_id, p.name, p.sku, p.barcode, \
+                p.stock, p.unit, pc.quantity, pc.order_index \
+         FROM product_components pc \
+         JOIN products p ON p.id = pc.child_product_id \
+         WHERE pc.parent_product_id = ?1 \
+         ORDER BY pc.order_index ASC, pc.id ASC",
+    )?;
+
+    let rows = stmt.query_map(params![parent_id], |r| {
+        Ok(ProductComponentDto {
+            id: r.get(0)?,
+            parent_product_id: r.get(1)?,
+            child_product_id: r.get(2)?,
+            child_name: r.get(3)?,
+            child_sku: r.get(4)?,
+            child_barcode: r.get(5)?,
+            child_stock: r.get(6)?,
+            child_unit: r.get(7)?,
+            quantity: r.get(8)?,
+            order_index: r.get(9)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Guarda o reemplaza los componentes de un producto compuesto (combo/kit).
+#[tauri::command]
+pub fn save_product_components(
+    db: State<'_, Db>,
+    parent_id: i64,
+    components: Vec<SaveProductComponentItem>,
+) -> AppResult<()> {
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let is_bundle: i64 = tx
+        .query_row(
+            "SELECT is_bundle FROM products WHERE id = ?1",
+            params![parent_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| AppError::Validation(format!("Producto padre con ID {} no encontrado", parent_id)))?;
+
+    let should_be_bundle = if !components.is_empty() { 1 } else { is_bundle };
+    tx.execute(
+        "UPDATE products SET is_bundle = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![should_be_bundle, parent_id],
+    )?;
+
+    tx.execute("DELETE FROM product_components WHERE parent_product_id = ?1", params![parent_id])?;
+
+    let mut insert_stmt = tx.prepare(
+        "INSERT INTO product_components (parent_product_id, child_product_id, quantity, order_index) \
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+
+    for (idx, comp) in components.iter().enumerate() {
+        if comp.child_product_id == parent_id {
+            return Err(AppError::Validation("Un producto no puede ser componente de sí mismo".into()));
+        }
+        if comp.quantity <= 0.0 {
+            return Err(AppError::Validation("La cantidad del componente debe ser mayor a cero".into()));
+        }
+        let order = comp.order_index.unwrap_or(idx as i64);
+        insert_stmt.execute(params![parent_id, comp.child_product_id, comp.quantity, order])?;
+    }
+
+    drop(insert_stmt);
+    tx.commit()?;
+    Ok(())
+}
+
 

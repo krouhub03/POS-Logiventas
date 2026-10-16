@@ -6,6 +6,7 @@ import type {
   Product,
   ProductTag,
   NewProduct,
+  SaveProductComponentItem,
   UpdateProductInput,
   InventoryMovement,
   StockAdjustmentInput,
@@ -32,7 +33,7 @@ import { parseTags } from "../lib/tags";
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
-  const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services">("all");
+  const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services" | "bundles">("all");
   const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
   const [isTagFilterOpen, setIsTagFilterOpen] = useState(false);
   const tagFilterRef = useRef<HTMLDivElement>(null);
@@ -62,6 +63,20 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   // Estado del formulario de creación/edición
   const [formIsService, setFormIsService] = useState(false);
+  const [formIsBundle, setFormIsBundle] = useState(false);
+  const [formComponents, setFormComponents] = useState<
+    Array<{
+      childProductId: number;
+      childName: string;
+      childSku: string;
+      childStock: number;
+      childUnit: string;
+      quantity: number;
+    }>
+  >([]);
+  const [selectedChildProductId, setSelectedChildProductId] = useState<number | "">("");
+  const [selectedChildQty, setSelectedChildQty] = useState<number>(1);
+
   const [formSku, setFormSku] = useState("");
   const [formBarcode, setFormBarcode] = useState("");
   const [formName, setFormName] = useState("");
@@ -73,6 +88,19 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formMinStock, setFormMinStock] = useState<number>(5);
   const [formTags, setFormTags] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
+
+  // Cálculo en vivo del stock armable del combo
+  const calculatedBundleStock = useMemo(() => {
+    if (!formIsBundle || formComponents.length === 0) return 0;
+    let minStock = Infinity;
+    for (const comp of formComponents) {
+      if (comp.quantity > 0) {
+        const possible = Math.floor(comp.childStock / comp.quantity);
+        if (possible < minStock) minStock = possible;
+      }
+    }
+    return minStock === Infinity ? 0 : Math.max(0, minStock);
+  }, [formIsBundle, formComponents]);
 
   // Estado del formulario de ajuste de stock
   const [adjustNewStock, setAdjustNewStock] = useState<number>(0);
@@ -275,8 +303,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   // ==============================================================
   const catalogProducts = useMemo(() => {
     return products.filter((p) => {
-      if (catalogTypeFilter === "products" && p.isService) return false;
+      if (catalogTypeFilter === "products" && (p.isService || p.isBundle)) return false;
       if (catalogTypeFilter === "services" && !p.isService) return false;
+      if (catalogTypeFilter === "bundles" && !p.isBundle) return false;
       if (selectedTagsFilter.length > 0) {
         const itemTags = parseTags(p.tags, dbTags).map((t) => t.toLowerCase());
         const hasMatch = selectedTagsFilter.some((filterTag) =>
@@ -353,9 +382,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   }, [products, dbTags]);
 
   // Abrir formulario para nuevo producto
-  const handleOpenCreateModal = (asService = false) => {
+  const handleOpenCreateModal = (asService = false, asBundle = false) => {
     setEditingProduct(null);
     setFormIsService(asService);
+    setFormIsBundle(asBundle);
+    setFormComponents([]);
+    setSelectedChildProductId("");
+    setSelectedChildQty(1);
     const randomSku = `SKU-${Date.now().toString().slice(-6)}`;
     setFormSku(randomSku);
     setFormBarcode("");
@@ -374,6 +407,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const handleOpenEditModal = (p: Product) => {
     setEditingProduct(p);
     setFormIsService(p.isService);
+    setFormIsBundle(p.isBundle);
+    setSelectedChildProductId("");
+    setSelectedChildQty(1);
     setFormSku(p.sku);
     setFormBarcode(p.barcode || "");
     setFormName(p.name);
@@ -385,6 +421,26 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormMinStock(p.minStock);
     setFormTags(parseTags(p.tags, dbTags).join(", "));
     setIsFormOpen(true);
+
+    if (p.isBundle) {
+      api.products
+        .getComponents(p.id)
+        .then((comps) => {
+          setFormComponents(
+            comps.map((c) => ({
+              childProductId: c.childProductId,
+              childName: c.childName,
+              childSku: c.childSku,
+              childStock: c.childStock,
+              childUnit: c.childUnit,
+              quantity: c.quantity,
+            }))
+          );
+        })
+        .catch(console.warn);
+    } else {
+      setFormComponents([]);
+    }
   };
 
   // Navegar al Kardex filtrando por producto
@@ -434,11 +490,22 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           stock: formIsService ? 0 : formStock,
           minStock: formIsService ? 0 : formMinStock,
           isService: formIsService,
+          isBundle: formIsBundle,
           tags: tagsClean,
           active: true,
         };
-        await api.products.update(updateInput);
-        showNotification(`✓ ${formIsService ? "Servicio" : "Producto"} "${formName}" actualizado correctamente.`);
+        const updated = await api.products.update(updateInput);
+        if (formIsBundle) {
+          const compItems: SaveProductComponentItem[] = formComponents.map((c, idx) => ({
+            childProductId: c.childProductId,
+            quantity: c.quantity,
+            orderIndex: idx,
+          }));
+          await api.products.saveComponents(updated.id, compItems);
+        }
+        showNotification(
+          `✓ ${formIsBundle ? "Combo" : formIsService ? "Servicio" : "Producto"} "${formName}" actualizado correctamente.`
+        );
       } else {
         // Crear
         const newInput: NewProduct = {
@@ -452,10 +519,21 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           stock: formIsService ? 0 : formStock,
           minStock: formIsService ? 0 : formMinStock,
           isService: formIsService,
+          isBundle: formIsBundle,
           tags: tagsClean,
         };
-        await api.products.create(newInput);
-        showNotification(`✓ ${formIsService ? "Servicio" : "Producto"} "${formName}" creado con éxito.`);
+        const created = await api.products.create(newInput);
+        if (formIsBundle && formComponents.length > 0) {
+          const compItems: SaveProductComponentItem[] = formComponents.map((c, idx) => ({
+            childProductId: c.childProductId,
+            quantity: c.quantity,
+            orderIndex: idx,
+          }));
+          await api.products.saveComponents(created.id, compItems);
+        }
+        showNotification(
+          `✓ ${formIsBundle ? "Combo" : formIsService ? "Servicio" : "Producto"} "${formName}" creado con éxito.`
+        );
       }
 
       setIsFormOpen(false);
@@ -718,7 +796,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                 }`}
               >
-                📦 Físicos ({physicalProducts.length})
+                📦 Físicos ({products.filter((p) => !p.isService && !p.isBundle).length})
               </button>
               <button
                 type="button"
@@ -729,7 +807,18 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                 }`}
               >
-                🛠️ Servicios ({products.length - physicalProducts.length})
+                🛠️ Servicios ({products.filter((p) => p.isService).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogTypeFilter("bundles")}
+                className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  catalogTypeFilter === "bundles"
+                    ? "bg-white dark:bg-slate-900 text-purple-600 dark:text-purple-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                🍱 Combos ({products.filter((p) => p.isBundle).length})
               </button>
             </div>
 
@@ -1002,7 +1091,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                       >
                         {/* TIPO */}
                         <td className="py-3 px-4">
-                          {p.isService ? (
+                          {p.isBundle ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40">
+                              🍱 Combo
+                            </span>
+                          ) : p.isService ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800/40">
                               🛠️ Servicio
                             </span>
@@ -1454,48 +1547,67 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
             </header>
 
             <form onSubmit={handleSaveProduct} className="p-6 space-y-4">
-              {/* SELECTOR DE TIPO (PRODUCTO FÍSICO VS SERVICIO) */}
+              {/* SELECTOR DE TIPO (PRODUCTO FÍSICO VS SERVICIO VS COMBO) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
                   Tipo de Registro
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => {
                       setFormIsService(false);
+                      setFormIsBundle(false);
                       if (["serv", "hr", "día", "mes", "sesión", "cons", "dom", "ev"].includes(formUnit)) {
                         setFormUnit("pza");
                       }
                     }}
-                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                      !formIsService
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      !formIsService && !formIsBundle
                         ? "bg-indigo-50 dark:bg-indigo-950/60 border-indigo-500 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/20 shadow-xs"
                         : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
                     }`}
                   >
-                    <span>📦 Producto Físico</span>
-                    <span className="text-[10px] text-slate-400 font-normal">(Control de Stock)</span>
+                    <span>📦 Físico</span>
+                    <span className="text-[9px] text-slate-400 font-normal">Stock Directo</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => {
                       setFormIsService(true);
+                      setFormIsBundle(false);
                       if (["pza", "kg", "g", "lt", "ml", "caja", "paq", "m"].includes(formUnit)) {
                         setFormUnit("serv");
                       }
                       setFormStock(0);
                       setFormMinStock(0);
                     }}
-                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
                       formIsService
                         ? "bg-cyan-50 dark:bg-cyan-950/60 border-cyan-500 text-cyan-700 dark:text-cyan-300 ring-2 ring-cyan-500/20 shadow-xs"
                         : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
                     }`}
                   >
                     <span>🛠️ Servicio</span>
-                    <span className="text-[10px] text-slate-400 font-normal">(Exento de Inventario)</span>
+                    <span className="text-[9px] text-slate-400 font-normal">Sin Stock</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormIsService(false);
+                      setFormIsBundle(true);
+                      setFormUnit("pza");
+                    }}
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      formIsBundle
+                        ? "bg-purple-50 dark:bg-purple-950/60 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20 shadow-xs"
+                        : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>🍱 Combo / Kit</span>
+                    <span className="text-[9px] text-purple-500 font-normal">Receta Hijos</span>
                   </button>
                 </div>
               </div>
@@ -1608,8 +1720,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 </div>
               </div>
 
-              {/* CAMPOS ESPECÍFICOS DE PRODUCTO FÍSICO */}
-              {!formIsService && (
+              {/* CAMPOS ESPECÍFICOS DE PRODUCTO FÍSICO SIMPLE */}
+              {!formIsService && !formIsBundle && (
                 <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
                   <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide flex items-center justify-between">
                     <span>📦 Control de Existencias e Inventario</span>
@@ -1664,6 +1776,143 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SECCIÓN ESPECÍFICA DE PRODUCTO COMPUESTO / COMBO */}
+              {formIsBundle && (
+                <div className="p-4 bg-purple-50/70 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🍱</span>
+                      <div>
+                        <span className="text-xs font-bold text-purple-900 dark:text-purple-200 block">
+                          Receta / Insumos del Combo
+                        </span>
+                        <span className="text-[10px] text-purple-700/70 dark:text-purple-300/70">
+                          Al vender este combo se descontará el stock de cada uno de sus componentes
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider block">
+                        Stock Armable
+                      </span>
+                      <span className="text-sm font-mono font-black text-purple-800 dark:text-purple-300">
+                        {calculatedBundleStock} combos
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* SELECTOR PARA AÑADIR NUEVO COMPONENTE */}
+                  <div className="flex gap-2 items-end pt-1">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                        Seleccionar Producto Insumo
+                      </label>
+                      <select
+                        value={selectedChildProductId}
+                        onChange={(e) => setSelectedChildProductId(e.target.value ? Number(e.target.value) : "")}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-none"
+                      >
+                        <option value="">-- Seleccionar producto del catálogo --</option>
+                        {products
+                          .filter((p) => !p.isService && !p.isBundle && (!editingProduct || p.id !== editingProduct.id))
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.sku}) • Stock: {p.stock} {p.unit}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="w-24">
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                        Cantidad
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0.01"
+                        value={selectedChildQty}
+                        onChange={(e) => setSelectedChildQty(Number(e.target.value))}
+                        className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none text-center"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedChildProductId || selectedChildQty <= 0) return;
+                        const child = products.find((p) => p.id === selectedChildProductId);
+                        if (!child) return;
+
+                        const existsIdx = formComponents.findIndex((c) => c.childProductId === child.id);
+                        if (existsIdx >= 0) {
+                          const updated = [...formComponents];
+                          updated[existsIdx].quantity += selectedChildQty;
+                          setFormComponents(updated);
+                        } else {
+                          setFormComponents([
+                            ...formComponents,
+                            {
+                              childProductId: child.id,
+                              childName: child.name,
+                              childSku: child.sku,
+                              childStock: child.stock,
+                              childUnit: child.unit,
+                              quantity: selectedChildQty,
+                            },
+                          ]);
+                        }
+                        setSelectedChildProductId("");
+                        setSelectedChildQty(1);
+                      }}
+                      disabled={!selectedChildProductId || selectedChildQty <= 0}
+                      className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition-colors disabled:opacity-50 cursor-pointer shrink-0"
+                    >
+                      + Añadir
+                    </button>
+                  </div>
+
+                  {/* LISTA DE COMPONENTES AGREGADOS */}
+                  <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+                    {formComponents.length === 0 ? (
+                      <p className="text-[11px] text-purple-700/60 dark:text-purple-400/60 italic text-center py-2">
+                        Aún no has agregado insumos a este combo.
+                      </p>
+                    ) : (
+                      formComponents.map((comp, idx) => (
+                        <div
+                          key={comp.childProductId}
+                          className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900/60 text-xs"
+                        >
+                          <div>
+                            <span className="font-bold text-slate-900 dark:text-white">{comp.childName}</span>
+                            <span className="text-[10px] text-slate-400 font-mono ml-2">SKU: {comp.childSku}</span>
+                            <div className="text-[10px] text-slate-500">
+                              Stock en almacén: {comp.childStock} {comp.childUnit}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950 px-2 py-0.5 rounded">
+                              {comp.quantity} {comp.childUnit} / combo
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormComponents(formComponents.filter((_, i) => i !== idx));
+                              }}
+                              className="text-rose-500 hover:text-rose-700 text-xs font-bold p-1 cursor-pointer"
+                              title="Quitar componente"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               )}

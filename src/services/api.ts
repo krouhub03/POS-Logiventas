@@ -9,6 +9,7 @@ import type {
   CreateCustomerInput,
   CreateSaleInput,
   Customer,
+  CustomerPayment,
   InventoryMovement,
   NewProduct,
   OpenShiftInput,
@@ -18,13 +19,17 @@ import type {
   PairLoginResult,
   PaymentMethod,
   Product,
+  ProductComponent,
   ProductTag,
+  RecordCustomerPaymentInput,
   SaleReceipt,
+  SaveProductComponentItem,
   ShiftSummary,
   StockAdjustmentInput,
   SyncStatus,
   TerminalStatus,
   TodaySalesSummary,
+  UpdateCustomerCreditInput,
   UpdateProductInput,
   VerifyStockResult,
 } from "../types";
@@ -76,6 +81,13 @@ export const api = {
         productId,
         limit,
       }),
+    getComponents: (parentId: number) =>
+      invoke<ProductComponent[]>("get_product_components", { parentId }),
+    saveComponents: (
+      parentId: number,
+      components: SaveProductComponentItem[]
+    ) =>
+      invoke<void>("save_product_components", { parentId, components }),
   },
 
   categories: {
@@ -134,7 +146,14 @@ export const api = {
 
   customers: {
     list: () => invoke<Customer[]>("get_customers"),
+    get: (id: number) => invoke<Customer>("get_customer", { id }),
     search: (query: string) => invoke<Customer[]>("search_customers", { query }),
     create: (input: CreateCustomerInput) => invoke<Customer>("create_customer", { input }),
+    updateCredit: (input: UpdateCustomerCreditInput) =>
+      invoke<Customer>("update_customer_credit", { input }),
+    recordPayment: (input: RecordCustomerPaymentInput) =>
+      invoke<CustomerPayment>("record_customer_payment", { input }),
+    getPayments: (customerId: number) =>
+      invoke<CustomerPayment[]>("get_customer_payments", { customerId }),
   },
 };

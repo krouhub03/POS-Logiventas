@@ -152,15 +152,55 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
         // Si es producto registrado, verificar políticas de inventario
         if let Some(pid) = it.product_id {
-            let (controls_stock, allow_negative_stock, current_stock): (i64, i64, f64) = tx
+            let (controls_stock, allow_negative_stock, current_stock, is_bundle): (i64, i64, f64, i64) = tx
                 .query_row(
-                    "SELECT controls_stock, allow_negative_stock, stock FROM products WHERE id = ?1",
+                    "SELECT controls_stock, allow_negative_stock, stock, is_bundle FROM products WHERE id = ?1",
                     params![pid],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
-                .unwrap_or((1, 1, 0.0));
+                .unwrap_or((1, 1, 0.0, 0));
 
-            if controls_stock == 1 {
+            if is_bundle == 1 {
+                // Explosión local del combo: consultar y descontar componentes hijos
+                let mut comp_stmt = tx.prepare(
+                    "SELECT pc.child_product_id, pc.quantity, p.name, p.controls_stock, p.allow_negative_stock, p.stock \
+                     FROM product_components pc \
+                     JOIN products p ON p.id = pc.child_product_id \
+                     WHERE pc.parent_product_id = ?1",
+                )?;
+                let components = comp_stmt.query_map(params![pid], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, f64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, f64>(5)?,
+                    ))
+                })?.collect::<Result<Vec<_>, _>>()?;
+                drop(comp_stmt);
+
+                for (child_id, comp_qty, child_name, child_controls_stock, child_allow_negative, child_stock) in components {
+                    let total_child_qty = it.quantity * comp_qty;
+                    if child_controls_stock == 1 {
+                        if child_stock < total_child_qty && child_allow_negative == 0 {
+                            return Err(AppError::Validation(format!(
+                                "Stock local insuficiente para el componente '{}' del combo '{}'. Disponible: {}, Solicitado: {}",
+                                child_name, it.description, child_stock, total_child_qty
+                            )));
+                        }
+                        tx.execute(
+                            "UPDATE products SET stock = stock - ?1, updated_at = datetime('now') WHERE id = ?2",
+                            params![total_child_qty, child_id],
+                        )?;
+                        tx.execute(
+                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id) \
+                             VALUES (?1, 'sale', ?2, ?3, ?4)",
+                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id],
+                        )?;
+                    }
+                }
+            } else if controls_stock == 1 {
                 if current_stock < it.quantity && allow_negative_stock == 0 {
                     return Err(AppError::Validation(format!(
                         "Stock local insuficiente para '{}'. Disponible: {}, Solicitado: {}",
@@ -174,7 +214,7 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
                 )?;
 
                 tx.execute(
-                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
+                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id) \
                      VALUES (?1, 'sale', ?2, ?3, ?4)",
                     params![pid, -it.quantity, folio, input.user_id],
                 )?;
@@ -191,6 +231,52 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
             tax_cents: item_tax,
             total_cents: item_total,
         });
+    }
+
+    // Validar y registrar pagos a crédito sobre cartera de cliente
+    let credit_amount_cents: i64 = input
+        .payments
+        .iter()
+        .filter(|p| {
+            let m = p.method.to_lowercase();
+            m == "credit" || m == "credito" || m.contains("crédito") || m.contains("credito")
+        })
+        .map(|p| p.amount_cents)
+        .sum();
+
+    if credit_amount_cents > 0 {
+        let customer_id = input.customer_id.ok_or_else(|| {
+            AppError::Validation("Para realizar una venta a crédito se debe seleccionar un cliente registrado".into())
+        })?;
+
+        let (customer_name, credit_limit, current_balance, is_blocked): (String, i64, i64, i64) = tx
+            .query_row(
+                "SELECT name, credit_limit_cents, current_balance_cents, is_credit_blocked FROM customers WHERE id = ?1",
+                params![customer_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|_| AppError::Validation(format!("Cliente con ID {} no encontrado", customer_id)))?;
+
+        if is_blocked == 1 {
+            return Err(AppError::Validation(format!(
+                "El cliente '{}' se encuentra bloqueado para compras a crédito",
+                customer_name
+            )));
+        }
+
+        let nuevo_saldo = current_balance + credit_amount_cents;
+        if credit_limit > 0 && nuevo_saldo > credit_limit {
+            let cupo_disponible = (credit_limit - current_balance).max(0);
+            return Err(AppError::Validation(format!(
+                "El cliente '{}' excede su cupo de crédito. Cupo total: {}, Saldo deudor: {}, Cupo disponible: {}, Solicitado: {}",
+                customer_name, credit_limit, current_balance, cupo_disponible, credit_amount_cents
+            )));
+        }
+
+        tx.execute(
+            "UPDATE customers SET current_balance_cents = current_balance_cents + ?1 WHERE id = ?2",
+            params![credit_amount_cents, customer_id],
+        )?;
     }
 
     // Registrar pagos

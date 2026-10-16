@@ -84,9 +84,16 @@ Para registrar la venta a nombre de un cliente específico:
 
 1. Presiona la tecla **`F2`** (o haz clic en el botón de cliente en la estación de ventas).
 2. **Buscar cliente**: Escribe el nombre, NIT/Cédula o teléfono del cliente y selecciónalo con `Enter`.
-3. **Estado de Cuenta y Crédito**: Si el cliente tiene cuenta activa, el sistema mostrará su **Cupo de Crédito Autorizado** y su **Saldo Deudor Actual**.
-4. **Crear nuevo cliente**: Si el cliente no existe, completa sus datos básicos en la pestaña de registro rápido y guárdalo; quedará asignado automáticamente al ticket actual.
-5. **Desvincular cliente**: Si deseas regresar el ticket a *Consumidor Final*, presiona **`Shift` + `F2`**.
+3. **Estado de Cuenta, Crédito y Saldo Deudor**:
+   - Para cada cliente con crédito, el sistema muestra en tiempo real su **Cupo Autorizado**, su **Saldo Deudor Actual** y su saldo disponible.
+   - Si el cliente tiene un saldo pendiente, verás el botón destacado **"💵 Abonar"**.
+4. **Recepción de Abonos a Cartera en Caja**:
+   - Al pulsar **"💵 Abonar"**, se despliega el formulario de cobro de cartera.
+   - Selecciona el monto a recibir (puedes usar los atajos de **Total Adeudado**, **50%**, **25%** o digitar el valor exacto).
+   - Elige el medio de pago (Efectivo, Tarjeta, Transferencia, etc.) y añade notas opcionales.
+   - Al confirmar, el sistema genera un recibo oficial con folio `REC-XXXXX`, descuenta el saldo deudor del cliente de forma inmediata en SQLite y encola el abono en el outbox para sincronizar con la contabilidad del ERP.
+5. **Crear nuevo cliente**: Si el cliente no existe, completa sus datos básicos en la pestaña de registro rápido y guárdalo; quedará asignado automáticamente al ticket actual.
+6. **Desvincular cliente**: Si deseas regresar el ticket a *Consumidor Final*, presiona **`Shift` + `F2`**.
 
 ---
 
@@ -138,9 +145,16 @@ Al terminar tu turno o al cierre del local:
 
 Presiona **`F3`** para administrar los productos (requiere permiso `inventario:ver`):
 
-- **Búsqueda y Filtros**: Busca por nombre, SKU o código de barras, filtra por *📦 Físicos* o *🛠️ Servicios*, o despliega el selector de **Etiquetas (`#tags`)** para filtrar por múltiples etiquetas a la vez.
+- **Búsqueda y Filtros**: Busca por nombre, SKU o código de barras, filtra por *📦 Físicos*, *🛠️ Servicios* o *🍱 Combos*, o despliega el selector de **Etiquetas (`#tags`)** para filtrar por múltiples etiquetas a la vez.
 - **Crear o Editar Producto (`F8` o `Alt+N`)**:
-  - Elige si es **📦 Producto Físico** (controla stock) o **🛠️ Servicio** (no descuenta inventario).
+  - Selecciona la tipología adecuada:
+    - **📦 Producto Físico**: Artículo simple con control de existencias en almacén.
+    - **🛠️ Servicio**: Facturable sin descontar inventario.
+    - **🍱 Combo / Kit / Receta**: Paquete compuesto por varios productos insumo.
+  - **Constructor de Receta (Combos)**:
+    - Agrega los productos insumo y especifica la cantidad que conforma cada paquete (ej. 1 Hamburguesa + 1 Bebida + 1 Porción de Papas).
+    - El POS calcula automáticamente en vivo el **Stock Armable** del combo basándose en la menor disponibilidad de sus componentes en inventario.
+    - Al vender el combo en caja, el sistema descuenta de forma atómica la porción correspondiente de cada insumo en el almacén local.
   - Usa el botón generador para asignar un SKU o código de barras automático si el artículo no trae código de fábrica.
   - Define precio de venta, costo, tasa de IVA (0%, 5%, 16%, 19%), unidad de medida (`pza`, `kg`, `g`, `lt`, `caja`, `paq`, `serv`) y asígnale etiquetas visuales.
 - **Gestor de Etiquetas Maestras**: Desde el botón **"🏷️ Etiquetas"**, puedes crear nuevas etiquetas personalizadas eligiendo su nombre y color representativo.
