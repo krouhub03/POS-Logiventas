@@ -261,10 +261,28 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         None => (None, None),
     };
 
+    // Resolver erp_user_id y nombre del cajero que procesó esta venta específica
+    let cashier_info: Option<(Option<String>, String)> = if let Some(uid) = input.user_id {
+        tx.query_row(
+            "SELECT erp_user_id, full_name FROM users WHERE id = ?1",
+            params![uid],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok()
+    } else {
+        None
+    };
+
+    let (cajero_erp_id, cajero_nombre) = match cashier_info {
+        Some((erp_id, name)) => (erp_id, Some(name)),
+        None => (None, None),
+    };
+
     let sale_payload = serde_json::json!({
         "id": sale_id,
         "folio": &folio,
         "userId": input.user_id,
+        "erpUserId": cajero_erp_id,
+        "cajeroNombre": cajero_nombre,
         "customerId": input.customer_id,
         "customerName": customer_name,
         "customerTaxId": customer_tax_id,
