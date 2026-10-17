@@ -103,6 +103,7 @@ interface SalesStationPageProps {
   isActive?: boolean;
   onLockTerminal: () => void;
   onOpenCloseShiftModal?: () => void;
+  onCloseApp?: () => void;
   onNavigateToProducts?: () => void;
   onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
@@ -171,6 +172,7 @@ export function SalesStationPage({
   isActive = true,
   onLockTerminal,
   onOpenCloseShiftModal,
+  onCloseApp,
   onNavigateToProducts,
   onNavigateToInventory,
   onNavigateToSettings,
@@ -1550,15 +1552,25 @@ export function SalesStationPage({
 
           {/* Botón Cerrar Turno */}
           {activeShift && onOpenCloseShiftModal && (
-            <button
-              type="button"
-              onClick={onOpenCloseShiftModal}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
-              title={`Turno actual: ${activeShift.folio}. Clic para realizar arqueo de caja y cierre Z-Report`}
-            >
-              <span>📋</span>
-              <span>Cerrar Turno</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              {activeShift.userId !== cashier.id && (
+                <span
+                  className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                  title={`Este turno fue iniciado por ${activeShift.userName || "otro operador"}. Realiza el cierre para arquear su turno.`}
+                >
+                  <span>⚠️</span> Turno de {activeShift.userName?.split(" ")[0] || "Operador"}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={onOpenCloseShiftModal}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                title={`Turno actual: ${activeShift.folio}. Clic para realizar arqueo de caja y cierre Z-Report`}
+              >
+                <span>📋</span>
+                <span>Cerrar Turno</span>
+              </button>
+            </div>
           )}
 
           {/* Botón Bloquear Terminal */}
@@ -1569,6 +1581,18 @@ export function SalesStationPage({
           >
             <span>🔒</span>
           </button>
+
+          {/* Botón Apagar / Salir del POS */}
+          {onCloseApp && (
+            <button
+              type="button"
+              onClick={onCloseApp}
+              className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/60 border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-800 text-slate-500 hover:text-rose-500 flex items-center justify-center transition-colors cursor-pointer"
+              title="Apagar o Salir del POS"
+            >
+              <span>⏻</span>
+            </button>
+          )}
 
           {/* Botón Modo Claro / Oscuro */}
           <button

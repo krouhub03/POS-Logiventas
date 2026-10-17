@@ -52,7 +52,7 @@ export const api = {
       invoke<void>("set_fullscreen", { fullscreen }),
     minimizeWindow: () => invoke<void>("minimize_window"),
     restartApp: () => invoke<void>("restart_app"),
-    closeApp: () => invoke<void>("close_app"),
+    closeApp: (force?: boolean) => invoke<void>("close_app", { force }),
   },
 
   auth: {

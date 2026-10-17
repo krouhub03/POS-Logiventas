@@ -52,9 +52,24 @@ pub fn restart_app(app: tauri::AppHandle) {
 }
 
 /// Cerrar la aplicación de escritorio de forma ordenada.
+/// Valida si existe un turno de caja abierto para forzar arqueo contable a menos que force sea true.
 #[tauri::command]
-pub fn close_app(app: tauri::AppHandle) {
+pub fn close_app(app: tauri::AppHandle, db: State<'_, Db>, force: Option<bool>) -> AppResult<()> {
+    if force != Some(true) {
+        let conn = db.conn()?;
+        let existe_abierto: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+            [],
+            |r| r.get(0),
+        )?;
+        if existe_abierto > 0 {
+            return Err(crate::error::AppError::Validation(
+                "Existe un turno de caja activo en esta terminal. Realiza el arqueo y cierre antes de apagar la estación.".into(),
+            ));
+        }
+    }
     app.exit(0);
+    Ok(())
 }
 
 

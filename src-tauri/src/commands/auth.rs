@@ -787,6 +787,20 @@ pub fn login_cashier_pin(db: State<'_, Db>, pin: String) -> AppResult<CashierUse
 
 #[tauri::command]
 pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    {
+        let conn = db.conn()?;
+        let existe_abierto: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+            [],
+            |r| r.get(0),
+        )?;
+        if existe_abierto > 0 {
+            return Err(AppError::Validation(
+                "No se puede desvincular la terminal mientras exista un turno de caja activo. Realiza el arqueo y cierre de caja primero.".into(),
+            ));
+        }
+    }
+
     let (erp_url, token) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();
@@ -936,6 +950,20 @@ pub async fn reconnect_terminal(
 /// para permitir reconexión inmediata en 1 clic.
 #[tauri::command]
 pub async fn disconnect_terminal_temporarily(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    {
+        let conn = db.conn()?;
+        let existe_abierto: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+            [],
+            |r| r.get(0),
+        )?;
+        if existe_abierto > 0 {
+            return Err(AppError::Validation(
+                "No se puede desconectar la caja mientras exista un turno activo. Realiza el arqueo y cierre de caja primero.".into(),
+            ));
+        }
+    }
+
     let (erp_url, token) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();

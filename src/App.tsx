@@ -14,7 +14,7 @@ import type { CashierUser, CashShift, TerminalStatus } from "./types";
 import "./App.css";
 
 function App() {
-  const { alert } = useModals();
+  const { alert, confirm } = useModals();
   const [terminalStatus, setTerminalStatus] = useState<TerminalStatus | null>(null);
   const [activeCashier, setActiveCashier] = useState<CashierUser | null>(() => {
     try {
@@ -27,6 +27,7 @@ function App() {
   const [activeShift, setActiveShift] = useState<CashShift | null>(null);
   const [loadingShift, setLoadingShift] = useState(false);
   const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
+  const [exitActionPending, setExitActionPending] = useState(false);
   const [currentView, setCurrentView] = useState<"sales" | "products" | "inventory" | "settings">("sales");
   const [loading, setLoading] = useState(true);
 
@@ -180,6 +181,72 @@ function App() {
     return () => window.removeEventListener("keydown", handleGlobalKey);
   }, [activeCashier, handleNavigateToProducts, handleNavigateToInventory, handleNavigateToSettings]);
 
+  const handleRequestCloseApp = useCallback(async () => {
+    try {
+      const currentShift = activeShift ?? (await api.shifts.getActiveShift().catch(() => null));
+
+      if (currentShift) {
+        const doCloseShift = await confirm({
+          title: "⚠️ Turno de Caja Abierto",
+          message: `El turno ${currentShift.folio} (${currentShift.userName || "Cajero"}) sigue activo con ventas en custodia. Se debe realizar el arqueo y cierre antes de apagar la estación para emitir el reporte Z al ERP.`,
+          confirmText: "Hacer Arqueo y Apagar",
+          cancelText: "Suspender y Salir",
+          variant: "warning",
+        });
+
+        if (doCloseShift) {
+          setExitActionPending(true);
+          setShowCloseShiftModal(true);
+          return;
+        }
+
+        const forceExit = await confirm({
+          title: "¿Salir sin Arqueo (Solo Emergencias)?",
+          message:
+            "El turno continuará abierto en el sistema y se reanudará al encender el POS. ¿Deseas apagar ahora?",
+          confirmText: "Sí, apagar sin arqueo",
+          cancelText: "Volver al POS",
+          variant: "danger",
+        });
+        if (forceExit) {
+          await api.system.closeApp(true);
+        }
+        return;
+      }
+
+      const ok = await confirm({
+        title: "¿Apagar o Salir del POS?",
+        message: "¿Deseas cerrar la aplicación de Punto de Venta?",
+        confirmText: "Apagar Caja",
+        cancelText: "Continuar en POS",
+        variant: "danger",
+      });
+      if (!ok) return;
+
+      await api.system.closeApp(false);
+    } catch (err) {
+      console.error("Error al salir de la aplicación:", err);
+    }
+  }, [activeShift, confirm]);
+
+  // Interceptar cierre de ventana de Windows (Alt+F4 o botón X) enviado desde Tauri
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import("@tauri-apps/api/event")
+      .then(({ listen }) => {
+        listen("pos://request-close-app", () => {
+          handleRequestCloseApp();
+        }).then((unsub) => {
+          unlisten = unsub;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleRequestCloseApp]);
+
   if (loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#020617", color: "#f8fafc" }}>
@@ -239,6 +306,7 @@ function App() {
           isActive={currentView === "sales"}
           onLockTerminal={() => handleSetCashier(null)}
           onOpenCloseShiftModal={() => setShowCloseShiftModal(true)}
+          onCloseApp={handleRequestCloseApp}
           onNavigateToProducts={handleNavigateToProducts}
           onNavigateToInventory={handleNavigateToInventory}
           onNavigateToSettings={handleNavigateToSettings}
@@ -248,12 +316,19 @@ function App() {
       {/* MODAL DE ARQUEO Y CIERRE DE TURNO (Z-REPORT) */}
       {showCloseShiftModal && (
         <CloseShiftModal
-          onShiftClosed={(_shift) => {
+          onShiftClosed={async (_shift) => {
             setActiveShift(null);
             setShowCloseShiftModal(false);
             handleSetCashier(null);
+            if (exitActionPending) {
+              setExitActionPending(false);
+              await api.system.closeApp(true);
+            }
           }}
-          onCancel={() => setShowCloseShiftModal(false)}
+          onCancel={() => {
+            setShowCloseShiftModal(false);
+            setExitActionPending(false);
+          }}
         />
       )}
 

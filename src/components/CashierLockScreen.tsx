@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "../services/api";
 import type { CashierUser, TerminalStatus } from "../types";
 import { SupportAccessModal } from "./SupportAccessModal";
+import { CloseShiftModal } from "./CloseShiftModal";
 import { useModals } from "../contexts/ModalContext";
 
 interface CashierLockScreenProps {
@@ -51,6 +52,8 @@ export function CashierLockScreen({
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
+  const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
+  const [pendingActionAfterCloseShift, setPendingActionAfterCloseShift] = useState<"shutdown" | "disconnect" | null>(null);
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -246,17 +249,33 @@ export function CashierLockScreen({
   };
 
   const handleDisconnectTerminal = async () => {
-    const ok = await confirm({
-      title: "¿Desconectar esta Caja?",
-      message:
-        "La terminal se desvinculará de la estación actual. Podrás volver a vincularla o reconectarte cuando lo requieras.",
-      confirmText: "Sí, desconectar",
-      cancelText: "Cancelar",
-      variant: "warning",
-    });
-    if (!ok) return;
-
     try {
+      const activeShift = await api.shifts.getActiveShift().catch(() => null);
+      if (activeShift) {
+        const doClose = await confirm({
+          title: "⛔ Turno Activo: Cierre Obligatorio",
+          message: `La caja tiene un turno abierto (${activeShift.folio} de ${activeShift.userName || "Cajero"}). No se puede desconectar o cambiar la estación con ventas en custodia sin realizar el arqueo.`,
+          confirmText: "Hacer Arqueo y Desconectar",
+          cancelText: "Cancelar",
+          variant: "warning",
+        });
+        if (doClose) {
+          setPendingActionAfterCloseShift("disconnect");
+          setShowCloseShiftModal(true);
+        }
+        return;
+      }
+
+      const ok = await confirm({
+        title: "¿Desconectar esta Caja?",
+        message:
+          "La terminal se desvinculará de la estación actual. Podrás volver a vincularla o reconectarte cuando lo requieras.",
+        confirmText: "Sí, desconectar",
+        cancelText: "Cancelar",
+        variant: "warning",
+      });
+      if (!ok) return;
+
       await api.auth.disconnectTemporarily();
       if (onUnpaired) {
         onUnpaired();
@@ -271,17 +290,47 @@ export function CashierLockScreen({
   };
 
   const handleCloseApp = async () => {
-    const ok = await confirm({
-      title: "¿Apagar o Salir del POS?",
-      message: "¿Deseas cerrar la aplicación de Punto de Venta?",
-      confirmText: "Apagar Caja",
-      cancelText: "Continuar en POS",
-      variant: "danger",
-    });
-    if (!ok) return;
-
     try {
-      await api.system.closeApp();
+      const activeShift = await api.shifts.getActiveShift().catch(() => null);
+      if (activeShift) {
+        const doClose = await confirm({
+          title: "⚠️ Turno de Caja Abierto",
+          message: `El turno ${activeShift.folio} (${activeShift.userName || "Cajero"}) sigue activo con dinero en custodia. Se debe realizar el arqueo y cierre antes de apagar la estación para emitir el reporte Z.`,
+          confirmText: "Hacer Arqueo y Apagar",
+          cancelText: "Suspender y Salir",
+          variant: "warning",
+        });
+
+        if (doClose) {
+          setPendingActionAfterCloseShift("shutdown");
+          setShowCloseShiftModal(true);
+          return;
+        }
+
+        const forceExit = await confirm({
+          title: "¿Salir sin Arqueo (Solo Emergencias)?",
+          message:
+            "El turno continuará abierto en el sistema y se reanudará intacto al encender nuevamente el POS. ¿Deseas apagar ahora?",
+          confirmText: "Sí, apagar sin arqueo",
+          cancelText: "Volver a la caja",
+          variant: "danger",
+        });
+        if (forceExit) {
+          await api.system.closeApp(true);
+        }
+        return;
+      }
+
+      const ok = await confirm({
+        title: "¿Apagar o Salir del POS?",
+        message: "¿Deseas cerrar la aplicación de Punto de Venta?",
+        confirmText: "Apagar Caja",
+        cancelText: "Continuar en POS",
+        variant: "danger",
+      });
+      if (!ok) return;
+
+      await api.system.closeApp(false);
     } catch (err) {
       console.error("Error al cerrar app:", err);
     }
@@ -752,6 +801,26 @@ export function CashierLockScreen({
         availableCashiers={cashiers}
         onCashiersUpdated={(updated) => setCashiers(updated)}
       />
+
+      {/* Modal de Cierre y Arqueo de Turno Requerido */}
+      {showCloseShiftModal && (
+        <CloseShiftModal
+          onShiftClosed={async () => {
+            setShowCloseShiftModal(false);
+            if (pendingActionAfterCloseShift === "shutdown") {
+              await api.system.closeApp(true);
+            } else if (pendingActionAfterCloseShift === "disconnect") {
+              await api.auth.disconnectTemporarily();
+              if (onUnpaired) onUnpaired();
+            }
+            setPendingActionAfterCloseShift(null);
+          }}
+          onCancel={() => {
+            setShowCloseShiftModal(false);
+            setPendingActionAfterCloseShift(null);
+          }}
+        />
+      )}
     </div>
   );
 }

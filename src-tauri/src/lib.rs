@@ -3,7 +3,7 @@ mod db;
 mod error;
 mod models;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::db::Db;
 
@@ -39,13 +39,35 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(db) = window.try_state::<Db>() {
-                    let db_clone = db.inner().clone();
-                    tauri::async_runtime::block_on(async move {
-                        commands::auth::notify_terminal_shutdown(&db_clone).await;
-                    });
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if let Some(db) = window.try_state::<Db>() {
+                        if let Ok(conn) = db.conn() {
+                            let open_shifts: i64 = conn
+                                .query_row(
+                                    "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+                                    [],
+                                    |r| r.get(0),
+                                )
+                                .unwrap_or(0);
+
+                            if open_shifts > 0 {
+                                api.prevent_close();
+                                let _ = window.emit("pos://request-close-app", ());
+                                return;
+                            }
+                        }
+                    }
                 }
+                tauri::WindowEvent::Destroyed => {
+                    if let Some(db) = window.try_state::<Db>() {
+                        let db_clone = db.inner().clone();
+                        tauri::async_runtime::block_on(async move {
+                            commands::auth::notify_terminal_shutdown(&db_clone).await;
+                        });
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
