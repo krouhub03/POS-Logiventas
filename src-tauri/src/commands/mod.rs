@@ -7,3 +7,4 @@ pub mod shifts;
 pub mod sync;
 pub mod system;
 pub mod images;
+pub mod printers;

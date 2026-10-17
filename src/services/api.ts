@@ -30,6 +30,7 @@ import type {
   ShiftSummary,
   StockAdjustmentInput,
   SyncStatus,
+  SystemPrinter,
   TerminalStatus,
   TodaySalesSummary,
   UpdateCustomerCreditInput,
@@ -137,6 +138,10 @@ export const api = {
       invoke<void>("update_settings", { settings }),
     testPrintTicket: () => invoke<string>("test_print_ticket"),
     testOpenDrawer: () => invoke<string>("test_open_drawer"),
+  },
+
+  printers: {
+    list: () => invoke<SystemPrinter[]>("list_system_printers"),
   },
 
   sync: {

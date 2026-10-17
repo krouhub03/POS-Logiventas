@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../services/api";
-import { TerminalStatus, PaymentMethod } from "../types";
+import { TerminalStatus, PaymentMethod, SystemPrinter } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
 import { useUpdater } from "../contexts/UpdaterContext";
@@ -27,6 +27,11 @@ export function SettingsPage({
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  // Estado de impresoras detectadas
+  const [printers, setPrinters] = useState<SystemPrinter[]>([]);
+  const [loadingPrinters, setLoadingPrinters] = useState(false);
+  const [isManualPrinter, setIsManualPrinter] = useState(false);
 
   // Estado de medios de pago
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -62,6 +67,34 @@ export function SettingsPage({
     setFeedback(msg);
     setTimeout(() => setFeedback(null), 3500);
   };
+
+  const loadPrinters = async (showNotification = false) => {
+    setLoadingPrinters(true);
+    try {
+      const list = await api.printers.list();
+      setPrinters(list);
+      if (showNotification) {
+        showMsg(`✅ Se detectaron ${list.length} impresora(s) en Windows`);
+      }
+    } catch (err) {
+      console.error("Error al detectar impresoras:", err);
+      if (showNotification) {
+        modalAlert({
+          title: "Error al detectar impresoras",
+          message: String(err),
+          variant: "error",
+        });
+      }
+    } finally {
+      setLoadingPrinters(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "printer") {
+      loadPrinters();
+    }
+  }, [activeTab]);
 
   const loadPaymentMethods = async () => {
     setLoadingMethods(true);
@@ -348,26 +381,95 @@ export function SettingsPage({
                       </label>
                       <select
                         value={settings.printer_type || "system"}
-                        onChange={(e) => updateField("printer_type", e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateField("printer_type", val);
+                          if (val !== "system") {
+                            setIsManualPrinter(true);
+                          }
+                        }}
                         className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500"
                       >
-                        <option value="system">Impresora de Windows (Spooler)</option>
+                        <option value="system">Impresora de Windows (Spooler / USB)</option>
                         <option value="network">Red Ethernet / WiFi (IP directa 9100)</option>
                         <option value="serial">Puerto Serial (COM / USB-Serial)</option>
                       </select>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Nombre o Destino de Impresora
-                      </label>
-                      <input
-                        type="text"
-                        value={settings.printer_target || ""}
-                        onChange={(e) => updateField("printer_target", e.target.value)}
-                        placeholder="Ej. POS-58, USB001, 192.168.1.150"
-                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500"
-                      />
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          {settings.printer_type === "network"
+                            ? "Dirección IP y Puerto"
+                            : settings.printer_type === "serial"
+                            ? "Puerto COM"
+                            : "Impresora del Sistema"}
+                        </label>
+                        {settings.printer_type === "system" && (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => loadPrinters(true)}
+                              disabled={loadingPrinters}
+                              className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 flex items-center gap-1 transition-colors"
+                              title="Volver a escanear impresoras de Windows"
+                            >
+                              <span className={loadingPrinters ? "animate-spin" : ""}>🔄</span>
+                              <span>{loadingPrinters ? "Buscando..." : "Detectar"}</span>
+                            </button>
+                            <span className="text-slate-300 dark:text-slate-700">|</span>
+                            <button
+                              type="button"
+                              onClick={() => setIsManualPrinter(!isManualPrinter)}
+                              className="text-[11px] font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 hover:underline"
+                            >
+                              {isManualPrinter ? "Ver lista" : "Escribir manual"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {settings.printer_type === "system" && !isManualPrinter ? (
+                        <div className="relative">
+                          <select
+                            value={settings.printer_target || ""}
+                            onChange={(e) => updateField("printer_target", e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500"
+                          >
+                            <option value="">-- Seleccionar impresora detectada --</option>
+                            {printers.map((p) => (
+                              <option key={p.name} value={p.name}>
+                                {p.isDefault ? "★ " : ""}{p.name}{p.isLikelyPos ? " ⚡ [POS / Térmica]" : ""}{p.port ? ` (${p.port})` : ""}
+                              </option>
+                            ))}
+                            {settings.printer_target &&
+                              !printers.some((p) => p.name === settings.printer_target) && (
+                                <option value={settings.printer_target}>
+                                  {settings.printer_target} (Configurada actualmente)
+                                </option>
+                              )}
+                          </select>
+                          {printers.length === 0 && !loadingPrinters && (
+                            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                              ⚠️ No se detectaron impresoras instaladas en Windows. Haz clic en Detectar o usa "Escribir manual".
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          value={settings.printer_target || ""}
+                          onChange={(e) => updateField("printer_target", e.target.value)}
+                          placeholder={
+                            settings.printer_type === "network"
+                              ? "Ej. 192.168.1.150:9100"
+                              : settings.printer_type === "serial"
+                              ? "Ej. COM3"
+                              : "Ej. POS-58, \\\\SERVIDOR\\ticketera"
+                          }
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 font-mono"
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -386,25 +488,37 @@ export function SettingsPage({
                       </select>
                     </div>
 
-                    <div className="flex items-center gap-6 pt-5">
-                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={settings.printer_auto_cut === "true"}
-                          onChange={(e) => updateField("printer_auto_cut", String(e.target.checked))}
-                          className="accent-emerald-600 rounded"
-                        />
-                        <span>Corte Automático</span>
-                      </label>
+                    <div className="flex flex-col justify-center gap-2 pt-1">
+                      <div className="flex items-center gap-6">
+                        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settings.printer_auto_cut === "true"}
+                            onChange={(e) => updateField("printer_auto_cut", String(e.target.checked))}
+                            className="accent-emerald-600 rounded"
+                          />
+                          <span>Corte Automático</span>
+                        </label>
 
-                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                        <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={settings.printer_auto_print === "true"}
+                            onChange={(e) => updateField("printer_auto_print", String(e.target.checked))}
+                            className="accent-emerald-600 rounded"
+                          />
+                          <span>Imprimir sin preguntar</span>
+                        </label>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer text-emerald-700 dark:text-emerald-400">
                         <input
                           type="checkbox"
-                          checked={settings.printer_auto_print === "true"}
-                          onChange={(e) => updateField("printer_auto_print", String(e.target.checked))}
+                          checked={settings.drawer_open_on_print !== "false"}
+                          onChange={(e) => updateField("drawer_open_on_print", String(e.target.checked))}
                           className="accent-emerald-600 rounded"
                         />
-                        <span>Imprimir sin preguntar</span>
+                        <span>💵 Abrir cajón monedero al imprimir ticket (pulso RJ11)</span>
                       </label>
                     </div>
                   </div>
@@ -494,8 +608,8 @@ export function SettingsPage({
                       </select>
                     </div>
 
-                    <div className="flex items-center pt-5">
-                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                    <div className="flex flex-col gap-2 pt-4">
+                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer text-slate-800 dark:text-slate-200">
                         <input
                           type="checkbox"
                           checked={settings.drawer_open_on_sale === "true"}
@@ -503,6 +617,16 @@ export function SettingsPage({
                           className="accent-emerald-600 rounded"
                         />
                         <span>Abrir automáticamente en ventas en efectivo</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer text-emerald-700 dark:text-emerald-400">
+                        <input
+                          type="checkbox"
+                          checked={settings.drawer_open_on_print !== "false"}
+                          onChange={(e) => updateField("drawer_open_on_print", String(e.target.checked))}
+                          className="accent-emerald-600 rounded"
+                        />
+                        <span>Abrir automáticamente al imprimir ticket de venta (pulso RJ11)</span>
                       </label>
                     </div>
                   </div>

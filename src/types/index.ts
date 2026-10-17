@@ -334,6 +334,15 @@ export interface TodaySalesSummary {
 
 export type PosSettings = Record<string, string>;
 
+/** Impresora detectada en el sistema operativo */
+export interface SystemPrinter {
+  name: string;
+  port?: string | null;
+  driver?: string | null;
+  isDefault: boolean;
+  isLikelyPos: boolean;
+}
+
 /* ==============================================================
    Modelos de Sincronización y Control de Stock Multi-Caja
    ============================================================== */
