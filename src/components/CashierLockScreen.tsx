@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../services/api";
 import type { CashierUser, TerminalStatus } from "../types";
+import { SupportAccessModal } from "./SupportAccessModal";
 
 interface CashierLockScreenProps {
   status: TerminalStatus;
@@ -8,12 +9,29 @@ interface CashierLockScreenProps {
   onUnpaired?: () => void;
 }
 
+// Helper puro para identificar cuentas con rol de soporte técnico (SUPERADMINSAAS)
+export const isSuperAdminUser = (c: CashierUser) => {
+  const roleUpper = (c.role || "").toUpperCase();
+  const erpRoleUpper = (c.erpRoleCode || "").toUpperCase();
+  const profileUpper = (c.profileName || "").toUpperCase();
+  const usernameUpper = (c.username || "").toUpperCase();
+  return (
+    erpRoleUpper === "SUPERADMINSAAS" ||
+    roleUpper === "SUPERADMINSAAS" ||
+    roleUpper === "SUPERADMIN" ||
+    profileUpper.includes("SUPERADMIN") ||
+    profileUpper.includes("SOPORTE") ||
+    usernameUpper.includes("SOPORTE")
+  );
+};
+
 export function CashierLockScreen({
   status,
   onUnlocked,
 }: CashierLockScreenProps) {
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
+  const [showSupportModal, setShowSupportModal] = useState(false);
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -24,8 +42,14 @@ export function CashierLockScreen({
       // 1. Carga inmediata desde SQLite local para latencia cero (<5ms)
       const list = await api.auth.listCashiers();
       setCashiers(list);
-      if (list.length === 1) {
-        setSelectedCashier(list[0]);
+      const regular = list.filter(
+        (c) =>
+          !isSuperAdminUser(c) &&
+          (c.role || "").toUpperCase() !== "CLIENTE" &&
+          !(c.profileName || "").toUpperCase().includes("CLIENTE")
+      );
+      if (regular.length === 1) {
+        setSelectedCashier(regular[0]);
       }
 
       // 2. Refresco automático en segundo plano desde el ERP (si hay red)
@@ -33,6 +57,15 @@ export function CashierLockScreen({
         .syncUsers()
         .then((freshList) => {
           setCashiers(freshList);
+          const freshRegular = freshList.filter(
+            (c) =>
+              !isSuperAdminUser(c) &&
+              (c.role || "").toUpperCase() !== "CLIENTE" &&
+              !(c.profileName || "").toUpperCase().includes("CLIENTE")
+          );
+          if (freshRegular.length === 1) {
+            setSelectedCashier(freshRegular[0]);
+          }
         })
         .catch(() => {
           // Modo Offline-First: opera transparentemente con la lista local
@@ -89,23 +122,8 @@ export function CashierLockScreen({
     );
   });
 
-  // 2. Separar Soporte Técnico (SUPERADMINSAAS) para enlace copy inferior
-  const isSuperAdmin = (c: CashierUser) => {
-    const roleUpper = (c.role || "").toUpperCase();
-    const erpRoleUpper = (c.erpRoleCode || "").toUpperCase();
-    const profileUpper = (c.profileName || "").toUpperCase();
-    const usernameUpper = (c.username || "").toUpperCase();
-    return (
-      erpRoleUpper === "SUPERADMINSAAS" ||
-      roleUpper === "SUPERADMINSAAS" ||
-      roleUpper === "SUPERADMIN" ||
-      profileUpper.includes("SUPERADMIN") ||
-      profileUpper.includes("SOPORTE") ||
-      usernameUpper.includes("SOPORTE")
-    );
-  };
-
-  const superAdminUsers = authorizedCashiers.filter(isSuperAdmin);
+  // 2. Separar Soporte Técnico (SUPERADMINSAAS) para enlace discreto inferior
+  const isSuperAdmin = isSuperAdminUser;
   const regularCashiers = authorizedCashiers.filter((c) => !isSuperAdmin(c));
 
   const frequencyMap = getFrequencyMap();
@@ -158,6 +176,13 @@ export function CashierLockScreen({
   // Soporte de teclado físico adaptativo
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (showSupportModal) {
+        if (e.key === "Escape") {
+          setShowSupportModal(false);
+        }
+        return;
+      }
+
       if (!selectedCashier) {
         // En vista de selección: Teclas numéricas 1..3 seleccionan los cajeros más frecuentes
         const num = parseInt(e.key, 10);
@@ -180,7 +205,7 @@ export function CashierLockScreen({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedCashier, frequentCashiers, pin, handleKeyPress, handleBackspace, handlePinSubmit]);
+  }, [selectedCashier, frequentCashiers, pin, showSupportModal, handleKeyPress, handleBackspace, handlePinSubmit]);
 
   const handleSyncUsers = async () => {
     setSyncing(true);
@@ -188,8 +213,14 @@ export function CashierLockScreen({
     try {
       const updated = await api.auth.syncUsers();
       setCashiers(updated);
-      if (updated.length === 1) {
-        setSelectedCashier(updated[0]);
+      const regular = updated.filter(
+        (c) =>
+          !isSuperAdminUser(c) &&
+          (c.role || "").toUpperCase() !== "CLIENTE" &&
+          !(c.profileName || "").toUpperCase().includes("CLIENTE")
+      );
+      if (regular.length === 1) {
+        setSelectedCashier(regular[0]);
       }
     } catch (err: unknown) {
       setError(`Error al sincronizar usuarios con ERP: ${err}`);
@@ -504,23 +535,18 @@ export function CashierLockScreen({
                   </div>
                 )}
 
-                {/* 4. Enlace tipo Copy para Soporte */}
-                {superAdminUsers.length > 0 && (
-                  <div style={styles.supportFooter}>
-                    <button
-                      type="button"
-                      onClick={() => handleSelectCashier(superAdminUsers[0])}
-                      style={styles.supportLink}
-                      title="Acceso exclusivo para Soporte"
-                    >
-                      <span style={styles.supportIcon}>🛠️</span>
-                      <span>
-                        Acceso de <strong>Soporte</strong> (
-                        <span style={styles.supportHighlight}>{superAdminUsers[0].fullName}</span>)
-                      </span>
-                    </button>
-                  </div>
-                )}
+                {/* 4. Enlace sutil y discreto para Acceso de Soporte */}
+                <div style={styles.supportFooter}>
+                  <button
+                    type="button"
+                    onClick={() => setShowSupportModal(true)}
+                    style={styles.supportLink}
+                    title="Acceso exclusivo para personal de Soporte Técnico (SaaS)"
+                  >
+                    <span style={styles.supportIcon}>🛠️</span>
+                    <span>Acceso de Soporte</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -628,6 +654,18 @@ export function CashierLockScreen({
           </div>
         )}
       </main>
+
+      {/* Modal de Autenticación de Soporte Técnico (SaaS) */}
+      <SupportAccessModal
+        isOpen={showSupportModal}
+        onClose={() => setShowSupportModal(false)}
+        onSuccess={(unlockedCashier) => {
+          recordLoginFrequency(unlockedCashier.id);
+          onUnlocked(unlockedCashier);
+        }}
+        availableCashiers={cashiers}
+        onCashiersUpdated={(fresh) => setCashiers(fresh)}
+      />
     </div>
   );
 }
@@ -915,25 +953,21 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
   },
   supportLink: {
-    background: "transparent",
-    border: "none",
-    color: "#94a3b8",
-    fontSize: "0.82rem",
+    background: "rgba(15, 23, 42, 0.6)",
+    border: "1px solid #334155",
+    color: "#64748b",
+    fontSize: "0.78rem",
     display: "inline-flex",
     alignItems: "center",
-    gap: "0.5rem",
+    gap: "0.45rem",
     cursor: "pointer",
-    padding: "0.4rem 0.8rem",
+    padding: "0.35rem 0.75rem",
     borderRadius: "8px",
     transition: "all 0.15s ease",
   },
   supportIcon: {
-    fontSize: "1.05rem",
-  },
-  supportHighlight: {
-    color: "#f59e0b",
-    textDecoration: "underline",
-    fontWeight: 600,
+    fontSize: "0.9rem",
+    opacity: 0.8,
   },
   emptyUsersBox: {
     padding: "2rem",
