@@ -121,16 +121,109 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
     let sale_id = tx.last_insert_rowid();
     let mut receipt_items = Vec::new();
 
+    // Pre-validación transversal de inventario para Combos/Kits e insumos compartidos en el mismo ticket:
+    // Ningún combo puede venderse incompleto, ni se puede vender un combo + el producto individual superando el stock físico real.
+    let mut bundle_children_ids = std::collections::HashSet::<i64>::new();
+    let mut total_physical_demand = std::collections::HashMap::<i64, f64>::new();
+
+    for (it, _, _, _, _) in &calculated_items {
+        if let Some(pid) = it.product_id {
+            let is_bundle: i64 = tx
+                .query_row("SELECT is_bundle FROM products WHERE id = ?1", params![pid], |r| r.get(0))
+                .unwrap_or(0);
+            if is_bundle == 1 {
+                let mut comp_stmt = tx.prepare(
+                    "SELECT child_product_id, quantity FROM product_components WHERE parent_product_id = ?1",
+                )?;
+                let comps = comp_stmt
+                    .query_map(params![pid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                if comps.is_empty() {
+                    return Err(AppError::Validation(format!(
+                        "El combo '{}' no tiene productos componentes configurados.",
+                        it.description
+                    )));
+                }
+                for (cid, cqty) in comps {
+                    bundle_children_ids.insert(cid);
+                    *total_physical_demand.entry(cid).or_insert(0.0) += it.quantity * cqty;
+                }
+            }
+        }
+    }
+
+    if !bundle_children_ids.is_empty() {
+        // Sumar también las unidades individuales en el mismo ticket que correspondan a productos ya incluidos en combos
+        for (it, _, _, _, _) in &calculated_items {
+            if let Some(pid) = it.product_id {
+                if bundle_children_ids.contains(&pid) {
+                    *total_physical_demand.entry(pid).or_insert(0.0) += it.quantity;
+                }
+            }
+        }
+
+        for cid in &bundle_children_ids {
+            let demanded = *total_physical_demand.get(cid).unwrap_or(&0.0);
+            let (child_name, child_controls_stock, child_is_service, child_stock): (String, i64, i64, f64) = tx
+                .query_row(
+                    "SELECT name, controls_stock, is_service, stock FROM products WHERE id = ?1",
+                    params![cid],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap_or_else(|_| ("Componente".to_string(), 1, 0, 0.0));
+
+            if child_controls_stock == 1 && child_is_service == 0 && child_stock + 1e-9 < demanded {
+                return Err(AppError::Validation(format!(
+                    "Stock físico insuficiente para el producto '{}' (Disponible en almacén: {}, Requerido en el ticket entre combos y unidades sueltas: {}). No se permite vender combos sin existencias ni duplicar productos ya comprometidos.",
+                    child_name, child_stock, demanded
+                )));
+            }
+        }
+    }
+
     for (it, _item_subtotal, item_discount, item_tax, item_total) in calculated_items {
-        let unit_cost_cents: i64 = if let Some(pid) = it.product_id {
+        let (mut unit_cost_cents, is_bundle_item): (i64, i64) = if let Some(pid) = it.product_id {
             tx.query_row(
-                "SELECT cost_cents FROM products WHERE id = ?1",
+                "SELECT cost_cents, is_bundle FROM products WHERE id = ?1",
                 params![pid],
-                |r| r.get(0),
-            ).unwrap_or(0)
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            ).unwrap_or((0, 0))
         } else {
-            0
+            (0, 0)
         };
+
+        if is_bundle_item == 1 {
+            if let Some(pid) = it.product_id {
+                let mut cost_stmt = tx.prepare(
+                    "SELECT p.cost_cents, pc.quantity \
+                     FROM product_components pc \
+                     JOIN products p ON p.id = pc.child_product_id \
+                     WHERE pc.parent_product_id = ?1",
+                )?;
+                let comp_costs = cost_stmt
+                    .query_map(params![pid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                let calculated_bundle_cost: i64 = comp_costs
+                    .iter()
+                    .map(|(cc, q)| (*cc as f64 * *q).round() as i64)
+                    .sum();
+                if calculated_bundle_cost > 0 {
+                    unit_cost_cents = calculated_bundle_cost;
+                    let _ = tx.execute(
+                        "UPDATE products SET cost_cents = ?1 WHERE id = ?2",
+                        params![unit_cost_cents, pid],
+                    );
+                }
+                if it.unit_price_cents < unit_cost_cents {
+                    return Err(AppError::Validation(format!(
+                        "El precio de venta del combo '{}' (${:.2}) nunca puede ser menor al costo total de sus productos (${:.2})",
+                        it.description,
+                        it.unit_price_cents as f64 / 100.0,
+                        unit_cost_cents as f64 / 100.0
+                    )));
+                }
+            }
+        }
 
         tx.execute(
             "INSERT INTO sale_items (sale_id, product_id, description, quantity, unit_price_cents, discount_cents, tax_cents, total_cents, unit_cost_cents)
@@ -150,20 +243,20 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
         let item_row_id = tx.last_insert_rowid();
 
-        // Si es producto registrado, verificar políticas de inventario
+        // Si es producto registrado, verificar políticas de inventario (NUNCA permitir vender productos físicos sin inventario)
         if let Some(pid) = it.product_id {
-            let (controls_stock, allow_negative_stock, current_stock, is_bundle): (i64, i64, f64, i64) = tx
+            let (is_service, current_stock, is_bundle): (i64, f64, i64) = tx
                 .query_row(
-                    "SELECT controls_stock, allow_negative_stock, stock, is_bundle FROM products WHERE id = ?1",
+                    "SELECT is_service, stock, is_bundle FROM products WHERE id = ?1",
                     params![pid],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
-                .unwrap_or((1, 1, 0.0, 0));
+                .unwrap_or((0, 0.0, 0));
 
             if is_bundle == 1 {
-                // Explosión local del combo: consultar y descontar componentes hijos
+                // Explosión local del combo: consultar y descontar componentes hijos (un combo NUNCA permite stock negativo en sus hijos)
                 let mut comp_stmt = tx.prepare(
-                    "SELECT pc.child_product_id, pc.quantity, p.name, p.controls_stock, p.allow_negative_stock, p.stock \
+                    "SELECT pc.child_product_id, pc.quantity, p.name, p.is_service, p.stock \
                      FROM product_components pc \
                      JOIN products p ON p.id = pc.child_product_id \
                      WHERE pc.parent_product_id = ?1",
@@ -174,16 +267,15 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
                         r.get::<_, f64>(1)?,
                         r.get::<_, String>(2)?,
                         r.get::<_, i64>(3)?,
-                        r.get::<_, i64>(4)?,
-                        r.get::<_, f64>(5)?,
+                        r.get::<_, f64>(4)?,
                     ))
                 })?.collect::<Result<Vec<_>, _>>()?;
                 drop(comp_stmt);
 
-                for (child_id, comp_qty, child_name, child_controls_stock, child_allow_negative, child_stock) in components {
+                for (child_id, comp_qty, child_name, child_is_service, child_stock) in components {
                     let total_child_qty = it.quantity * comp_qty;
-                    if child_controls_stock == 1 {
-                        if child_stock < total_child_qty && child_allow_negative == 0 {
+                    if child_is_service == 0 {
+                        if child_stock <= 0.0 || child_stock + 1e-9 < total_child_qty {
                             return Err(AppError::Validation(format!(
                                 "Stock local insuficiente para el componente '{}' del combo '{}'. Disponible: {}, Solicitado: {}",
                                 child_name, it.description, child_stock, total_child_qty
@@ -200,10 +292,10 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
                         )?;
                     }
                 }
-            } else if controls_stock == 1 {
-                if current_stock < it.quantity && allow_negative_stock == 0 {
+            } else if is_service == 0 {
+                if current_stock <= 0.0 || current_stock + 1e-9 < it.quantity {
                     return Err(AppError::Validation(format!(
-                        "Stock local insuficiente para '{}'. Disponible: {}, Solicitado: {}",
+                        "No se permite vender productos sin inventario. Stock insuficiente para '{}'. Disponible: {}, Solicitado: {}",
                         it.description, current_stock, it.quantity
                     )));
                 }

@@ -23,6 +23,7 @@ export interface Product {
   imageHash?: string | null;
   imageSyncStatus?: "none" | "pending_download" | "pending_upload" | "synced" | "failed";
   active: boolean;
+  components?: ProductComponent[];
 }
 
 /** Filtro rápido anclado en la barra de búsqueda de productos (F10). */
@@ -407,6 +408,8 @@ export interface ProductComponent {
   childBarcode?: string | null;
   childStock: number;
   childUnit: string;
+  childPriceCents: number;
+  childCostCents: number;
   quantity: number;
   orderIndex: number;
 }

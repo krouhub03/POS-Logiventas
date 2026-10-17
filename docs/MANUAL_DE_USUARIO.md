@@ -50,20 +50,32 @@ La estación de ventas está diseñada para cobrar en segundos sin usar el rató
 ### A. Escanear Productos con Pistola Lectora
 - Pasa el código de barras por el lector. Escucharás un **pitido corto de confirmación** y el artículo aparecerá al instante en el ticket.
 - **Captura inteligente sin clic**: Aunque hayas hecho clic fuera de la barra de búsqueda, el POS detecta automáticamente la lectura del escáner y procesa el código.
+- **Bloqueo Estricto de Productos sin Existencias**: Si un producto físico no tiene existencias disponibles (`Stock = 0`), el sistema bloquea su ingreso y muestra una alerta preventiva impidiendo ventas de artículos agotados. Si intentas agregar más unidades de las disponibles en tienda, el sistema limitará la cantidad al inventario existente.
 
 ### B. Vender por Multiplicador (`CANTIDAD*CODIGO`)
 - Si un cliente lleva varias unidades iguales (ej. 6 bebidas), escribe `6*` en el teclado y escanea el código de barras (o digita el código y presiona `Enter`). Se agregarán las 6 unidades en una sola línea.
 
 ### C. Modificar Cantidades o Eliminar Líneas en el Ticket
 - Usa las teclas **`Flecha Arriba`** y **`Flecha Abajo`** para desplazarte por las líneas del ticket.
-- Presiona **`+`** para sumar 1 unidad al producto seleccionado.
-- Presiona **`-`** para restar 1 unidad.
+- Presiona **`+`** para sumar 1 unidad al producto seleccionado (siempre que haya stock disponible).
+- Presiona **`-`** para restar 1 unidad. Si la cantidad llega a 0, la línea se elimina de forma limpia y segura, **sin borrar en cascada** los productos anteriores.
+- **🛡️ Alerta de Seguridad para Producto #1**: Al intentar eliminar la primera fila (o el único producto del ticket) con **`-`** o **`Supr` (`Delete`)**, el sistema mostrará una ventana de confirmación obligatoria para evitar vaciados accidentales del ticket.
 - **Edición exacta**: También puedes hacer **doble clic** sobre la cantidad de cualquier fila para escribir un número exacto (incluyendo decimales para productos a granel como `1.25` kg).
 - Presiona **`Supr` (`Delete`)** para quitar el producto seleccionado del ticket.
 
-### D. Limpiar Código o Vaciar Ticket (`Escape`)
+### D. Imágenes de Productos y Visor Lightbox
+- **Alternar Miniaturas**: Haz clic en el botón con ícono de imagen en la cabecera del ticket para **mostrar u ocultar** las fotografías de los artículos según el tamaño de tu pantalla.
+- **Visor Ampliado (Lightbox)**: Haz **doble clic** sobre la foto pequeña de cualquier producto para abrirla en alta resolución a pantalla completa. Presiona **`Escape`** o **`Enter`** para cerrarla.
+- **Íconos Automáticos**: Si un artículo no tiene foto, el sistema muestra automáticamente un diseño representativo según su tipología (📦 Físico, 🛠️ Servicio, 🍱 Combo).
+
+### E. Limpiar Código o Vaciar Ticket (`Escape`)
 - Si escribiste mal un código en la barra, presiona **`Escape`** una vez para borrar el texto escrito.
 - Si la barra ya está vacía y presionas **`Escape`**, el sistema te preguntará si deseas vaciar o cerrar el ticket actual (`Enter` para confirmar, `Esc` para cancelar).
+
+### F. Atajos Universales en Todas las Ventanas Modales (`Enter` / `Esc`)
+Todas las ventanas y diálogos del sistema (Cobro `F12`, Clientes `F2`, Búsqueda `F10`, Varios `Insert`, Apertura/Cierre de Turno y Alertas) responden al teclado:
+- **`Enter`**: Confirma la operación principal, envía el formulario o cobra el ticket.
+- **`Escape`**: Cancela y cierra la ventana abierta de inmediato sin tocar el ratón.
 
 ---
 
@@ -103,10 +115,12 @@ Para registrar la venta a nombre de un cliente específico:
 - Si un producto no tiene código de barras legible, presiona **`F10`**.
 - Escribe parte del nombre o filtra por **Etiquetas de Color (`#Oferta`, `#Frío`, `#Combo`)**.
 - Muévete con las flechas del teclado y presiona **`Enter`** para agregarlo al ticket.
+- **Detección de Agotados**: Los artículos sin existencias (`Stock = 0`) se distinguen con un distintivo rojo **`0 [UNIDAD] Agotado`**. El sistema bloquea su selección evitando agregar productos agotados a la venta.
+- **Navegación con `Escape`**: Si estás escribiendo en el buscador, presionar `Escape` limpia el filtro actual; una segunda pulsación cierra el modal inmediatamente.
 
 ### B. Venta de Artículo Común / Varios (`Insert`)
 - Para cobrar un concepto eventual no registrado en el catálogo, presiona la tecla **`Insert`**.
-- Escribe la descripción, el precio unitario y la cantidad, y presiona **`Enter`**.
+- Escribe la descripción, el precio unitario y la cantidad, y presiona **`Enter`** para agregarlo (o **`Escape`** para cancelar).
 
 ---
 
@@ -121,8 +135,7 @@ Una vez listos los productos del ticket:
    - **Medios Electrónicos / Digitales (Tarjeta, Nequi, Daviplata, Transferencia)**: Selecciona el medio habilitado en tu terminal e ingresa la referencia del comprobante si aplica.
    - **Venta a Crédito / Cuenta por Cobrar (CxC)**: Si el cliente cuenta con cupo disponible, selecciona esta opción para registrar la deuda en su estado de cuenta comercial.
    - **Pago Mixto / Dividido**: Puedes combinar varios medios de pago en una misma compra (ej. una parte en Efectivo y el resto por Transferencia o Crédito) hasta cubrir el total.
-3. Presiona **`Enter`** para finalizar la venta:
-   - Se imprimirá el recibo en la impresora térmica indicando el cajero responsable y se abrirá el cajón portamonedas.
+3. Presiona **`Enter`** desde cualquier campo para finalizar la venta y emitir el ticket (o **`Escape`** para volver al ticket y continuar agregando productos).
 
 ---
 
@@ -137,7 +150,8 @@ Al terminar tu turno o al cierre del local:
    - **Efectivo esperado en cajón** (`Base Inicial + Ventas en Efectivo`).
 3. **Declaración de Efectivo Físico**: Cuenta los billetes y monedas reales del cajón e ingresa el monto total en **"Efectivo Contado / Declarado"**.
 4. El sistema mostrará en tiempo real si el arqueo está **Cuadrado (`$0`)**, o si existe algún **Sobrante** o **Faltante**, permitiéndote añadir observaciones antes de confirmar el cierre definitivo del turno.
-5. **Copia de Seguridad Preventiva Automática**: Al confirmar el cierre Z, el sistema genera automáticamente un respaldo inmutable de la base de datos SQLite (`backup_turno_{FOLIO}.db`) en la terminal local para máxima protección contra pérdidas de datos.
+5. Presiona **`Enter`** para confirmar el cierre (o **`Escape`** para cancelar).
+6. **Copia de Seguridad Preventiva Automática**: Al confirmar el cierre Z, el sistema genera automáticamente un respaldo inmutable de la base de datos SQLite (`backup_turno_{FOLIO}.db`) en la terminal local para máxima protección contra pérdidas de datos.
 
 ---
 
@@ -155,9 +169,15 @@ Presiona **`F3`** para administrar los productos (requiere permiso `inventario:v
     - Agrega los productos insumo y especifica la cantidad que conforma cada paquete (ej. 1 Hamburguesa + 1 Bebida + 1 Porción de Papas).
     - El POS calcula automáticamente en vivo el **Stock Armable** del combo basándose en la menor disponibilidad de sus componentes en inventario.
     - Al vender el combo en caja, el sistema descuenta de forma atómica la porción correspondiente de cada insumo en el almacén local.
+  - **Gestión de Fotografías e Imágenes**:
+    - Selecciona una fotografía desde el explorador de archivos de tu computador (`.jpg`, `.png`, `.webp`, `.svg`).
+    - Las fotos se guardan en el almacenamiento local y se sincronizan con el ERP.
+    - Si un artículo no tiene foto, el sistema asigna automáticamente un ícono representativo según su categoría.
+    - Haz **doble clic** sobre cualquier miniatura del catálogo para verla en pantalla completa (Lightbox). Ciérrala con **`Escape`** o **`Enter`**.
   - Usa el botón generador para asignar un SKU o código de barras automático si el artículo no trae código de fábrica.
   - Define precio de venta, costo, tasa de IVA (0%, 5%, 16%, 19%), unidad de medida (`pza`, `kg`, `g`, `lt`, `caja`, `paq`, `serv`) y asígnale etiquetas visuales.
-- **Gestor de Etiquetas Maestras**: Desde el botón **"🏷️ Etiquetas"**, puedes crear nuevas etiquetas personalizadas eligiendo su nombre y color representativo.
+  - Presiona **`Escape`** para cerrar el formulario sin guardar cambios.
+- **Gestor de Etiquetas Maestras**: Desde el botón **"🏷️ Etiquetas"**, puedes crear nuevas etiquetas personalizadas eligiendo su nombre y color representativo (cerrar con `Escape`).
 
 ---
 

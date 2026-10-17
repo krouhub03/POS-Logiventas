@@ -29,8 +29,22 @@ export function ConfirmModal({
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => confirmBtnRef.current?.focus(), 50);
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Enter") {
+          // Si el usuario tiene el foco explícitamente en el botón de cancelar, permitir cancelación
+          if (document.activeElement && document.activeElement.getAttribute("data-modal-cancel") === "true") {
+            return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
+          onConfirm();
+        }
+      };
+      window.addEventListener("keydown", handleKeyDown);
+      return () => window.removeEventListener("keydown", handleKeyDown);
     }
-  }, [isOpen]);
+  }, [isOpen, onConfirm]);
 
   const variantConfig = {
     danger: {
@@ -69,6 +83,7 @@ export function ConfirmModal({
       <ModalFooter className="justify-center gap-3">
         <button
           type="button"
+          data-modal-cancel="true"
           onClick={onCancel}
           className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
         >

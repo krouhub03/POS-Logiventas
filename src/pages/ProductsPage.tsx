@@ -29,7 +29,7 @@ const PRESET_TAG_COLORS = [
 ];
 
 import { parseTags } from "../lib/tags";
-import { toAssetUrl } from "../lib/images";
+import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
 
 export { toAssetUrl };
@@ -75,6 +75,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       childSku: string;
       childStock: number;
       childUnit: string;
+      childPriceCents: number;
+      childCostCents: number;
       quantity: number;
     }>
   >([]);
@@ -189,6 +191,23 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       }
     }
     return minStock === Infinity ? 0 : Math.max(0, minStock);
+  }, [formIsBundle, formComponents]);
+
+  // Cálculo en vivo del costo total de los productos del combo y suma de precios individuales
+  const bundleTotalCostCents = useMemo(() => {
+    if (!formIsBundle || formComponents.length === 0) return 0;
+    return formComponents.reduce(
+      (sum, comp) => sum + Math.round(comp.childCostCents * comp.quantity),
+      0
+    );
+  }, [formIsBundle, formComponents]);
+
+  const bundleRetailSumCents = useMemo(() => {
+    if (!formIsBundle || formComponents.length === 0) return 0;
+    return formComponents.reduce(
+      (sum, comp) => sum + Math.round(comp.childPriceCents * comp.quantity),
+      0
+    );
   }, [formIsBundle, formComponents]);
 
   // Estado del formulario de ajuste de stock
@@ -407,10 +426,10 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   }, [products, catalogTypeFilter, selectedTagsFilter, dbTags]);
 
   // ==============================================================
-  // CONTROL DE EXISTENCIAS: Exclusivo productos físicos en bodega
+  // CONTROL DE EXISTENCIAS: Exclusivo productos físicos simples en bodega (excluye servicios y combos)
   // ==============================================================
   const physicalProducts = useMemo(() => {
-    return products.filter((p) => !p.isService);
+    return products.filter((p) => !p.isService && !p.isBundle);
   }, [products]);
 
   const inventoryFilteredProducts = useMemo(() => {
@@ -486,7 +505,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormCostStr("");
     setFormTaxRateBp(0);
     setFormUnit(asService ? "serv" : "pza");
-    setFormStock(0);
+    setFormStock(asService || asBundle ? 0 : 1);
     setFormMinStock(asService ? 0 : 5);
     setFormTags("");
     setFormImagePreview(null);
@@ -538,14 +557,19 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         .getComponents(p.id)
         .then((comps) => {
           setFormComponents(
-            comps.map((c) => ({
-              childProductId: c.childProductId,
-              childName: c.childName,
-              childSku: c.childSku,
-              childStock: c.childStock,
-              childUnit: c.childUnit,
-              quantity: c.quantity,
-            }))
+            comps.map((c) => {
+              const catalogChild = products.find((prod) => prod.id === c.childProductId);
+              return {
+                childProductId: c.childProductId,
+                childName: c.childName,
+                childSku: c.childSku,
+                childStock: c.childStock,
+                childUnit: c.childUnit,
+                childPriceCents: c.childPriceCents ?? catalogChild?.priceCents ?? 0,
+                childCostCents: c.childCostCents ?? catalogChild?.costCents ?? 0,
+                quantity: c.quantity,
+              };
+            })
           );
         })
         .catch(console.warn);
@@ -573,7 +597,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
 
     const priceCents = toCents(formPriceStr);
-    const costCents = toCents(formCostStr);
+    const costCents = formIsBundle ? bundleTotalCostCents : toCents(formCostStr);
 
     if (priceCents < 0) {
       modalAlert({
@@ -582,6 +606,45 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         variant: "warning",
       });
       return;
+    }
+
+    if (!formIsService && !formIsBundle && (!formStock || formStock <= 0)) {
+      modalAlert({
+        title: "Inventario Requerido",
+        message: "No se permite registrar productos físicos sin inventario. Ingrese una existencia mayor a 0.",
+        variant: "error",
+      });
+      return;
+    }
+
+    if (formIsBundle) {
+      if (formComponents.length === 0) {
+        modalAlert({
+          title: "Combo sin Productos",
+          message: "Un Combo o Kit debe incluir al menos un producto componente en su receta.",
+          variant: "warning",
+        });
+        return;
+      }
+
+      const compSinStock = formComponents.find((c) => c.childStock <= 0 || c.childStock < c.quantity);
+      if (compSinStock) {
+        modalAlert({
+          title: "Insumo Sin Inventario",
+          message: `No se permite registrar en el combo el producto "${compSinStock.childName}" porque no cuenta con inventario suficiente (Disponible: ${compSinStock.childStock} ${compSinStock.childUnit}, Requerido: ${compSinStock.quantity} ${compSinStock.childUnit}).`,
+          variant: "error",
+        });
+        return;
+      }
+
+      if (priceCents < bundleTotalCostCents) {
+        modalAlert({
+          title: "Precio de Combo Inválido",
+          message: `El precio de venta del combo (${formatCents(priceCents)}) nunca puede ser menor al costo total de todos sus productos (${formatCents(bundleTotalCostCents)}).`,
+          variant: "error",
+        });
+        return;
+      }
     }
 
     try {
@@ -598,9 +661,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           costCents,
           taxRateBp: formTaxRateBp,
           unit: formUnit.trim() || (formIsService ? "serv" : "pza"),
-          stock: formIsService ? 0 : formStock,
-          minStock: formIsService ? 0 : formMinStock,
+          stock: formIsService || formIsBundle ? 0 : formStock,
+          minStock: formIsService || formIsBundle ? 0 : formMinStock,
           isService: formIsService,
+          controlsStock: !formIsService,
+          allowNegativeStock: false,
           isBundle: formIsBundle,
           tags: tagsClean,
           active: true,
@@ -635,9 +700,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           costCents,
           taxRateBp: formTaxRateBp,
           unit: formUnit.trim() || (formIsService ? "serv" : "pza"),
-          stock: formIsService ? 0 : formStock,
-          minStock: formIsService ? 0 : formMinStock,
+          stock: formIsService || formIsBundle ? 0 : formStock,
+          minStock: formIsService || formIsBundle ? 0 : formMinStock,
           isService: formIsService,
+          controlsStock: !formIsService,
+          allowNegativeStock: false,
           isBundle: formIsBundle,
           tags: tagsClean,
         };
@@ -753,6 +820,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           setIsFormOpen(false);
         } else if (adjustingProduct) {
           setAdjustingProduct(null);
+        } else if (isTagsModalOpen) {
+          setIsTagsModalOpen(false);
+          handleCancelEditTag();
         } else if (onBackToSales) {
           onBackToSales();
         }
@@ -766,7 +836,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFormOpen, adjustingProduct, onBackToSales]);
+  }, [isFormOpen, adjustingProduct, isTagsModalOpen, onBackToSales]);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
@@ -1215,33 +1285,33 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         key={p.id}
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
                       >
-                        {/* FOTO LOCAL */}
+                        {/* FOTO LOCAL O PREDETERMINADA */}
                         <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          {p.imageLocalPath || p.imageUrl ? (
-                            <img
-                              src={toAssetUrl(p.imageLocalPath) || p.imageUrl || undefined}
-                              alt={p.name}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                const src = toAssetUrl(p.imageLocalPath) || p.imageUrl || null;
-                                handleOpenLightbox(
-                                  src,
-                                  p.name,
-                                  `Código / SKU: ${p.sku} • Precio: ${formatCents(p.priceCents)}`,
-                                  p.id
-                                );
-                              }}
-                              title="Doble clic para maximizar imagen"
-                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLElement).style.display = "none";
-                              }}
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center text-slate-400 mx-auto text-base">
-                              {p.isBundle ? "🍱" : p.isService ? "🛠️" : "📦"}
-                            </div>
-                          )}
+                          {(() => {
+                            const kind = p.isBundle ? "bundle" : p.isService ? "service" : "product";
+                            const imgSrc = resolveProductImageSrc(p.imageLocalPath, p.imageUrl, kind);
+
+                            return (
+                              <img
+                                src={imgSrc}
+                                alt={p.name}
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenLightbox(
+                                    imgSrc,
+                                    p.name,
+                                    `Código / SKU: ${p.sku} • Precio: ${formatCents(p.priceCents)}`,
+                                    p.id
+                                  );
+                                }}
+                                title="Doble clic para maximizar imagen"
+                                className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).src = getDefaultProductImage(kind);
+                                }}
+                              />
+                            );
+                          })()}
                         </td>
 
                         {/* TIPO */}
@@ -1893,39 +1963,42 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           className="w-16 h-16 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0 shadow-xs cursor-pointer hover:opacity-90"
                           title="Clic para seleccionar imagen"
                         >
-                          {formImagePreview ? (
-                            <img
-                              src={formImagePreview}
-                              alt="Preview"
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenLightbox(
-                                  formImagePreview,
-                                  formName || "Foto del Producto",
-                                  formSku ? `SKU: ${formSku}` : undefined,
-                                  editingProduct?.id
-                                );
-                              }}
-                              title="Doble clic para maximizar imagen"
-                              className="w-full h-full object-cover cursor-zoom-in"
-                              onError={async (e) => {
-                                if (editingProduct?.id) {
-                                  try {
-                                    const b64 = await api.products.getImageBase64(editingProduct.id);
-                                    if (b64) {
-                                      setFormImagePreview(b64);
-                                      return;
+                          {(() => {
+                            const kind = formIsBundle ? "bundle" : formIsService ? "service" : "product";
+                            const displayPreview = formImagePreview || getDefaultProductImage(kind);
+
+                            return (
+                              <img
+                                src={displayPreview}
+                                alt="Preview"
+                                onDoubleClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenLightbox(
+                                    displayPreview,
+                                    formName || "Foto del Producto",
+                                    formSku ? `SKU: ${formSku}` : undefined,
+                                    editingProduct?.id
+                                  );
+                                }}
+                                title="Doble clic para maximizar imagen"
+                                className="w-full h-full object-cover cursor-zoom-in"
+                                onError={async (e) => {
+                                  if (editingProduct?.id && formImagePreview) {
+                                    try {
+                                      const b64 = await api.products.getImageBase64(editingProduct.id);
+                                      if (b64) {
+                                        setFormImagePreview(b64);
+                                        return;
+                                      }
+                                    } catch (err) {
+                                      console.warn("[ProductsPage] Error al cargar fallback Base64:", err);
                                     }
-                                  } catch (err) {
-                                    console.warn("[ProductsPage] Error al cargar fallback Base64:", err);
                                   }
-                                }
-                                (e.currentTarget as HTMLElement).style.display = "none";
-                              }}
-                            />
-                          ) : (
-                            <span className="text-2xl text-slate-300 dark:text-slate-600">🖼️</span>
-                          )}
+                                  (e.currentTarget as HTMLImageElement).src = getDefaultProductImage(kind);
+                                }}
+                              />
+                            );
+                          })()}
                         </div>
 
                         <div className="flex-1 space-y-1">
@@ -1959,53 +2032,88 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     </div>
 
                     {/* PRECIO DE VENTA Y COSTO */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-                          Precio Venta ($) *
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          required
-                          placeholder="0.00"
-                          value={formPriceStr}
-                          onChange={(e) => setFormPriceStr(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-emerald-300 dark:border-emerald-800 text-xs font-mono font-black text-emerald-700 dark:text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
+                            Precio Venta ($) *
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : "0"}
+                            required
+                            placeholder="0.00"
+                            value={formPriceStr}
+                            onChange={(e) => setFormPriceStr(e.target.value)}
+                            className={`w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border text-xs font-mono font-black focus:outline-none focus:ring-2 ${
+                              formIsBundle &&
+                              formComponents.length > 0 &&
+                              toCents(formPriceStr || "0") < bundleTotalCostCents
+                                ? "border-rose-500 text-rose-600 dark:text-rose-400 focus:ring-rose-500"
+                                : "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 focus:ring-emerald-500"
+                            }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            {formIsBundle ? "Costo Combo (Auto)" : "Costo ($)"}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            readOnly={formIsBundle}
+                            value={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : formCostStr}
+                            onChange={(e) => {
+                              if (!formIsBundle) setFormCostStr(e.target.value);
+                            }}
+                            title={
+                              formIsBundle
+                                ? "El costo de un combo se calcula automáticamente sumando el costo de sus insumos"
+                                : undefined
+                            }
+                            className={`w-full px-3 py-2 rounded-xl border text-xs font-mono font-bold focus:outline-none ${
+                              formIsBundle
+                                ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-800 text-purple-800 dark:text-purple-200 cursor-not-allowed"
+                                : "bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
+                            }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            IVA (Impuesto)
+                          </label>
+                          <select
+                            value={formTaxRateBp}
+                            onChange={(e) => setFormTaxRateBp(Number(e.target.value))}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          >
+                            <option value={0}>0% (Exento)</option>
+                            <option value={500}>5% (Reducido)</option>
+                            <option value={1600}>16% (IVA)</option>
+                            <option value={1900}>19% (General)</option>
+                          </select>
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                          Costo ($)
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
-                          value={formCostStr}
-                          onChange={(e) => setFormCostStr(e.target.value)}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                          IVA (Impuesto)
-                        </label>
-                        <select
-                          value={formTaxRateBp}
-                          onChange={(e) => setFormTaxRateBp(Number(e.target.value))}
-                          className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        >
-                          <option value={0}>0% (Exento)</option>
-                          <option value={500}>5% (Reducido)</option>
-                          <option value={1600}>16% (IVA)</option>
-                          <option value={1900}>19% (General)</option>
-                        </select>
-                      </div>
+                      {formIsBundle && formComponents.length > 0 && toCents(formPriceStr || "0") < bundleTotalCostCents && (
+                        <div className="px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between">
+                          <span>
+                            ⚠️ El Precio de Venta no puede ser menor al Costo Total de Insumos ({formatCents(bundleTotalCostCents)}).
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setFormPriceStr((bundleRetailSumCents / 100).toFixed(2))}
+                            className="underline text-purple-700 dark:text-purple-300 hover:opacity-80 ml-2 shrink-0 cursor-pointer"
+                          >
+                            Usar sugerido ({formatCents(bundleRetailSumCents)})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2042,12 +2150,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
                           <div>
                             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                              {editingProduct ? "Exist. Actual" : "Exist. Inicial"}
+                              {editingProduct ? "Exist. Actual *" : "Exist. Inicial *"}
                             </label>
                             <input
                               type="number"
                               step="any"
-                              min="0"
+                              min="0.01"
+                              required
                               value={formStock}
                               onChange={(e) => setFormStock(Number(e.target.value))}
                               className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -2082,7 +2191,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                                 Receta / Insumos del Combo
                               </span>
                               <span className="text-[10px] text-purple-700/70 dark:text-purple-300/70">
-                                Descuenta automáticamente el stock de cada componente
+                                Costo Mínimo: <strong>{formatCents(bundleTotalCostCents)}</strong> • Suma P. Unidad: <strong>{formatCents(bundleRetailSumCents)}</strong>
                               </span>
                             </div>
                           </div>
@@ -2096,23 +2205,30 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           </div>
                         </div>
 
-                        {/* SELECTOR PARA AÑADIR NUEVO COMPONENTE */}
+                        {/* SELECTOR PARA AÑADIR NUEVO COMPONENTE (SOLO PRODUCTOS CON INVENTARIO Y AÚN NO INCLUIDOS) */}
                         <div className="flex gap-2 items-end pt-1">
                           <div className="flex-1">
                             <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                              Seleccionar Producto Insumo
+                              Seleccionar Producto Insumo (solo con existencias disponibles)
                             </label>
                             <select
                               value={selectedChildProductId}
                               onChange={(e) => setSelectedChildProductId(e.target.value ? Number(e.target.value) : "")}
                               className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 text-xs text-slate-900 dark:text-white font-medium focus:outline-none"
                             >
-                              <option value="">-- Seleccionar producto del catálogo --</option>
+                              <option value="">-- Seleccionar producto con inventario --</option>
                               {products
-                                .filter((p) => !p.isService && !p.isBundle && (!editingProduct || p.id !== editingProduct.id))
+                                .filter(
+                                  (p) =>
+                                    !p.isService &&
+                                    !p.isBundle &&
+                                    p.stock > 0 &&
+                                    (!editingProduct || p.id !== editingProduct.id) &&
+                                    !formComponents.some((c) => c.childProductId === p.id)
+                                )
                                 .map((p) => (
                                   <option key={p.id} value={p.id}>
-                                    {p.name} ({p.sku}) • Stock: {p.stock} {p.unit}
+                                    {p.name} ({p.sku}) • Costo: {formatCents(p.costCents)} • Stock: {p.stock} {p.unit}
                                   </option>
                                 ))}
                             </select>
@@ -2138,25 +2254,36 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                               if (!selectedChildProductId || selectedChildQty <= 0) return;
                               const child = products.find((p) => p.id === selectedChildProductId);
                               if (!child) return;
+                              if (formComponents.some((c) => c.childProductId === child.id)) return;
 
-                              const existsIdx = formComponents.findIndex((c) => c.childProductId === child.id);
-                              if (existsIdx >= 0) {
-                                const updated = [...formComponents];
-                                updated[existsIdx].quantity += selectedChildQty;
-                                setFormComponents(updated);
-                              } else {
-                                setFormComponents([
-                                  ...formComponents,
-                                  {
-                                    childProductId: child.id,
-                                    childName: child.name,
-                                    childSku: child.sku,
-                                    childStock: child.stock,
-                                    childUnit: child.unit,
-                                    quantity: selectedChildQty,
-                                  },
-                                ]);
+                              if (child.stock <= 0 || selectedChildQty > child.stock) {
+                                modalAlert({
+                                  title: "Stock de Insumo Insuficiente",
+                                  message: `El producto "${child.name}" solo tiene ${child.stock} ${child.unit} en inventario. No puedes requerir ${selectedChildQty} ${child.unit} por combo.`,
+                                  variant: "warning",
+                                });
+                                return;
                               }
+
+                              const nextComponents = [
+                                ...formComponents,
+                                {
+                                  childProductId: child.id,
+                                  childName: child.name,
+                                  childSku: child.sku,
+                                  childStock: child.stock,
+                                  childUnit: child.unit,
+                                  childPriceCents: child.priceCents,
+                                  childCostCents: child.costCents,
+                                  quantity: selectedChildQty,
+                                },
+                              ];
+                              setFormComponents(nextComponents);
+                              const nextCostCents = nextComponents.reduce(
+                                (acc, c) => acc + Math.round((c.childCostCents || 0) * c.quantity),
+                                0
+                              );
+                              setFormCostStr((nextCostCents / 100).toFixed(2));
                               setSelectedChildProductId("");
                               setSelectedChildQty(1);
                             }}
@@ -2168,41 +2295,73 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         </div>
 
                         {/* LISTA DE COMPONENTES AGREGADOS */}
-                        <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+                        <div className="space-y-1.5 max-h-40 overflow-y-auto pt-1">
                           {formComponents.length === 0 ? (
                             <p className="text-[11px] text-purple-700/60 dark:text-purple-400/60 italic text-center py-2">
-                              Aún no has agregado insumos a este combo.
+                              Aún no has agregado insumos a este combo. Agrega al menos 1 producto con inventario.
                             </p>
                           ) : (
-                            formComponents.map((comp, idx) => (
-                              <div
-                                key={comp.childProductId}
-                                className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900/60 text-xs"
-                              >
-                                <div>
-                                  <span className="font-bold text-slate-900 dark:text-white">{comp.childName}</span>
-                                  <span className="text-[10px] text-slate-400 font-mono ml-2">SKU: {comp.childSku}</span>
-                                  <div className="text-[10px] text-slate-500">
-                                    Stock en almacén: {comp.childStock} {comp.childUnit}
+                            formComponents.map((comp, idx) => {
+                              const compCostCents = Math.round((comp.childCostCents || 0) * comp.quantity);
+                              return (
+                                <div
+                                  key={comp.childProductId}
+                                  className="flex items-center justify-between p-2 rounded-lg bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-900/60 text-xs gap-2"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate">
+                                      <span className="font-bold text-slate-900 dark:text-white">{comp.childName}</span>
+                                      <span className="text-[10px] text-slate-400 font-mono ml-2">SKU: {comp.childSku}</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 flex items-center gap-2 flex-wrap">
+                                      <span>Stock: {comp.childStock} {comp.childUnit}</span>
+                                      <span>•</span>
+                                      <span>Costo Ins.: <strong className="text-slate-700 dark:text-slate-300">{formatCents(compCostCents)}</strong></span>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      min="0.01"
+                                      max={comp.childStock}
+                                      value={comp.quantity}
+                                      onChange={(e) => {
+                                        const val = Number(e.target.value);
+                                        if (Number.isNaN(val) || val <= 0) return;
+                                        if (val > comp.childStock) {
+                                          modalAlert({
+                                            title: "Stock Máximo del Insumo",
+                                            message: `"${comp.childName}" solo cuenta con ${comp.childStock} ${comp.childUnit} disponibles en inventario.`,
+                                            variant: "warning",
+                                          });
+                                          return;
+                                        }
+                                        const updated = formComponents.map((item, i) =>
+                                          i === idx ? { ...item, quantity: val } : item
+                                        );
+                                        setFormComponents(updated);
+                                      }}
+                                      className="w-16 px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950 border border-purple-300 dark:border-purple-800 font-mono font-bold text-purple-800 dark:text-purple-200 text-center text-xs"
+                                      title="Cantidad por combo"
+                                    />
+                                    <span className="text-[10px] font-mono text-purple-700 dark:text-purple-300">
+                                      {comp.childUnit}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setFormComponents(formComponents.filter((_, i) => i !== idx));
+                                      }}
+                                      className="text-rose-500 hover:text-rose-700 text-xs font-bold p-1 cursor-pointer"
+                                      title="Quitar componente"
+                                    >
+                                      ✕
+                                    </button>
                                   </div>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                  <span className="font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-950 px-2 py-0.5 rounded">
-                                    {comp.quantity} {comp.childUnit} / combo
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setFormComponents(formComponents.filter((_, i) => i !== idx));
-                                    }}
-                                    className="text-rose-500 hover:text-rose-700 text-xs font-bold p-1 cursor-pointer"
-                                    title="Quitar componente"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              </div>
-                            ))
+                              );
+                            })
                           )}
                         </div>
                       </div>

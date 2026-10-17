@@ -154,6 +154,30 @@ export function CustomerModal({
     return () => clearTimeout(t);
   }, [search, isOpen, mode]);
 
+  // Atajos de teclado globales para Escape y Enter
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (mode !== "search") {
+          setMode("search");
+          setTimeout(() => searchInputRef.current?.focus(), 50);
+        } else {
+          onClose();
+        }
+      } else if (e.key === "Enter" && mode === "search") {
+        if (customers[selectedIndex]) {
+          e.preventDefault();
+          onSelect(customers[selectedIndex]);
+          onClose();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, mode, customers, selectedIndex, onClose, onSelect]);
+
   // Manejador de teclado en modo búsqueda
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {

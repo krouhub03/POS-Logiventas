@@ -25,8 +25,18 @@ export function AlertModal({
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => okBtnRef.current?.focus(), 50);
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }
+      };
+      window.addEventListener("keydown", handleKeyDown);
+      return () => window.removeEventListener("keydown", handleKeyDown);
     }
-  }, [isOpen]);
+  }, [isOpen, onClose]);
 
   const variantConfig = {
     success: {

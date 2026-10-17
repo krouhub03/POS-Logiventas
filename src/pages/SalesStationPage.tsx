@@ -11,7 +11,7 @@ import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
 import { CustomerModal } from "../components/CustomerModal";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
-import { toAssetUrl } from "../lib/images";
+import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 
 interface CartLine {
   id: string;
@@ -30,6 +30,8 @@ interface CartLine {
   controlsStock?: boolean;
   imageUrl?: string | null;
   imageLocalPath?: string | null;
+  isService?: boolean;
+  isBundle?: boolean;
 }
 
 interface TicketTab {
@@ -217,6 +219,93 @@ export function SalesStationPage({
       productId,
     });
   };
+
+  // Mapa reactivo de imágenes y tipos de productos locales para asegurar visualización en cualquier ticket
+  const [productImagesMap, setProductImagesMap] = useState<
+    Record<
+      number,
+      {
+        imageLocalPath?: string | null;
+        imageUrl?: string | null;
+        isService?: boolean;
+        isBundle?: boolean;
+      }
+    >
+  >({});
+
+  // Mapa completo del catálogo local (incluyendo componentes de combos y existencias actualizadas)
+  const [catalogProductsMap, setCatalogProductsMap] = useState<Record<number, Product>>({});
+
+  const refreshCatalogMap = useCallback(() => {
+    api.products
+      .list()
+      .then((allProds) => {
+        const imgMap: Record<
+          number,
+          {
+            imageLocalPath?: string | null;
+            imageUrl?: string | null;
+            isService?: boolean;
+            isBundle?: boolean;
+          }
+        > = {};
+        const prodMap: Record<number, Product> = {};
+        for (const p of allProds) {
+          prodMap[p.id] = p;
+          imgMap[p.id] = {
+            imageLocalPath: p.imageLocalPath,
+            imageUrl: p.imageUrl,
+            isService: p.isService,
+            isBundle: p.isBundle,
+          };
+        }
+        setCatalogProductsMap(prodMap);
+        setProductImagesMap(imgMap);
+
+        // Actualizar también los tickets en memoria y localStorage si les falta imageLocalPath, stock o cambió
+        setTickets((prevTickets) => {
+          let changed = false;
+          const nextTickets = prevTickets.map((ticket) => {
+            let ticketChanged = false;
+            const nextLines = ticket.lines.map((line) => {
+              if (line.productId) {
+                const info = imgMap[line.productId];
+                const fullProd = prodMap[line.productId];
+                if (
+                  info &&
+                  (line.imageLocalPath !== info.imageLocalPath ||
+                    line.imageUrl !== info.imageUrl ||
+                    line.isService !== info.isService ||
+                    line.isBundle !== info.isBundle ||
+                    (fullProd && line.currentStock !== fullProd.stock))
+                ) {
+                  ticketChanged = true;
+                  changed = true;
+                  return {
+                    ...line,
+                    currentStock: fullProd ? fullProd.stock : line.currentStock,
+                    imageLocalPath: info.imageLocalPath,
+                    imageUrl: info.imageUrl,
+                    isService: info.isService,
+                    isBundle: info.isBundle,
+                  };
+                }
+              }
+              return line;
+            });
+            return ticketChanged ? { ...ticket, lines: nextLines } : ticket;
+          });
+          return changed ? nextTickets : prevTickets;
+        });
+      })
+      .catch(console.warn);
+  }, []);
+
+  // Hidratar o refrescar automáticamente imágenes, componentes de combos y existencias al activar vista
+  useEffect(() => {
+    if (!isActive) return;
+    refreshCatalogMap();
+  }, [isActive, refreshCatalogMap]);
 
   // Modales
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -458,8 +547,132 @@ export function SalesStationPage({
     }
   };
 
+  // Calcula la demanda física total comprometida en las líneas del ticket (desglosando combos/kits)
+  const validateSharedStockInCart = (
+    product: Product,
+    deltaQty: number,
+    linesToEvaluate: CartLine[] = cartLines
+  ): { ok: boolean; errorMsg?: string; severity?: "error" | "warning" } => {
+    if (product.isService || deltaQty <= 0) {
+      return { ok: true };
+    }
+
+    // Mapa de unidades físicas ya comprometidas en el ticket: childProductId -> { directQty, bundleQty }
+    const committed: Record<number, { directQty: number; bundleQty: number }> = {};
+
+    for (const line of linesToEvaluate) {
+      if (!line.productId) continue;
+      const lineProd = catalogProductsMap[line.productId];
+      const isLineBundle = line.isBundle ?? lineProd?.isBundle ?? false;
+
+      if (isLineBundle) {
+        const comps = lineProd?.components || [];
+        for (const comp of comps) {
+          const prev = committed[comp.childProductId] || { directQty: 0, bundleQty: 0 };
+          prev.bundleQty += comp.quantity * line.quantity;
+          committed[comp.childProductId] = prev;
+        }
+      } else {
+        const prev = committed[line.productId] || { directQty: 0, bundleQty: 0 };
+        prev.directQty += line.quantity;
+        committed[line.productId] = prev;
+      }
+    }
+
+    // Caso A: Producto a agregar/incrementar es un Combo / Kit
+    if (product.isBundle) {
+      const comps = product.components || catalogProductsMap[product.id]?.components || [];
+      if (comps.length === 0) {
+        return {
+          ok: false,
+          severity: "error",
+          errorMsg: `❌ COMBO INVÁLIDO: "${product.name}" no tiene insumos configurados.`,
+        };
+      }
+
+      if (product.stock <= 0) {
+        return {
+          ok: false,
+          severity: "error",
+          errorMsg: `❌ SIN EXISTENCIAS DE INSUMOS: "${product.name}" no tiene combos armables disponibles (Stock: 0).`,
+        };
+      }
+
+      for (const comp of comps) {
+        const childProd = catalogProductsMap[comp.childProductId];
+        const childStock = childProd ? childProd.stock : comp.childStock;
+        const prev = committed[comp.childProductId] || { directQty: 0, bundleQty: 0 };
+        const alreadyCommitted = prev.directQty + prev.bundleQty;
+        const needed = comp.quantity * deltaQty;
+
+        if (alreadyCommitted + needed > childStock + 1e-9) {
+          if (prev.directQty > 0) {
+            return {
+              ok: false,
+              severity: "warning",
+              errorMsg: `⚠️ INSUMO YA AGREGADO POR UNIDAD: El combo "${product.name}" requiere ${needed} ${comp.childUnit} de "${comp.childName}", pero solo hay ${childStock} en almacén y ya tienes ${prev.directQty} agregados individualmente en el ticket.`,
+            };
+          }
+          return {
+            ok: false,
+            severity: "warning",
+            errorMsg: `⚠️ STOCK DE INSUMO INSUFICIENTE: El insumo "${comp.childName}" solo tiene ${childStock} ${comp.childUnit} disponibles (comprometidos en ticket: ${alreadyCommitted} ${comp.childUnit}).`,
+          };
+        }
+      }
+
+      return { ok: true };
+    }
+
+    // Caso B: Producto físico individual
+    if (product.controlsStock && !product.allowNegativeStock) {
+      if (product.stock <= 0) {
+        return {
+          ok: false,
+          severity: "error",
+          errorMsg: `❌ SIN EXISTENCIAS: "${product.name}" no tiene unidades disponibles en inventario (Stock: 0 ${product.unit || "UND"}).`,
+        };
+      }
+
+      const prev = committed[product.id] || { directQty: 0, bundleQty: 0 };
+      const alreadyCommitted = prev.directQty + prev.bundleQty;
+
+      if (alreadyCommitted + deltaQty > product.stock + 1e-9) {
+        if (prev.bundleQty > 0) {
+          return {
+            ok: false,
+            severity: "warning",
+            errorMsg: `⚠️ UNIDADES YA INCLUIDAS EN COMBO/KIT: "${product.name}" tiene ${product.stock} ${product.unit || "UND"} en inventario, pero ${prev.bundleQty} ya están comprometidas dentro de un Combo en este ticket.`,
+          };
+        }
+        return {
+          ok: false,
+          severity: "warning",
+          errorMsg: `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit || "UND"} (ya tienes ${prev.directQty} en el ticket).`,
+        };
+      }
+    }
+
+    return { ok: true };
+  };
+
   // Agregar producto al ticket
-  const addProductToTicket = (product: Product, quantity = 1) => {
+  const addProductToTicket = (product: Product, quantity = 1): boolean => {
+    // Asegurar que catalogProductsMap tenga la ficha más reciente del producto (y sus componentes si es combo)
+    if (product.id) {
+      setCatalogProductsMap((prev) => ({ ...prev, [product.id]: product }));
+    }
+
+    // Validar existencias compartidas (directas + combos) si no es servicio
+    if (!product.isService) {
+      const check = validateSharedStockInCart(product, quantity, cartLines);
+      if (!check.ok) {
+        playStockWarning();
+        showFeedback(check.errorMsg || "Stock insuficiente", check.severity || "warning");
+        return false;
+      }
+    }
+
     const existingIndex = cartLines.findIndex((l) => l.productId === product.id);
 
     if (existingIndex >= 0) {
@@ -474,14 +687,18 @@ export function SalesStationPage({
       updatedLines[existingIndex] = {
         ...existing,
         quantity: newQty,
+        currentStock: product.stock,
         subtotalCents: newSubtotal,
         taxCents: newTax,
         totalCents: newTotal,
         imageUrl: existing.imageUrl || product.imageUrl,
         imageLocalPath: existing.imageLocalPath || product.imageLocalPath,
+        isService: existing.isService ?? product.isService,
+        isBundle: existing.isBundle ?? product.isBundle,
       };
       updateCurrentTicketLines(updatedLines);
       setSelectedLineIndex(existingIndex);
+      return true;
     } else {
       const prodTaxFixed = product.taxFixedCents || 0;
       const unitSubtotal = Math.round(product.priceCents * quantity);
@@ -503,10 +720,13 @@ export function SalesStationPage({
         controlsStock: product.controlsStock,
         imageUrl: product.imageUrl,
         imageLocalPath: product.imageLocalPath,
+        isService: product.isService,
+        isBundle: product.isBundle,
       };
       const updated = [...cartLines, newLine];
       updateCurrentTicketLines(updated);
       setSelectedLineIndex(updated.length - 1);
+      return true;
     }
   };
 
@@ -530,52 +750,36 @@ export function SalesStationPage({
 
     const handleProductScanned = (product: Product, quantity = 1) => {
       if (product.isService) {
-        playScanSuccess();
-        showFeedback(`✅ + ${quantity} × ${product.name} (Servicio)`, "success");
-      } else {
-        const lineEnTicket = cartLines.find((l) => l.productId === product.id);
-        const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
-
-        // Cantidad de este producto apartada en otros tickets en espera
-        const enOtrosTickets = tickets
-          .filter((t) => t.id !== activeTicketId)
-          .flatMap((t) => t.lines)
-          .filter((l) => l.productId === product.id)
-          .reduce((sum, l) => sum + l.quantity, 0);
-
-        const nuevoTotalTicket = yaEnTicket + quantity;
-        const stockRestante = product.stock - nuevoTotalTicket;
-
-        if (product.stock <= 0) {
-          playStockWarning();
-          showFeedback(
-            `⚠️ SIN STOCK REGISTRADO: "${product.name}" (Stock: 0 ${product.unit}). Agregado por prioridad de mostrador.`,
-            "warning"
-          );
-        } else if (enOtrosTickets > 0 && stockRestante < enOtrosTickets) {
+        if (addProductToTicket(product, quantity)) {
           playScanSuccess();
-          showFeedback(
-            `⚡ Prioridad Mostrador: + ${quantity} × ${product.name} (Stock físico: ${product.stock} | ⏳ ${enOtrosTickets} en espera en otros tickets). El primero en pagar se lo lleva.`,
-            "info"
-          );
-        } else if (stockRestante < 0) {
-          playStockWarning();
-          showFeedback(
-            `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit}. Agregado por prioridad de mostrador.`,
-            "warning"
-          );
-        } else {
-          playScanSuccess();
-          showFeedback(
-            `✅ + ${quantity} × ${product.name} (Disponibles: ${stockRestante} ${product.unit}${
-              enOtrosTickets > 0 ? ` • ⏳ ${enOtrosTickets} en espera` : ""
-            })`,
-            "success"
-          );
+          showFeedback(`✅ + ${quantity} × ${product.name} (Servicio)`, "success");
         }
+        return;
       }
 
-      addProductToTicket(product, quantity);
+      if (!addProductToTicket(product, quantity)) {
+        return;
+      }
+
+      const lineEnTicket = cartLines.find((l) => l.productId === product.id);
+      const yaEnTicket = lineEnTicket ? lineEnTicket.quantity : 0;
+      const nuevoTotalTicket = yaEnTicket + quantity;
+
+      const enOtrosTickets = tickets
+        .filter((t) => t.id !== activeTicketId)
+        .flatMap((t) => t.lines)
+        .filter((l) => l.productId === product.id)
+        .reduce((sum, l) => sum + l.quantity, 0);
+
+      const stockRestante = Math.max(0, product.stock - nuevoTotalTicket);
+
+      playScanSuccess();
+      showFeedback(
+        `✅ + ${quantity} × ${product.name} (Disponibles: ${stockRestante} ${product.unit}${
+          enOtrosTickets > 0 ? ` • ⏳ ${enOtrosTickets} en espera` : ""
+        })`,
+        "success"
+      );
     };
 
     try {
@@ -615,20 +819,70 @@ export function SalesStationPage({
     }
   };
 
-  // Manejo de cantidades con teclas + y - (soporta línea activa o última línea agregada)
-  const modifyQuantity = (delta: number, lineIndex?: number) => {
+  // Manejo de cantidades con teclas + y - (soporta línea activa o única línea agregada)
+  const modifyQuantity = async (delta: number, lineIndex?: number) => {
     if (cartLines.length === 0) return;
-    const idx = lineIndex !== undefined ? lineIndex : (selectedLineIndex >= 0 ? selectedLineIndex : cartLines.length - 1);
+
+    let idx = lineIndex !== undefined ? lineIndex : selectedLineIndex;
+    if (idx < 0) {
+      if (cartLines.length === 1) {
+        idx = 0;
+      } else {
+        showFeedback("Seleccione un producto con ↑ / ↓ o clic para modificar su cantidad", "info");
+        return;
+      }
+    }
     if (idx < 0 || idx >= cartLines.length) return;
 
     const target = cartLines[idx];
     const newQty = Math.round((target.quantity + delta) * 1000) / 1000;
 
+    // Validación al incrementar (+): validar stock físico compartido (directo + combos)
+    if (delta > 0 && !target.isService) {
+      const catalogProd = target.productId ? catalogProductsMap[target.productId] : undefined;
+      if (catalogProd) {
+        const check = validateSharedStockInCart(catalogProd, delta, cartLines);
+        if (!check.ok) {
+          playStockWarning();
+          showFeedback(check.errorMsg || "Existencia máxima alcanzada", check.severity || "warning");
+          return;
+        }
+      } else if (target.controlsStock && target.currentStock !== undefined && newQty > target.currentStock) {
+        playStockWarning();
+        showFeedback(
+          `⚠️ EXISTENCIA MÁXIMA ALCANZADA: "${target.description}" solo tiene ${target.currentStock} ${target.unit || "UND"} en inventario.`,
+          "warning"
+        );
+        return;
+      }
+    }
+
+    // Al decrementar (-): si llega a 0 o menor, se va a eliminar
     if (newQty <= 0) {
+      const isProductOne = idx === 0 || cartLines.length === 1;
+
+      // Alerta obligatoria para el Producto 1 cuando vaya a ser eliminado con '-'
+      if (isProductOne) {
+        const ok = await confirm({
+          title: "Eliminar Producto #1",
+          message: `¿Desea eliminar el Producto 1 ("${target.description}") del ticket de venta?`,
+          variant: "warning",
+          confirmText: "Sí, Eliminar Producto",
+          cancelText: "Mantener en Ticket",
+        });
+        if (!ok) {
+          focusInput();
+          return;
+        }
+      }
+
+      // Eliminar el producto seleccionado
       const updated = cartLines.filter((_, i) => i !== idx);
       updateCurrentTicketLines(updated);
-      setSelectedLineIndex(Math.max(0, idx - 1));
-      showFeedback(`✕ ${target.description} eliminado del ticket`);
+      // Deseleccionar para no encadenar eliminaciones automáticas en otros productos
+      setSelectedLineIndex(-1);
+      showFeedback(`✕ ${target.description} eliminado del ticket`, "info");
+      focusInput();
       return;
     }
 
@@ -660,12 +914,36 @@ export function SalesStationPage({
   };
 
   // Guardar edición inline de cantidad
-  const handleSaveEditQty = (lineId: string) => {
+  const handleSaveEditQty = async (lineId: string) => {
     const parsed = parseFloat(editingQtyValue);
     if (!isNaN(parsed) && parsed > 0) {
       const idx = cartLines.findIndex((l) => l.id === lineId);
       if (idx >= 0) {
         const target = cartLines[idx];
+        const delta = parsed - target.quantity;
+        if (delta > 0 && !target.isService) {
+          const catalogProd = target.productId ? catalogProductsMap[target.productId] : undefined;
+          if (catalogProd) {
+            const check = validateSharedStockInCart(catalogProd, delta, cartLines);
+            if (!check.ok) {
+              playStockWarning();
+              showFeedback(check.errorMsg || "Stock insuficiente", check.severity || "warning");
+              setEditingQtyLineId(null);
+              focusInput();
+              return;
+            }
+          } else if (target.controlsStock && target.currentStock !== undefined && parsed > target.currentStock) {
+            playStockWarning();
+            showFeedback(
+              `⚠️ STOCK INSUFICIENTE: "${target.description}" solo tiene ${target.currentStock} ${target.unit || "UND"} en inventario.`,
+              "warning"
+            );
+            setEditingQtyLineId(null);
+            focusInput();
+            return;
+          }
+        }
+
         const updated = [...cartLines];
         const newSubtotal = Math.round(target.unitPriceCents * parsed);
         const targetTaxFixed = target.taxFixedCents || 0;
@@ -683,10 +961,10 @@ export function SalesStationPage({
         showFeedback(`${target.description}: ${parsed} ${target.unit || "UND"}`);
       }
     } else if (parsed === 0) {
-      const updated = cartLines.filter((l) => l.id !== lineId);
-      updateCurrentTicketLines(updated);
-      setSelectedLineIndex(-1);
-      showFeedback("Artículo eliminado del ticket");
+      const idx = cartLines.findIndex((l) => l.id === lineId);
+      if (idx >= 0) {
+        await modifyQuantity(-cartLines[idx].quantity, idx);
+      }
     }
     setEditingQtyLineId(null);
     focusInput();
@@ -699,13 +977,29 @@ export function SalesStationPage({
   };
 
   // Eliminar artículo seleccionado (DEL)
-  const removeSelectedLine = () => {
+  const removeSelectedLine = async () => {
     if (selectedLineIndex < 0 || selectedLineIndex >= cartLines.length) return;
     const item = cartLines[selectedLineIndex];
+    const isProductOne = selectedLineIndex === 0 || cartLines.length === 1;
+
+    if (isProductOne) {
+      const ok = await confirm({
+        title: "Eliminar Producto #1",
+        message: `¿Desea eliminar el Producto 1 ("${item.description}") del ticket de venta?`,
+        variant: "warning",
+        confirmText: "Sí, Eliminar Producto",
+        cancelText: "Mantener en Ticket",
+      });
+      if (!ok) {
+        focusInput();
+        return;
+      }
+    }
+
     const updated = cartLines.filter((_, idx) => idx !== selectedLineIndex);
     updateCurrentTicketLines(updated);
-    setSelectedLineIndex(Math.max(0, selectedLineIndex - 1));
-    showFeedback(`Eliminado: ${item.description}`);
+    setSelectedLineIndex(-1);
+    showFeedback(`Eliminado: ${item.description}`, "info");
     focusInput();
   };
 
@@ -769,6 +1063,7 @@ export function SalesStationPage({
       setSelectedLineIndex(-1);
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
       setIsCobroOpen(false);
+      refreshCatalogMap();
       focusInput();
       // Notificar al outbox dispatcher de inmediato para subida rápida
       api.sync.dispatchOutbox().catch(console.warn);
@@ -967,9 +1262,15 @@ export function SalesStationPage({
         e.preventDefault();
         removeSelectedLine();
       } else if (e.key === "+" || e.key === "Add" || e.code === "NumpadAdd") {
+        if (document.activeElement === barcodeInputRef.current && barcodeInput.length > 0) {
+          return;
+        }
         e.preventDefault();
         modifyQuantity(1);
       } else if (e.key === "-" || e.key === "Subtract" || e.code === "NumpadSubtract") {
+        if (document.activeElement === barcodeInputRef.current && barcodeInput.length > 0) {
+          return;
+        }
         e.preventDefault();
         modifyQuantity(-1);
       } else if (e.key === "Escape") {
@@ -1581,17 +1882,34 @@ export function SalesStationPage({
                       <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs">
                         {index + 1}
                       </td>
-                      {showProductImages && (
-                        <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
-                          {line.imageLocalPath || line.imageUrl ? (
+                      {showProductImages && (() => {
+                        const isBundle =
+                          line.isBundle ||
+                          (line.productId ? productImagesMap[line.productId]?.isBundle : false);
+                        const isService =
+                          line.isService ||
+                          (line.productId ? productImagesMap[line.productId]?.isService : false);
+                        const kind = isBundle ? "bundle" : isService ? "service" : "product";
+
+                        const localPath =
+                          line.imageLocalPath ||
+                          (line.productId ? productImagesMap[line.productId]?.imageLocalPath : null);
+                        const remoteUrl =
+                          line.imageUrl ||
+                          (line.productId ? productImagesMap[line.productId]?.imageUrl : null);
+
+                        const customSrc = toAssetUrl(localPath) || remoteUrl || null;
+                        const imgSrc = resolveProductImageSrc(localPath, remoteUrl, kind);
+
+                        return (
+                          <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                             <img
-                              src={toAssetUrl(line.imageLocalPath) || line.imageUrl || undefined}
+                              src={imgSrc}
                               alt={line.description}
                               onDoubleClick={(e) => {
                                 e.stopPropagation();
-                                const src = toAssetUrl(line.imageLocalPath) || line.imageUrl || null;
                                 handleOpenLightbox(
-                                  src,
+                                  imgSrc,
                                   line.description,
                                   `Código: ${line.barcode} • Precio: ${formatCents(line.unitPriceCents)}`,
                                   line.productId
@@ -1599,17 +1917,25 @@ export function SalesStationPage({
                               }}
                               title="Doble clic para maximizar imagen"
                               className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-2xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLElement).style.display = "none";
+                              onError={async (e) => {
+                                // Fallback automático por Base64 desde el backend si el WebView no resuelve la URL personalizada
+                                if (line.productId && customSrc) {
+                                  try {
+                                    const b64 = await api.products.getImageBase64(line.productId);
+                                    if (b64) {
+                                      (e.currentTarget as HTMLImageElement).src = b64;
+                                      return;
+                                    }
+                                  } catch (err) {
+                                    console.warn("[SalesStationPage] Error fallback Base64:", err);
+                                  }
+                                }
+                                (e.currentTarget as HTMLImageElement).src = getDefaultProductImage(kind);
                               }}
                             />
-                          ) : (
-                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center text-slate-400 mx-auto text-sm">
-                              📦
-                            </div>
-                          )}
-                        </td>
-                      )}
+                          </td>
+                        );
+                      })()}
                       <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
                         {line.barcode}
                       </td>
@@ -1791,9 +2117,19 @@ export function SalesStationPage({
           focusInput();
         }}
         onSelect={(p: Product) => {
-          addProductToTicket(p, 1);
-          setIsSearchOpen(false);
-          focusInput();
+          if (!p.isService && p.stock <= 0) {
+            playStockWarning();
+            showFeedback(
+              `❌ SIN EXISTENCIAS: "${p.name}" no tiene unidades disponibles en inventario (Stock: 0 ${p.unit || "UND"}).`,
+              "error"
+            );
+            return;
+          }
+          const added = addProductToTicket(p, 1);
+          if (added) {
+            setIsSearchOpen(false);
+            focusInput();
+          }
         }}
       />
 

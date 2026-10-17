@@ -22,7 +22,68 @@ pub fn calculate_bundle_stock(conn: &rusqlite::Connection, parent_id: i64) -> ru
          WHERE pc.parent_product_id = ?1 AND p_child.active = 1",
     )?;
     let val: Option<f64> = stmt.query_row(params![parent_id], |r| r.get(0)).ok().flatten();
-    Ok(val)
+    Ok(val.map(|v| v.floor().max(0.0)))
+}
+
+/// Consulta los componentes de un combo junto con su precio y costo unitario actual.
+pub fn query_product_components(conn: &rusqlite::Connection, parent_id: i64) -> rusqlite::Result<Vec<ProductComponentDto>> {
+    let mut stmt = conn.prepare(
+        "SELECT pc.id, pc.parent_product_id, pc.child_product_id, p.name, p.sku, p.barcode, \
+                p.stock, p.unit, p.price_cents, p.cost_cents, pc.quantity, pc.order_index \
+         FROM product_components pc \
+         JOIN products p ON p.id = pc.child_product_id \
+         WHERE pc.parent_product_id = ?1 \
+         ORDER BY pc.order_index ASC, pc.id ASC",
+    )?;
+
+    let rows = stmt.query_map(params![parent_id], |r| {
+        Ok(ProductComponentDto {
+            id: r.get(0)?,
+            parent_product_id: r.get(1)?,
+            child_product_id: r.get(2)?,
+            child_name: r.get(3)?,
+            child_sku: r.get(4)?,
+            child_barcode: r.get(5)?,
+            child_stock: r.get(6)?,
+            child_unit: r.get(7)?,
+            child_price_cents: r.get(8)?,
+            child_cost_cents: r.get(9)?,
+            quantity: r.get(10)?,
+            order_index: r.get(11)?,
+        })
+    })?;
+
+    rows.collect()
+}
+
+/// Enriquecer un producto compuesto con su lista de componentes, stock armable y costo calculado.
+pub fn enrich_bundle_product(conn: &rusqlite::Connection, p: &mut Product) {
+    if !p.is_bundle {
+        return;
+    }
+    p.allow_negative_stock = false;
+    if let Ok(comps) = query_product_components(conn, p.id) {
+        if comps.is_empty() {
+            p.stock = 0.0;
+        } else {
+            let mut min_stock = f64::INFINITY;
+            let mut total_cost_cents: i64 = 0;
+            for c in &comps {
+                if c.quantity > 0.0 {
+                    let possible = (c.child_stock / c.quantity).floor();
+                    if possible < min_stock {
+                        min_stock = possible;
+                    }
+                }
+                total_cost_cents += (c.child_cost_cents as f64 * c.quantity).round() as i64;
+            }
+            p.stock = if min_stock.is_finite() { min_stock.max(0.0) } else { 0.0 };
+            if total_cost_cents > 0 {
+                p.cost_cents = total_cost_cents;
+            }
+        }
+        p.components = Some(comps);
+    }
 }
 
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
@@ -54,7 +115,7 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         min_stock: r.get(10)?,
         is_service: is_service_int != 0,
         controls_stock: controls_stock_int != 0,
-        allow_negative_stock: allow_negative_stock_int != 0,
+        allow_negative_stock: if is_bundle_int != 0 { false } else { allow_negative_stock_int != 0 },
         is_bundle: is_bundle_int != 0,
         tags,
         tax_fixed_cents,
@@ -63,6 +124,7 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         image_hash,
         image_sync_status,
         active: active_int != 0,
+        components: None,
     })
 }
 
@@ -95,11 +157,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     let mut products = stmt.query_map(params![pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;
 
     for p in &mut products {
-        if p.is_bundle {
-            if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, p.id) {
-                p.stock = bundle_stock.max(0.0);
-            }
-        }
+        enrich_bundle_product(&conn, p);
     }
 
     Ok(products)
@@ -114,11 +172,7 @@ pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<
     let mut rows = stmt.query_map(params![barcode.trim()], map_product)?;
     let mut product = rows.next().transpose()?;
     if let Some(ref mut p) = product {
-        if p.is_bundle {
-            if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, p.id) {
-                p.stock = bundle_stock.max(0.0);
-            }
-        }
+        enrich_bundle_product(&conn, p);
     }
     Ok(product)
 }
@@ -136,11 +190,7 @@ pub fn get_product(db: State<'_, Db>, id: i64) -> AppResult<Product> {
             other => AppError::Database(other),
         })?;
 
-    if product.is_bundle {
-        if let Ok(Some(bundle_stock)) = calculate_bundle_stock(&conn, product.id) {
-            product.stock = bundle_stock.max(0.0);
-        }
-    }
+    enrich_bundle_product(&conn, &mut product);
 
     Ok(product)
 }
@@ -156,6 +206,17 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
     }
 
     let is_service = input.is_service.unwrap_or(false);
+    let is_bundle = input.is_bundle.unwrap_or(false);
+    let cost_cents = input.cost_cents.unwrap_or(0);
+
+    if is_bundle && input.price_cents < cost_cents {
+        return Err(AppError::Validation(format!(
+            "El precio de venta del combo (${:.2}) nunca puede ser menor al costo total de sus productos (${:.2})",
+            input.price_cents as f64 / 100.0,
+            cost_cents as f64 / 100.0
+        )));
+    }
+
     let unit = input
         .unit
         .as_deref()
@@ -163,12 +224,16 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         .filter(|s| !s.is_empty())
         .unwrap_or(if is_service { "serv" } else { "pza" });
 
-    let stock = if is_service { 0.0 } else { input.stock.unwrap_or(0.0) };
-    let min_stock = if is_service { 0.0 } else { input.min_stock.unwrap_or(0.0) };
+    let stock = if is_service || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0) };
+    if !is_service && !is_bundle && stock <= 0.0 {
+        return Err(AppError::Validation(
+            "No se permite registrar productos físicos sin inventario. La existencia inicial debe ser mayor a 0.".into(),
+        ));
+    }
+    let min_stock = if is_service || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
 
-    let controls_stock = input.controls_stock.unwrap_or(!is_service);
-    let allow_negative_stock = input.allow_negative_stock.unwrap_or(true);
-    let is_bundle = input.is_bundle.unwrap_or(false);
+    let controls_stock = !is_service;
+    let allow_negative_stock = false;
     let tags_val = input.tags.as_deref().unwrap_or("").trim().to_string();
     let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
 
@@ -198,7 +263,7 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
             input.category_id,
             unit,
             input.price_cents,
-            input.cost_cents.unwrap_or(0),
+            cost_cents,
             input.tax_rate_bp.unwrap_or(0),
             stock,
             min_stock,
@@ -217,8 +282,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
 
     let id = tx.last_insert_rowid();
 
-    // Si tiene stock inicial y controla inventario, registrar movimiento inicial
-    if controls_stock && stock > 0.0 {
+    // Si tiene stock inicial y es producto físico simple, registrar movimiento inicial
+    if controls_stock && !is_bundle && stock > 0.0 {
         tx.execute(
             "INSERT INTO inventory_movements (product_id, kind, quantity, reference) \
              VALUES (?1, 'adjustment', ?2, 'Inventario inicial')",
@@ -227,7 +292,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
     }
 
     let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
-    let product = tx.query_row(&sql, params![id], map_product)?;
+    let mut product = tx.query_row(&sql, params![id], map_product)?;
+    enrich_bundle_product(&tx, &mut product);
     tx.commit()?;
 
     Ok(product)
@@ -247,6 +313,17 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     }
 
     let is_service = input.is_service.unwrap_or(false);
+    let is_bundle = input.is_bundle.unwrap_or(false);
+    let cost_cents = input.cost_cents.unwrap_or(0);
+
+    if is_bundle && input.price_cents < cost_cents {
+        return Err(AppError::Validation(format!(
+            "El precio de venta del combo (${:.2}) nunca puede ser menor al costo total de sus productos (${:.2})",
+            input.price_cents as f64 / 100.0,
+            cost_cents as f64 / 100.0
+        )));
+    }
+
     let unit = input
         .unit
         .as_deref()
@@ -254,18 +331,38 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         .filter(|s| !s.is_empty())
         .unwrap_or(if is_service { "serv" } else { "pza" });
 
-    let controls_stock = input.controls_stock.unwrap_or(!is_service);
-    let allow_negative_stock = input.allow_negative_stock.unwrap_or(true);
-    let is_bundle = input.is_bundle.unwrap_or(false);
+    let controls_stock = !is_service;
+    let allow_negative_stock = false;
     let tags_val = input.tags.as_deref().unwrap_or("").trim().to_string();
     let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
 
-    let stock = if !controls_stock { 0.0 } else { input.stock.unwrap_or(0.0) };
-    let min_stock = if !controls_stock { 0.0 } else { input.min_stock.unwrap_or(0.0) };
+    let stock = if !controls_stock || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0) };
+    if !is_service && !is_bundle && stock <= 0.0 {
+        return Err(AppError::Validation(
+            "No se permite guardar un producto físico sin inventario (existencia <= 0).".into(),
+        ));
+    }
+    let min_stock = if !controls_stock || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let active_int = if input.active.unwrap_or(true) { 1 } else { 0 };
 
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
+
+    // Si se marca como combo, verificar que no sea ya insumo hijo de otro combo
+    if is_bundle {
+        let used_as_child: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM product_components WHERE child_product_id = ?1",
+                params![input.id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if used_as_child > 0 {
+            return Err(AppError::Validation(
+                "Este producto ya forma parte de otro combo como insumo. No puede convertirse en combo.".into(),
+            ));
+        }
+    }
 
     let barcode_clean = input.barcode.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(bc) = barcode_clean {
@@ -290,7 +387,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
             input.category_id,
             unit,
             input.price_cents,
-            input.cost_cents.unwrap_or(0),
+            cost_cents,
             input.tax_rate_bp.unwrap_or(0),
             stock,
             min_stock,
@@ -313,7 +410,8 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     }
 
     let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
-    let product = tx.query_row(&sql, params![input.id], map_product)?;
+    let mut product = tx.query_row(&sql, params![input.id], map_product)?;
+    enrich_bundle_product(&tx, &mut product);
     tx.commit()?;
 
     Ok(product)
@@ -350,12 +448,12 @@ pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
-    // Verificar si existe y si es servicio
-    let (current_stock, is_service_int): (f64, i64) = tx
+    // Verificar si existe y si es servicio o combo
+    let (current_stock, is_service_int, is_bundle_int): (f64, i64, i64) = tx
         .query_row(
-            "SELECT stock, is_service FROM products WHERE id = ?1 AND active = 1",
+            "SELECT stock, is_service, is_bundle FROM products WHERE id = ?1 AND active = 1",
             params![input.product_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
@@ -367,6 +465,12 @@ pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult
     if is_service_int != 0 {
         return Err(AppError::Validation(
             "No se puede ajustar inventario de un servicio (los servicios no manejan existencias físicas)".into(),
+        ));
+    }
+
+    if is_bundle_int != 0 {
+        return Err(AppError::Validation(
+            "No se puede ajustar manualmente el stock de un combo o kit. Ajuste las existencias de sus productos componentes.".into(),
         ));
     }
 
@@ -538,31 +642,7 @@ pub fn delete_product_tag(db: State<'_, Db>, id: i64) -> AppResult<()> {
 #[tauri::command]
 pub fn get_product_components(db: State<'_, Db>, parent_id: i64) -> AppResult<Vec<ProductComponentDto>> {
     let conn = db.conn()?;
-    let mut stmt = conn.prepare(
-        "SELECT pc.id, pc.parent_product_id, pc.child_product_id, p.name, p.sku, p.barcode, \
-                p.stock, p.unit, pc.quantity, pc.order_index \
-         FROM product_components pc \
-         JOIN products p ON p.id = pc.child_product_id \
-         WHERE pc.parent_product_id = ?1 \
-         ORDER BY pc.order_index ASC, pc.id ASC",
-    )?;
-
-    let rows = stmt.query_map(params![parent_id], |r| {
-        Ok(ProductComponentDto {
-            id: r.get(0)?,
-            parent_product_id: r.get(1)?,
-            child_product_id: r.get(2)?,
-            child_name: r.get(3)?,
-            child_sku: r.get(4)?,
-            child_barcode: r.get(5)?,
-            child_stock: r.get(6)?,
-            child_unit: r.get(7)?,
-            quantity: r.get(8)?,
-            order_index: r.get(9)?,
-        })
-    })?;
-
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    Ok(query_product_components(&conn, parent_id)?)
 }
 
 /// Guarda o reemplaza los componentes de un producto compuesto (combo/kit).
@@ -575,18 +655,77 @@ pub fn save_product_components(
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
-    let is_bundle: i64 = tx
+    let (is_bundle, parent_price_cents, parent_name): (i64, i64, String) = tx
         .query_row(
-            "SELECT is_bundle FROM products WHERE id = ?1",
+            "SELECT is_bundle, price_cents, name FROM products WHERE id = ?1",
             params![parent_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .map_err(|_| AppError::Validation(format!("Producto padre con ID {} no encontrado", parent_id)))?;
 
-    let should_be_bundle = if !components.is_empty() { 1 } else { is_bundle };
+    if is_bundle == 1 && components.is_empty() {
+        return Err(AppError::Validation(
+            "Un combo o kit debe tener al menos un producto componente".into(),
+        ));
+    }
+
+    // Consolidar/validar componentes únicos y calcular el costo total de los productos hijos
+    let mut unique_components: Vec<(i64, f64, i64)> = Vec::new();
+    let mut total_bundle_cost_cents: i64 = 0;
+
+    for (idx, comp) in components.iter().enumerate() {
+        if comp.child_product_id == parent_id {
+            return Err(AppError::Validation("Un producto no puede ser componente de sí mismo".into()));
+        }
+        if comp.quantity <= 0.0 {
+            return Err(AppError::Validation("La cantidad del componente debe ser mayor a cero".into()));
+        }
+        if unique_components.iter().any(|(cid, _, _)| *cid == comp.child_product_id) {
+            return Err(AppError::Validation(
+                "No se puede agregar el mismo producto más de una vez al combo; edite su cantidad directamente.".into(),
+            ));
+        }
+
+        let (child_name, child_cost_cents, child_is_bundle, child_stock, child_is_service): (String, i64, i64, f64, i64) = tx
+            .query_row(
+                "SELECT name, cost_cents, is_bundle, stock, is_service FROM products WHERE id = ?1 AND active = 1",
+                params![comp.child_product_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .map_err(|_| AppError::Validation(format!("El producto componente (ID {}) no existe o está inactivo", comp.child_product_id)))?;
+
+        if child_is_bundle != 0 {
+            return Err(AppError::Validation(format!(
+                "El producto '{}' ya es un combo. Agregue únicamente productos simples como componentes.",
+                child_name
+            )));
+        }
+
+        if child_is_service == 0 && (child_stock <= 0.0 || child_stock + 1e-9 < comp.quantity) {
+            return Err(AppError::Validation(format!(
+                "No se puede registrar el producto '{}' en el combo porque no tiene inventario suficiente (Disponible: {}, Requerido: {})",
+                child_name, child_stock, comp.quantity
+            )));
+        }
+
+        total_bundle_cost_cents += (child_cost_cents as f64 * comp.quantity).round() as i64;
+        let order = comp.order_index.unwrap_or(idx as i64);
+        unique_components.push((comp.child_product_id, comp.quantity, order));
+    }
+
+    if !unique_components.is_empty() && parent_price_cents < total_bundle_cost_cents {
+        return Err(AppError::Validation(format!(
+            "El precio de venta del combo '{}' (${:.2}) nunca puede ser menor al costo total de sus productos (${:.2})",
+            parent_name,
+            parent_price_cents as f64 / 100.0,
+            total_bundle_cost_cents as f64 / 100.0
+        )));
+    }
+
+    let should_be_bundle = if !unique_components.is_empty() { 1 } else { is_bundle };
     tx.execute(
-        "UPDATE products SET is_bundle = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![should_be_bundle, parent_id],
+        "UPDATE products SET is_bundle = ?1, cost_cents = ?2, allow_negative_stock = 0, needs_erp_upload = 1, updated_at = datetime('now') WHERE id = ?3",
+        params![should_be_bundle, total_bundle_cost_cents, parent_id],
     )?;
 
     tx.execute("DELETE FROM product_components WHERE parent_product_id = ?1", params![parent_id])?;
@@ -596,15 +735,8 @@ pub fn save_product_components(
          VALUES (?1, ?2, ?3, ?4)",
     )?;
 
-    for (idx, comp) in components.iter().enumerate() {
-        if comp.child_product_id == parent_id {
-            return Err(AppError::Validation("Un producto no puede ser componente de sí mismo".into()));
-        }
-        if comp.quantity <= 0.0 {
-            return Err(AppError::Validation("La cantidad del componente debe ser mayor a cero".into()));
-        }
-        let order = comp.order_index.unwrap_or(idx as i64);
-        insert_stmt.execute(params![parent_id, comp.child_product_id, comp.quantity, order])?;
+    for (child_product_id, quantity, order) in unique_components {
+        insert_stmt.execute(params![parent_id, child_product_id, quantity, order])?;
     }
 
     drop(insert_stmt);

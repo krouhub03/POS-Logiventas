@@ -24,8 +24,17 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
         priceRef.current?.focus();
         priceRef.current?.select();
       }, 50);
+
+      const handleKey = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onClose();
+        }
+      };
+      window.addEventListener("keydown", handleKey);
+      return () => window.removeEventListener("keydown", handleKey);
     }
-  }, [isOpen]);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

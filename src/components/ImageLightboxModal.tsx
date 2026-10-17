@@ -29,6 +29,18 @@ export function ImageLightboxModal({
     setIsLoadingFallback(false);
   }, [imageSrc, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen || (!currentSrc && !productId)) return null;
 
   return (

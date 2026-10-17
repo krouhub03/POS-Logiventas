@@ -52,17 +52,57 @@ pub async fn verify_and_reserve_stock(
             .unwrap_or(2.0);
         let offline_policy = get_setting(&conn, "offline_stock_policy").unwrap_or_else(|| "permissive".into());
 
-        // Primero verificamos si hay algún producto que localmente ya esté agotado o insuficiente
+        // Desglosar combos/kits en sus productos hijos físicos y acumular la demanda física total del ticket
+        let mut required_by_product: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         for it in &items {
-            let (stock, name, is_service): (f64, String, i64) = conn
+            let is_bundle: i64 = conn
                 .query_row(
-                    "SELECT stock, name, is_service FROM products WHERE id = ?1",
+                    "SELECT is_bundle FROM products WHERE id = ?1",
                     params![it.product_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| r.get(0),
                 )
-                .unwrap_or((999.0, "Producto".into(), 0));
+                .unwrap_or(0);
 
-            if is_service == 0 && stock < it.quantity {
+            if is_bundle != 0 {
+                let mut stmt = conn.prepare(
+                    "SELECT child_product_id, quantity FROM product_components WHERE parent_product_id = ?1",
+                )?;
+                let comps: Vec<(i64, f64)> = stmt
+                    .query_map(params![it.product_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                if comps.is_empty() {
+                    return Ok(VerifyStockResult {
+                        ok: false,
+                        motivo: Some("PRODUCTO_AGOTADO".into()),
+                        product_id: Some(it.product_id),
+                        product_name: Some("Combo sin insumos configurados".into()),
+                        stock_disponible: Some(0.0),
+                        offline_warning: None,
+                    });
+                }
+
+                for (child_id, comp_qty) in comps {
+                    *required_by_product.entry(child_id).or_insert(0.0) += comp_qty * it.quantity;
+                }
+            } else {
+                *required_by_product.entry(it.product_id).or_insert(0.0) += it.quantity;
+            }
+        }
+
+        // Primero verificamos si hay algún producto físico que localmente ya esté agotado o insuficiente
+        let mut critical_items = Vec::new();
+        for (&prod_id, &req_qty) in &required_by_product {
+            let (stock, name, is_service, controls_stock, allow_neg, erp_id): (f64, String, i64, i64, i64, Option<String>) = conn
+                .query_row(
+                    "SELECT stock, name, is_service, controls_stock, allow_negative_stock, erp_id FROM products WHERE id = ?1",
+                    params![prod_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                )
+                .unwrap_or((999.0, "Producto".into(), 0, 1, 0, None));
+
+            if is_service == 0 && (stock <= 0.0 || stock + 1e-9 < req_qty) {
                 return Ok(VerifyStockResult {
                     ok: false,
                     motivo: if stock <= 0.0 {
@@ -70,30 +110,18 @@ pub async fn verify_and_reserve_stock(
                     } else {
                         Some("STOCK_INSUFICIENTE".into())
                     },
-                    product_id: Some(it.product_id),
+                    product_id: Some(prod_id),
                     product_name: Some(name),
                     stock_disponible: Some(stock),
                     offline_warning: None,
                 });
             }
-        }
 
-        // Identificar productos con stock crítico (ej: stock <= threshold) para soft-lock en ERP
-        let mut critical_items = Vec::new();
-        for it in &items {
-            let (stock, name, is_service, erp_id): (f64, String, i64, Option<String>) = conn
-                .query_row(
-                    "SELECT stock, name, is_service, erp_id FROM products WHERE id = ?1",
-                    params![it.product_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-                )
-                .unwrap_or((999.0, "Producto".into(), 0, None));
-
-            if is_service == 0 && stock <= threshold {
+            if is_service == 0 && controls_stock != 0 && stock <= threshold {
                 critical_items.push(CriticalItemLocal {
-                    product_id: it.product_id,
+                    product_id: prod_id,
                     name,
-                    quantity: it.quantity,
+                    quantity: req_qty,
                     stock,
                     erp_id,
                 });
@@ -279,25 +307,65 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags \
+            "SELECT id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle \
              FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(serde_json::json!({
-                "sku": r.get::<_, String>(0)?,
-                "barcode": r.get::<_, Option<String>>(1)?,
-                "name": r.get::<_, String>(2)?,
-                "unit": r.get::<_, String>(3)?,
-                "is_service": r.get::<_, i64>(4)?,
-                "price_cents": r.get::<_, i64>(5)?,
-                "cost_cents": r.get::<_, i64>(6)?,
-                "tax_rate_bp": r.get::<_, i64>(7)?,
-                "stock": r.get::<_, f64>(8)?,
-                "min_stock": r.get::<_, f64>(9)?,
-                "tags": r.get::<_, Option<String>>(10)?.unwrap_or_default(),
-            }))
-        })?;
-        rows.filter_map(|r| r.ok()).collect()
+        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64)> = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                    r.get(10)?,
+                    r.get::<_, Option<String>>(11)?.unwrap_or_default(),
+                    r.get::<_, i64>(12).unwrap_or(0),
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut list = Vec::new();
+        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle) in rows {
+            let mut components_json = Vec::new();
+            if is_bundle == 1 {
+                if let Ok(mut c_stmt) = conn.prepare(
+                    "SELECT p.sku, pc.quantity FROM product_components pc JOIN products p ON p.id = pc.child_product_id WHERE pc.parent_product_id = ?1 ORDER BY pc.order_index ASC",
+                ) {
+                    if let Ok(c_rows) = c_stmt.query_map(params![id], |cr| {
+                        Ok(serde_json::json!({
+                            "sku": cr.get::<_, String>(0)?,
+                            "quantity": cr.get::<_, f64>(1)?,
+                        }))
+                    }) {
+                        components_json = c_rows.filter_map(|cr| cr.ok()).collect();
+                    }
+                }
+            }
+
+            list.push(serde_json::json!({
+                "sku": sku,
+                "barcode": barcode,
+                "name": name,
+                "unit": unit,
+                "is_service": is_service,
+                "is_bundle": is_bundle,
+                "price_cents": price_cents,
+                "cost_cents": cost_cents,
+                "tax_rate_bp": tax_rate_bp,
+                "stock": stock,
+                "min_stock": min_stock,
+                "tags": tags,
+                "components": components_json,
+            }));
+        }
+        list
     };
 
     // 2. Subir productos locales modificados o nuevos hacia el ERP
@@ -375,8 +443,8 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         let name = p["name"].as_str().unwrap_or("Sin Nombre");
         let unit = p["unit"].as_str().unwrap_or("pza");
         let is_service = p["is_service"].as_i64().unwrap_or(0);
-        let controls_stock = p["controls_stock"].as_i64().unwrap_or(if is_service == 1 { 0 } else { 1 });
-        let allow_negative_stock = p["allow_negative_stock"].as_i64().unwrap_or(1);
+        let controls_stock = if is_service == 1 { 0 } else { 1 };
+        let allow_negative_stock: i64 = 0;
         let is_bundle = p["is_bundle"].as_i64().unwrap_or(0);
         let tags = p["tags"].as_str().unwrap_or("");
         let tax_fixed_cents = p["tax_fixed_cents"].as_i64().unwrap_or(0);
@@ -458,16 +526,28 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             }
         }
 
-        // Calcular ventas locales pendientes en cola que aún no se reflejan en el ERP
+        // Calcular ventas locales pendientes en cola que aún no se reflejan en el ERP (directas + como componente de combos)
         let pending_sold: f64 = if let Some(local_id) = local_match {
-            tx.query_row(
+            let direct_sold: f64 = tx.query_row(
                 "SELECT COALESCE(SUM(si.quantity), 0) \
                  FROM sale_items si \
                  JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
                  WHERE si.product_id = ?1 AND sq.status != 'synced'",
                 params![local_id],
                 |r| r.get(0),
-            ).unwrap_or(0.0)
+            ).unwrap_or(0.0);
+
+            let combo_sold: f64 = tx.query_row(
+                "SELECT COALESCE(SUM(si.quantity * pc.quantity), 0) \
+                 FROM sale_items si \
+                 JOIN product_components pc ON pc.parent_product_id = si.product_id \
+                 JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+                 WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
+                params![local_id],
+                |r| r.get(0),
+            ).unwrap_or(0.0);
+
+            direct_sold + combo_sold
         } else {
             0.0
         };
@@ -606,6 +686,83 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         }
 
         total_synced += 1;
+    }
+
+    // Sincronizar componentes de combos/kits (product_components) una vez que todos los productos existen en SQLite
+    for p in &sorted_products {
+        if p["is_bundle"].as_i64().unwrap_or(0) != 1 {
+            continue;
+        }
+        let Some(comps_arr) = p["bundle_components"].as_array() else {
+            continue;
+        };
+        if comps_arr.is_empty() {
+            continue;
+        }
+        let erp_id = p["id"].as_str().unwrap_or_default();
+        let sku = p["sku"].as_str().unwrap_or_default();
+
+        let parent_local_id: Option<i64> = if !erp_id.is_empty() {
+            tx.query_row("SELECT id FROM products WHERE erp_id = ?1", params![erp_id], |r| r.get(0)).ok()
+        } else {
+            None
+        }
+        .or_else(|| {
+            tx.query_row("SELECT id FROM products WHERE sku = ?1", params![sku], |r| r.get(0)).ok()
+        });
+
+        let Some(parent_id) = parent_local_id else {
+            continue;
+        };
+
+        let _ = tx.execute("DELETE FROM product_components WHERE parent_product_id = ?1", params![parent_id]);
+
+        let mut total_bundle_cost_cents: i64 = 0;
+        for (idx, comp) in comps_arr.iter().enumerate() {
+            let child_erp_id = comp["child_product_id"].as_str().unwrap_or_default();
+            let child_sku = comp["child_sku"].as_str().unwrap_or_default();
+            let qty = comp["quantity"].as_f64().unwrap_or(0.0);
+            if qty <= 0.0 {
+                continue;
+            }
+
+            let child_row: Option<(i64, i64)> = if !child_erp_id.is_empty() {
+                tx.query_row(
+                    "SELECT id, cost_cents FROM products WHERE erp_id = ?1",
+                    params![child_erp_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok()
+            } else {
+                None
+            }
+            .or_else(|| {
+                tx.query_row(
+                    "SELECT id, cost_cents FROM products WHERE sku = ?1",
+                    params![child_sku],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .ok()
+            });
+
+            if let Some((child_local_id, child_cost_cents)) = child_row {
+                if child_local_id != parent_id {
+                    let _ = tx.execute(
+                        "INSERT INTO product_components (parent_product_id, child_product_id, quantity, order_index) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![parent_id, child_local_id, qty, idx as i64],
+                    );
+                    total_bundle_cost_cents += (child_cost_cents as f64 * qty).round() as i64;
+                }
+            }
+        }
+
+        if total_bundle_cost_cents > 0 {
+            let _ = tx.execute(
+                "UPDATE products SET cost_cents = ?1, allow_negative_stock = 0 WHERE id = ?2",
+                params![total_bundle_cost_cents, parent_id],
+            );
+        }
     }
 
     // Desactivar en SQLite cualquier producto que ya no esté activo o haya sido eliminado en el ERP
@@ -1083,20 +1240,20 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
         let stock_actual = d["stockActual"].as_f64().unwrap_or(0.0);
 
         if !p_id.is_empty() {
-            let local_info: Option<(i64, i64)> = conn
+            let local_info: Option<(i64, i64, i64)> = conn
                 .query_row(
-                    "SELECT id, is_service FROM products WHERE erp_id = ?1",
+                    "SELECT id, is_service, is_bundle FROM products WHERE erp_id = ?1",
                     params![p_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .ok();
 
-            if let Some((local_id, is_service)) = local_info {
-                if is_service == 1 {
+            if let Some((local_id, is_service, is_bundle)) = local_info {
+                if is_service == 1 || is_bundle == 1 {
                     continue;
                 }
 
-                let pending_sold: f64 = conn
+                let pending_sold_direct: f64 = conn
                     .query_row(
                         "SELECT COALESCE(SUM(si.quantity), 0) \
                          FROM sale_items si \
@@ -1107,6 +1264,19 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
                     )
                     .unwrap_or(0.0);
 
+                let pending_sold_bundle: f64 = conn
+                    .query_row(
+                        "SELECT COALESCE(SUM(si.quantity * pc.quantity), 0) \
+                         FROM sale_items si \
+                         JOIN product_components pc ON pc.parent_product_id = si.product_id \
+                         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+                         WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
+                        params![local_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or(0.0);
+
+                let pending_sold = pending_sold_direct + pending_sold_bundle;
                 let effective_stock = (stock_actual - pending_sold).max(0.0);
 
                 let affected = conn.execute(

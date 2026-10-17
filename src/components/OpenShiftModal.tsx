@@ -19,7 +19,16 @@ export function OpenShiftModal({ cashier, onShiftOpened, onCancel }: OpenShiftMo
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, []);
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && onCancel) {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onCancel]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

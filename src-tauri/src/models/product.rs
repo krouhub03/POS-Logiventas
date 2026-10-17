@@ -26,6 +26,7 @@ pub struct Product {
     pub image_hash: Option<String>,
     pub image_sync_status: Option<String>,
     pub active: bool,
+    pub components: Option<Vec<ProductComponentDto>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +122,8 @@ pub struct ProductComponentDto {
     pub child_barcode: Option<String>,
     pub child_stock: f64,
     pub child_unit: String,
+    pub child_price_cents: i64,
+    pub child_cost_cents: i64,
     pub quantity: f64,
     pub order_index: i64,
 }

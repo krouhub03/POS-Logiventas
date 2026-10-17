@@ -249,6 +249,36 @@ export function SearchProductModal({
     search || typeFilter !== "all" || selectedCategory || selectedTag
   );
 
+  // Manejo de selección con validación de existencias
+  const handleSelectProduct = (p: Product) => {
+    onSelect(p);
+    if (p.isService || !p.controlsStock || p.stock > 0) {
+      onClose();
+    }
+  };
+
+  // Atajos de teclado globales (Escape y Enter siempre activos)
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (hasActiveFilters) {
+          handleClearFilters();
+        } else {
+          onClose();
+        }
+      } else if (e.key === "Enter") {
+        if (filteredProducts[selectedIndex]) {
+          e.preventDefault();
+          handleSelectProduct(filteredProducts[selectedIndex]);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, hasActiveFilters, filteredProducts, selectedIndex, onClose]);
+
   // Manejo de atajos de teclado
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -260,8 +290,7 @@ export function SearchProductModal({
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (filteredProducts[selectedIndex]) {
-        onSelect(filteredProducts[selectedIndex]);
-        onClose();
+        handleSelectProduct(filteredProducts[selectedIndex]);
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -682,10 +711,7 @@ export function SearchProductModal({
                     <tr
                       key={p.id}
                       id={`search-row-${idx}`}
-                      onClick={() => {
-                        onSelect(p);
-                        onClose();
-                      }}
+                      onClick={() => handleSelectProduct(p)}
                       className={`cursor-pointer transition-colors ${
                         isSelected
                           ? "bg-sky-50/90 dark:bg-sky-950/40 text-slate-900 dark:text-white border-l-4 border-l-sky-500 font-semibold"
@@ -766,15 +792,22 @@ export function SearchProductModal({
 
                       {/* EXISTENCIA */}
                       <td className="py-3 px-4 text-right font-mono font-bold text-xs">
-                        {!p.controlsStock ? (
+                        {p.isService || !p.controlsStock ? (
                           <span className="text-slate-400 dark:text-slate-500 font-sans italic text-[11px]">
-                            -
+                            Servicio
+                          </span>
+                        ) : p.stock <= 0 ? (
+                          <span className="inline-flex items-center gap-1.5 text-[10px] font-sans font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/50 uppercase tracking-wide">
+                            <span>0 {p.unit}</span>
+                            <span className="font-extrabold text-[9px] bg-rose-200 dark:bg-rose-900/90 text-rose-900 dark:text-rose-100 px-1 rounded">
+                              Agotado
+                            </span>
                           </span>
                         ) : (
                           <span
                             className={
                               isLowStock
-                                ? "text-rose-600 dark:text-rose-400 font-black"
+                                ? "text-amber-600 dark:text-amber-400 font-black"
                                 : "text-emerald-700 dark:text-emerald-400"
                             }
                           >

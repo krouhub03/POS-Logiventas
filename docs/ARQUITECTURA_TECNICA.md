@@ -55,6 +55,7 @@ Todas las llamadas están centralizadas y tipadas en `src/services/api.ts`:
 | **`customers.rs`** | `api.customers` | `get_customers`, `search_customers`, `create_customer` | Directorio local de clientes (`F2`), búsqueda rápida por nombre/NIT/teléfono y alta en mostrador. |
 | **`settings.rs`** | `api.settings` | `get_all_settings`, `update_settings`, `test_print_ticket`, `test_open_drawer` | Lectura/escritura de ajustes clave-valor (`settings`) y diagnóstico de impresora térmica y cajón RJ11. |
 | **`sync.rs`** | `api.sync` | `verify_and_reserve_stock`, `release_stock_reservation`, `sync_catalog_from_erp`, `dispatch_sync_outbox`, `pull_inventory_deltas`, `get_sync_status`, `sync_payment_methods`, `get_payment_methods`, `toggle_payment_method_terminal_status` | Demonio asíncrono de sincronización, reserva temporal de stock crítico, despacho de Outbox, descarga de catálogo/deltas y gestión local de medios de pago. |
+| **`images.rs`** | `api.images` | `save_product_image_local`, `delete_product_image_local`, `get_product_image_base64` | Almacenamiento local de imágenes de productos en `%APPDATA%\com.briankrou.pos-logiventa\images\`, cálculo de hash SHA-256, sincronización de estados y lectura Base64. |
 
 ---
 
@@ -88,6 +89,14 @@ $$\sum \text{Pagos} \ge \text{Total}$$
 $$\text{Cambio} = \sum \text{Pagos} - \text{Total}$$
 - **Costo Histórico**: Cada registro en `sale_items` congela en `unit_cost_cents` el `cost_cents` vigente del producto al instante de la venta.
 - **Trazabilidad Individual de Cajero**: Cada venta almacena `user_id` del operador autenticado con PIN al momento de cobrar, y el Outbox serializa `userId`, `erpUserId` y `cajeroNombre`. Esto permite que varios cajeros compartan el mismo turno (`session_id`) durante relevos sin perder la autoría individual de cada ticket en reportes de auditoría y comisiones.
+
+### 3.4. Política de Inventario Estricto y Eliminación Segura en Mostrador
+- **Bloqueo Inflexible de Stock Cero (`stock <= 0`)**: Los productos físicos con existencias agotadas o en cero no pueden ser agregados al ticket bajo ninguna circunstancia (ni por escaneo de código de barras ni desde el buscador rápido `F10`), previniendo descuadres entre el mostrador y el almacén.
+- **Validación de Capacidad Disponible en Ticket**: Al escanear o incrementar cantidad (`+` o edición manual), el POS comprueba que la suma requerida no sobrepase el inventario disponible en SQLite (`currentInCart + qty <= product.stock`). Los servicios (`is_service = 1`) quedan exentos de esta restricción.
+- **Eliminación Segura y Prevención de Cascada**:
+  - Al decrementar la cantidad con `-` hasta 0, el producto es removido del ticket y el índice de selección activa se restablece a inactivo (`selectedLineIndex = -1`), impidiendo que pulsaciones repetidas de `-` eliminen en cascada las líneas precedentes.
+  - El manejador de teclado valida que no haya texto en el campo de escaneo antes de ejecutar `+` o `-`, evitando disparar modificaciones de cantidad cuando el cajero digita códigos que contienen guiones.
+- **Confirmación Obligatoria para Producto #1**: Intentar eliminar la primera línea del ticket (o la única existente) mediante `-` o `Supr` (`Delete`) despliega una ventana de confirmación obligatoria `confirm(...)` para evitar la pérdida involuntaria de tickets con un solo ítem.
 
 ---
 
@@ -333,13 +342,25 @@ stateDiagram-v2
 
 ---
 
-## 🎨 7. Sistema Estándar de Modales UI y Ergonomía
+## 🎨 7. Sistema Estándar de Modales UI, Ergonomía y Subsistema de Imágenes
 
-- **Prohibición de Diálogos Nativos**: Queda prohibido invocar `window.alert()` y `window.confirm()`.
-- Se utiliza exclusivamente el hook `useModals()` de `src/contexts/ModalContext.tsx`:
-  - `confirm(options)`: Retorna una `Promise<boolean>` operable con `Enter` (confirmar) y `Escape` (cancelar).
-  - `alert(options)`: Retorna una `Promise<void>` para notificaciones de validación o seguridad.
-- **Vistas Superpuestas sin Desmontar Ventas**: En `App.tsx`, `SalesStationPage` se mantiene siempre montada en el DOM (ocultándose con `hidden` cuando se abren `ProductsPage` o `SettingsPage`), garantizando preservación total del estado de los tickets y retorno instantáneo con `F1`.
+- **Prohibición de Diálogos Nativos**: Queda estrictamente prohibido invocar `window.alert()` y `window.confirm()`.
+- **Sistema Centralizado de Modales (`src/contexts/ModalContext.tsx`)**:
+  - `confirm(options)`: Retorna una `Promise<boolean>` con soporte de confirmación por `Enter` y cancelación por `Escape`.
+  - `alert(options)`: Retorna una `Promise<void>` para notificaciones operativas y de seguridad.
+- **Navegación Universal por Teclado (`Enter` / `Escape`) en Todos los Diálogos**:
+  - Todos los modales del sistema cuentan con escuchadores globales (`window.addEventListener('keydown')`) que capturan:
+    - **`Enter`**: Confirma la acción primaria, envía formularios o selecciona el elemento activo (ej. cobro en `CobroModal`, alta en `CustomerModal`, selección en `SearchProductModal`, confirmación en `ConfirmModal`, cierre en `AlertModal` y `ImageLightboxModal`).
+    - **`Escape`**: Cancela y cierra limpiamente cualquier diálogo abierto (`CloseShiftModal`, `OpenShiftModal`, `VariosModal`, `SearchProductModal`, `CustomerModal`, `CobroModal`, modales de confirmación y lightbox) sin requerir interacción con el ratón.
+- **Vistas Superpuestas sin Desmontar Ventas**: En `App.tsx`, `SalesStationPage` se mantiene permanentemente montada en el DOM (ocultándose con `hidden` al navegar a `ProductsPage` o `SettingsPage`), garantizando preservación total del estado de los tickets y retorno instantáneo con `F1`.
+- **Subsistema de Imágenes y Visualizador Lightbox**:
+  - **Almacenamiento Local de Assets**: Las imágenes de productos se guardan en el sistema de archivos local (`%APPDATA%\com.briankrou.pos-logiventa\images\`) mediante `commands/images.rs`, con deduplicación por hash SHA-256 e interoperabilidad offline-first.
+  - **Generación Dinámica de Placeholders SVG (`src/lib/images.ts`)**: Cuando un producto no tiene imagen asignada o no es posible cargarla, el helper `getProductFallbackSvg(type)` genera un SVG vectorial inline codificado en Data URI, coloreado e identificado según la tipología:
+    - 📦 *Producto Físico*: Ícono azul de caja / paquete de almacén.
+    - 🛠️ *Servicio*: Ícono verde esmeralda con herramientas de servicio técnico.
+    - 🍱 *Combo / Kit / Receta*: Ícono púrpura con bandeja y cubiertos de combo.
+  - **Visor Lightbox Modal (`ImageLightboxModal`)**: Las imágenes en miniatura del catálogo (`ProductsPage`) y de las líneas del ticket de venta (`SalesStationPage`) admiten **doble clic** para expandirse a pantalla completa en alta resolución. El lightbox se cierra al hacer clic en el backdrop o presionando `Escape` / `Enter`.
+  - **Visibilidad Opcional de Miniaturas en Venta**: La cabecera de la estación de cobro incluye un interruptor visual para ocultar o mostrar las miniaturas de productos en el ticket, adaptando la densidad de información a pantallas compactas o táctiles.
 
 ---
 

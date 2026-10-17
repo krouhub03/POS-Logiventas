@@ -265,6 +265,14 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         return;
       }
 
+      // Atajo Enter para confirmar cobro e imprimir
+      if (e.key === "Enter") {
+        if (isCustomerModalOpen) return;
+        e.preventDefault();
+        handleSubmit();
+        return;
+      }
+
       // Atajo F2 para seleccionar o cambiar cliente
       if (e.key === "F2") {
         e.preventDefault();

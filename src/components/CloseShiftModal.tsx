@@ -31,7 +31,16 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
         setError("Error al cargar resumen del turno: " + String(err));
         setLoadingSummary(false);
       });
-  }, []);
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onCancel]);
 
   const declaredCents = Math.round((parseFloat(declaredPesos) || 0) * 100);
   const expectedCents = summary?.expectedCashCents ?? 0;

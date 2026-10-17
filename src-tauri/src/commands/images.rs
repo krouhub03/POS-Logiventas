@@ -346,6 +346,7 @@ pub async fn save_product_image_local(
             image_hash,
             image_sync_status,
             active: active_int != 0,
+            components: None,
         })
     })?;
 
@@ -439,6 +440,7 @@ pub fn delete_product_image_local(
             image_hash,
             image_sync_status,
             active: active_int != 0,
+            components: None,
         })
     })?;
 
