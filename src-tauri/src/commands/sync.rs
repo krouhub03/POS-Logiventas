@@ -369,6 +369,13 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     };
 
     // 2. Subir productos locales modificados o nuevos hacia el ERP
+    let mut uploaded_stocks_by_sku: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for item in &unsynced_products {
+        if let (Some(s), Some(st)) = (item["sku"].as_str(), item["stock"].as_f64()) {
+            uploaded_stocks_by_sku.insert(s.to_string(), st);
+        }
+    }
+
     if !unsynced_products.is_empty() {
         let post_url = format!("{}/api/pos/v1/sync/productos", erp_url.trim_end_matches('/'));
         if let Ok(res) = client
@@ -572,15 +579,30 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         let erp_image_url = p["image_url"].as_str().map(str::trim).filter(|s| !s.is_empty());
         let erp_image_hash = p["image_hash"].as_str().map(str::trim).filter(|s| !s.is_empty());
 
-        let (current_img_hash, current_local_path, current_sync_status): (Option<String>, Option<String>, Option<String>) = if let Some(lid) = local_match {
+        let (current_img_hash, current_local_path, current_sync_status, local_needs_upload, local_stock): (Option<String>, Option<String>, Option<String>, i64, f64) = if let Some(lid) = local_match {
             tx.query_row(
-                "SELECT image_hash, image_local_path, image_sync_status FROM products WHERE id = ?1",
+                "SELECT image_hash, image_local_path, image_sync_status, COALESCE(needs_erp_upload, 0), COALESCE(stock, 0) FROM products WHERE id = ?1",
                 params![lid],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
-            .unwrap_or((None, None, None))
+            .unwrap_or((None, None, None, 0, 0.0))
         } else {
-            (None, None, None)
+            (None, None, None, 0, 0.0)
+        };
+
+        // Si el producto aún tiene cambios locales pendientes de subir al ERP (needs_erp_upload == 1),
+        // o si acabamos de subir un ajuste de stock positivo en este ciclo pero el ERP aún reporta 0,
+        // preservamos el stock local ajustado por el usuario para jamás perder su conteo.
+        let (final_stock, final_needs_upload) = if local_needs_upload == 1 {
+            (local_stock, 1_i64)
+        } else if let Some(&just_uploaded_stock) = uploaded_stocks_by_sku.get(sku) {
+            if just_uploaded_stock > 0.0 && effective_stock <= 0.0 && is_service == 0 && is_bundle == 0 {
+                ((just_uploaded_stock - pending_sold).max(0.0), 1_i64)
+            } else {
+                (effective_stock, 0_i64)
+            }
+        } else {
+            (effective_stock, 0_i64)
         };
 
         let (final_img_url, final_local_path, final_img_hash, final_sync_status) = if current_sync_status.as_deref() == Some("pending_upload") {
@@ -611,19 +633,19 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     stock = ?10,
                     min_stock = ?11,
                     active = ?12,
-                    needs_erp_upload = 0,
-                    controls_stock = ?13,
-                    allow_negative_stock = ?14,
-                    is_bundle = ?15,
-                    tags = ?16,
-                    tax_fixed_cents = ?17,
-                    category_id = ?18,
-                    image_url = ?19,
-                    image_local_path = ?20,
-                    image_hash = ?21,
-                    image_sync_status = ?22,
+                    needs_erp_upload = ?13,
+                    controls_stock = ?14,
+                    allow_negative_stock = ?15,
+                    is_bundle = ?16,
+                    tags = ?17,
+                    tax_fixed_cents = ?18,
+                    category_id = ?19,
+                    image_url = ?20,
+                    image_local_path = ?21,
+                    image_hash = ?22,
+                    image_sync_status = ?23,
                     updated_at = datetime('now')
-                 WHERE id = ?23",
+                 WHERE id = ?24",
                 params![
                     erp_id,
                     sku,
@@ -634,9 +656,10 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     price_cents,
                     cost_cents,
                     tax_rate_bp,
-                    effective_stock,
+                    final_stock,
                     min_stock,
                     active,
+                    final_needs_upload,
                     controls_stock,
                     allow_negative_stock,
                     is_bundle,
@@ -1185,6 +1208,104 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         }
     }
 
+    // ── 3. Despacho de Devoluciones / Notas Crédito POS ('sale_return') ────
+    let (pending_returns, devoluciones_json) = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'sale_return' AND status = 'pending' ORDER BY id ASC LIMIT 30"
+        )?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+
+        let mut pending = Vec::new();
+        let mut json_list = Vec::new();
+
+        for r in rows {
+            let (id, payload_str) = r?;
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                pending.push((id, folio));
+                json_list.push(parsed);
+            }
+        }
+
+        (pending, json_list)
+    };
+
+    if !pending_returns.is_empty() {
+        total_dispatched += pending_returns.len();
+        let url = format!("{}/api/pos/v1/sync/devoluciones", erp_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "devoluciones": devoluciones_json }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                let folio = item["folio"].as_str()?.to_string();
+                                let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                let err = item["error"].as_str().map(|s| s.to_string());
+                                Some((folio, (status, err)))
+                            }).collect()
+                        })
+                        .unwrap_or_default();
+
+                    for (id, folio) in &pending_returns {
+                        let (status, err) = resultados_map.get(folio)
+                            .cloned()
+                            .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para esta devolución".to_string())));
+
+                        if status == "synced" || status == "skipped" {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                params![id],
+                            );
+                            total_synced += 1;
+                        } else {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                                params![err.unwrap_or_else(|| "Fallo al procesar devolución en ERP".to_string()), id],
+                            );
+                            total_failed += 1;
+                        }
+                    }
+                } else {
+                    for (id, _) in &pending_returns {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            params![res_text, id],
+                        );
+                    }
+                    total_failed += pending_returns.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (id, _) in &pending_returns {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![err_str, id],
+                    );
+                }
+                total_failed += pending_returns.len();
+            }
+        }
+    }
+
     Ok(OutboxBatchResult {
         dispatched: total_dispatched,
         synced: total_synced,
@@ -1240,16 +1361,16 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
         let stock_actual = d["stockActual"].as_f64().unwrap_or(0.0);
 
         if !p_id.is_empty() {
-            let local_info: Option<(i64, i64, i64)> = conn
+            let local_info: Option<(i64, i64, i64, i64)> = conn
                 .query_row(
-                    "SELECT id, is_service, is_bundle FROM products WHERE erp_id = ?1",
+                    "SELECT id, is_service, is_bundle, COALESCE(needs_erp_upload, 0) FROM products WHERE erp_id = ?1",
                     params![p_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .ok();
 
-            if let Some((local_id, is_service, is_bundle)) = local_info {
-                if is_service == 1 || is_bundle == 1 {
+            if let Some((local_id, is_service, is_bundle, needs_erp_upload)) = local_info {
+                if is_service == 1 || is_bundle == 1 || needs_erp_upload == 1 {
                     continue;
                 }
 
@@ -1280,7 +1401,7 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
                 let effective_stock = (stock_actual - pending_sold).max(0.0);
 
                 let affected = conn.execute(
-                    "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2",
+                    "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2 AND COALESCE(needs_erp_upload, 0) = 0",
                     params![effective_stock, local_id],
                 );
                 if let Ok(n) = affected {
@@ -1313,13 +1434,23 @@ pub async fn get_sync_status_internal(db: &Db) -> AppResult<SyncStatusDto> {
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
         let token = get_setting(&conn, "terminal_token").unwrap_or_default();
 
-        let pending_count: i64 = conn
+        let pending_sales_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sync_queue WHERE status = 'pending'",
                 [],
                 |r| r.get(0),
             )
             .unwrap_or(0);
+
+        let pending_products_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let pending_count = pending_sales_count + pending_products_count;
 
         let last_sync_at = get_setting(&conn, "last_sync_timestamp");
         let offline_policy = get_setting(&conn, "offline_stock_policy").unwrap_or_else(|| "strict".into());
@@ -1378,12 +1509,26 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
             // 1. Despachar Outbox si hay ventas o movimientos pendientes
             let _ = dispatch_outbox_internal(&db).await;
 
-            // 2. Traer deltas de existencias desde el ERP cada 5 segundos
-            let _ = pull_inventory_deltas_internal(&db).await;
+            // 2. Si hay ajustes de stock o productos locales pendientes de subir al ERP, sincronizar antes de traer deltas
+            let has_pending_products = db
+                .conn()
+                .ok()
+                .and_then(|c| {
+                    c.query_row(
+                        "SELECT COUNT(*) FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or(0)
+                > 0;
 
-            // 3. Sincronizar catálogo completo y precios cada 60 segundos (cada 12 ciclos de 5s)
-            if loop_count % 12 == 0 {
+            if has_pending_products || loop_count % 12 == 0 {
                 let _ = sync_catalog_internal(&db).await;
+            } else {
+                // 3. Traer deltas de existencias desde el ERP cada 5 segundos
+                let _ = pull_inventory_deltas_internal(&db).await;
             }
 
             // 4. Sincronización asíncrona de imágenes (baja prioridad, cada 15 segundos)

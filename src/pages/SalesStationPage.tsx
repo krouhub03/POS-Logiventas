@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift, Customer } from "../types";
+import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift, Customer, SaleReceipt } from "../types";
 import { api } from "../services/api";
 import { formatCents, calculateTaxCents } from "../lib/money";
 import { useTheme } from "../contexts/ThemeContext";
@@ -11,6 +11,8 @@ import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
 import { CustomerModal } from "../components/CustomerModal";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
+import { ReceiptModal } from "../components/ReceiptModal";
+import { RecentSalesModal } from "../components/RecentSalesModal";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 
 interface CartLine {
@@ -81,6 +83,15 @@ const BarcodeScannerIcon = () => (
 const EmptyCartIcon = () => (
   <svg className="w-8 h-8 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>
+  </svg>
+);
+
+const PhotoToggleIcon = ({ active }: { active: boolean }) => (
+  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+    <circle cx="9" cy="9" r="2" />
+    <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    {!active && <line x1="2" y1="2" x2="22" y2="22" strokeWidth="2.2" />}
   </svg>
 );
 
@@ -355,11 +366,28 @@ export function SalesStationPage({
     refreshCatalogMap();
   }, [isActive, refreshCatalogMap]);
 
-  // Modales
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCobroOpen, setIsCobroOpen] = useState(false);
   const [isVariosOpen, setIsVariosOpen] = useState(false);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [isRecentSalesOpen, setIsRecentSalesOpen] = useState(false);
+  const [lastReceipt, setLastReceipt] = useState<SaleReceipt | null>(null);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+
+  const handleReprintLastSale = async () => {
+    try {
+      const last = await api.sales.getLast();
+      if (!last) {
+        showFeedback("No hay ventas registradas para reimprimir", "info");
+        return;
+      }
+      setLastReceipt(last);
+      setIsReceiptModalOpen(true);
+    } catch (err) {
+      console.error("Error al obtener última venta:", err);
+      showFeedback("Error al consultar última venta", "error");
+    }
+  };
 
   // Estado de feedback / notificación rápida
   const [feedback, setFeedback] = useState<{
@@ -1110,6 +1138,7 @@ export function SalesStationPage({
         );
       }
       setSelectedLineIndex(-1);
+      setLastReceipt(receipt);
       showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
       setIsCobroOpen(false);
       refreshCatalogMap();
@@ -1266,7 +1295,7 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || editingQtyLineId !== null) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || editingQtyLineId !== null) return;
     if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1279,7 +1308,13 @@ export function SalesStationPage({
           document.activeElement.tagName === "SELECT");
       if (isOtherInputFocused) return;
 
-      if (e.key === "F2") {
+      if ((e.key === "r" || e.key === "R") && e.altKey) {
+        e.preventDefault();
+        handleReprintLastSale();
+      } else if (e.key === "F5") {
+        e.preventDefault();
+        setIsRecentSalesOpen(true);
+      } else if (e.key === "F2") {
         e.preventDefault();
         if (e.shiftKey) {
           if (currentTicket?.customer) {
@@ -1362,12 +1397,12 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1583,6 +1618,18 @@ export function SalesStationPage({
             </button>
           )}
 
+          {/* F5 Historial & Devoluciones */}
+          <button
+            type="button"
+            onClick={() => setIsRecentSalesOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+            title="Consultar historial de ventas y procesar devoluciones (F5)"
+          >
+            <span className="text-slate-400 font-mono text-[10px]">F5</span>
+            <span>🕒</span>
+            <span>Historial</span>
+          </button>
+
           {/* F7 Configuración */}
           {hasPermission(cashier, "pos:configuracion") && (
             <button
@@ -1597,10 +1644,23 @@ export function SalesStationPage({
           )}
         </div>
 
-        {/* Indicador de Ayuda a la Derecha */}
-        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-400 dark:text-slate-400 text-xs font-medium">
-          <span>👆</span>
-          <span>Teclas F1-F7 o toque directo</span>
+        {/* Acciones de Impresión y Ayuda a la Derecha */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleReprintLastSale}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            title="Reimprimir el último ticket cobrado (Alt+R)"
+          >
+            <span>🖨️</span>
+            <span>Último Ticket</span>
+            <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1 py-0.2 rounded font-mono">Alt+R</span>
+          </button>
+
+          <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-400 dark:text-slate-400 text-xs font-medium">
+            <span>👆</span>
+            <span>F1-F7 o toque directo</span>
+          </div>
         </div>
       </nav>
 
@@ -1828,14 +1888,14 @@ export function SalesStationPage({
           <button
             type="button"
             onClick={handleToggleShowImages}
-            className={`px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs border ${
+            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer shadow-2xs border ${
               showProductImages
                 ? "bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800/60"
-                : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700"
             }`}
             title={showProductImages ? "Ocultar fotos de productos en el ticket" : "Mostrar fotos de productos en el ticket"}
           >
-            <span>{showProductImages ? "🖼️ Ocultar Fotos" : "📷 Ver Fotos"}</span>
+            <PhotoToggleIcon active={showProductImages} />
           </button>
         </div>
       </div>
@@ -1887,6 +1947,7 @@ export function SalesStationPage({
                 <th className="py-2.5 px-3 w-36">Código de Barras</th>
                 <th className="py-2.5 px-3">Descripción del Producto</th>
                 <th className="py-2.5 px-3 w-28 text-right">Precio Venta</th>
+                <th className="py-2.5 px-3 w-24 text-center">IVA</th>
                 <th className="py-2.5 px-3 w-28 text-center">Cantidad</th>
                 <th className="py-2.5 px-3 w-32 text-right">Importe</th>
                 <th className="py-2.5 px-3 w-24 text-center">Existencia</th>
@@ -1895,7 +1956,7 @@ export function SalesStationPage({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={showProductImages ? 8 : 7} className="py-24 text-center font-sans">
+                  <td colSpan={showProductImages ? 9 : 8} className="py-24 text-center font-sans">
                     <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center mx-auto mb-3 text-slate-300 dark:text-slate-600 shadow-2xs">
                       <EmptyCartIcon />
                     </div>
@@ -1990,14 +2051,29 @@ export function SalesStationPage({
                       </td>
                       <td className="py-2.5 px-3 font-sans font-medium text-slate-900 dark:text-white">
                         {line.description}
-                        {line.taxRateBp > 0 && (
-                          <span className="ml-2 text-[10px] text-slate-500 font-mono">
-                            (IVA {(line.taxRateBp / 100).toFixed(0)}%)
-                          </span>
-                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300">
                         {formatCents(line.unitPriceCents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {line.taxRateBp > 0 || (line.taxFixedCents && line.taxFixedCents > 0) ? (
+                          <div className="flex flex-col items-center leading-tight">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
+                              {line.taxRateBp > 0
+                                ? `${Number((line.taxRateBp / 100).toFixed(2))}%`
+                                : "Fijo"}
+                            </span>
+                            {line.taxCents > 0 && (
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                                {formatCents(line.taxCents)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 dark:text-slate-500 font-mono">
+                            0%
+                          </span>
+                        )}
                       </td>
                       <td
                         className="py-2.5 px-3 text-center"
@@ -2228,6 +2304,43 @@ export function SalesStationPage({
         title={lightboxData.title}
         subtitle={lightboxData.subtitle}
         productId={lightboxData.productId}
+      />
+
+      {/* Visor de Tirilla Térmica y Reimpresión Oficial */}
+      <ReceiptModal
+        receipt={lastReceipt}
+        isOpen={isReceiptModalOpen}
+        onClose={() => {
+          setIsReceiptModalOpen(false);
+          focusInput();
+        }}
+        onRequestReturn={() => {
+          setIsReceiptModalOpen(false);
+          setIsRecentSalesOpen(true);
+        }}
+        businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
+        businessNit={terminalStatus.empresaNit || undefined}
+        terminalCode={terminalStatus.cajaCodigo || "CAJA-01"}
+      />
+
+      {/* Historial de Ventas, Buscador y Emisión de Devoluciones */}
+      <RecentSalesModal
+        isOpen={isRecentSalesOpen}
+        currentUserId={cashier.id}
+        terminalCode={terminalStatus.cajaCodigo || "CAJA-01"}
+        businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
+        businessNit={terminalStatus.empresaNit || undefined}
+        onClose={() => {
+          setIsRecentSalesOpen(false);
+          focusInput();
+        }}
+        onSaleReturned={(ret) => {
+          refreshCatalogMap();
+          showFeedback(
+            `✅ Devolución #${ret.folio} emitida exitosamente. Reembolso: ${formatCents(ret.totalCents)}`,
+            "success"
+          );
+        }}
       />
     </div>
   );

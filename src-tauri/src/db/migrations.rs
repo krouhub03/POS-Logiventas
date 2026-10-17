@@ -28,6 +28,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0020_sync_queue_customer_payments.sql"),
     include_str!("../../migrations/0021_product_images.sql"),
     include_str!("../../migrations/0022_strict_no_negative_stock.sql"),
+    include_str!("../../migrations/0023_sale_returns_and_reprints.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {

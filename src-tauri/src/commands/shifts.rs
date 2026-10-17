@@ -266,7 +266,15 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
         |r| Ok((r.get(0)?, r.get(1)?)),
     ).unwrap_or((0, 0));
 
-    let expected_cash_cents = shift.opening_cents + cash_sales_cents + customer_payments_cash_cents;
+    let cash_returns_cents: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(total_cents), 0)
+         FROM sale_returns
+         WHERE cash_session_id = ?1 AND refund_method = 'cash'",
+        params![shift.id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    let expected_cash_cents = shift.opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
 
     Ok(ShiftSummary {
         shift_id: shift.id,
@@ -361,8 +369,18 @@ pub async fn close_shift(
             |r| r.get(0),
         ).unwrap_or(0)
     };
+    let cash_returns_cents: i64 = {
+        let conn = db.conn()?;
+        conn.query_row(
+            "SELECT COALESCE(SUM(total_cents), 0)
+             FROM sale_returns
+             WHERE cash_session_id = ?1 AND refund_method = 'cash'",
+            params![shift_id],
+            |r| r.get(0),
+        ).unwrap_or(0)
+    };
 
-    let expected_cents = opening_cents + cash_sales_cents + customer_payments_cash_cents;
+    let expected_cents = opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
     let difference_cents = input.declared_cents - expected_cents;
 
     let closed_at: String;

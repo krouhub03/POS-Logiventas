@@ -209,17 +209,92 @@ export interface CreateSaleInput {
 export interface SaleItemDto {
   id: number;
   productId: number | null;
+  sku?: string | null;
+  barcode?: string | null;
+  unit?: string | null;
+  description: string;
+  quantity: number;
+  returnedQuantity: number;
+  unitPriceCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  isService?: boolean;
+  isBundle?: boolean;
+}
+
+export interface SalePaymentDto {
+  id: number;
+  method: string;
+  methodName: string;
+  amountCents: number;
+  reference?: string | null;
+}
+
+export interface SaleReturnItemDto {
+  id: number;
+  saleItemId: number;
+  productId: number | null;
   description: string;
   quantity: number;
   unitPriceCents: number;
   discountCents: number;
   taxCents: number;
   totalCents: number;
+  inventoryDisposition: "restock" | "merma" | "no_stock" | string;
+}
+
+export interface SaleReturnDto {
+  id: number;
+  folio: string;
+  saleId: number;
+  saleFolio: string;
+  customerId?: number | null;
+  customerName?: string | null;
+  cashierName?: string | null;
+  returnType: "full" | "partial" | string;
+  reason: string;
+  refundMethod: "cash" | "credit_balance" | "transfer" | "other" | string;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  notes?: string | null;
+  createdAt: string;
+  items: SaleReturnItemDto[];
 }
 
 export interface SaleReceipt {
   id: number;
   folio: string;
+  customerId?: number | null;
+  customerName?: string | null;
+  customerTaxId?: string | null;
+  cashierName?: string | null;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  paidCents: number;
+  changeCents: number;
+  reprintCount: number;
+  lastReprintedAt?: string | null;
+  returnStatus: "none" | "partial" | "full" | string;
+  returnedCents: number;
+  itemsCount: number;
+  items: SaleItemDto[];
+  payments: SalePaymentDto[];
+  returns: SaleReturnDto[];
+  createdAt: string;
+}
+
+export interface SaleSummaryItem {
+  id: number;
+  folio: string;
+  customerId?: number | null;
+  customerName?: string | null;
+  customerTaxId?: string | null;
+  cashierName?: string | null;
   subtotalCents: number;
   discountCents: number;
   taxCents: number;
@@ -227,8 +302,26 @@ export interface SaleReceipt {
   paidCents: number;
   changeCents: number;
   itemsCount: number;
-  items: SaleItemDto[];
+  reprintCount: number;
+  returnStatus: "none" | "partial" | "full" | string;
+  returnedCents: number;
+  paymentSummary: string;
   createdAt: string;
+}
+
+export interface CreateSaleReturnItemInput {
+  saleItemId: number;
+  quantity: number;
+  inventoryDisposition?: "restock" | "merma" | "no_stock" | string;
+}
+
+export interface CreateSaleReturnInput {
+  saleId: number;
+  userId?: number | null;
+  reason: string;
+  refundMethod: "cash" | "credit_balance" | "transfer" | "other" | string;
+  notes?: string | null;
+  items: CreateSaleReturnItemInput[];
 }
 
 export interface TodaySalesSummary {

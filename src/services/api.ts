@@ -22,7 +22,10 @@ import type {
   ProductComponent,
   ProductTag,
   RecordCustomerPaymentInput,
+  CreateSaleReturnInput,
+  SaleReturnDto,
   SaleReceipt,
+  SaleSummaryItem,
   SaveProductComponentItem,
   ShiftSummary,
   StockAdjustmentInput,
@@ -114,6 +117,18 @@ export const api = {
       invoke<SaleReceipt>("create_sale", { input }),
     getLast: () => invoke<SaleReceipt | null>("get_last_sale"),
     getTodaySummary: () => invoke<TodaySalesSummary>("get_today_summary"),
+    listRecent: (params?: { query?: string; statusFilter?: string; limit?: number }) =>
+      invoke<SaleSummaryItem[]>("list_recent_sales", {
+        query: params?.query,
+        statusFilter: params?.statusFilter,
+        limit: params?.limit,
+      }),
+    getDetail: (saleId: number) =>
+      invoke<SaleReceipt>("get_sale_detail", { saleId }),
+    reprintSale: (saleId: number) =>
+      invoke<SaleReceipt>("register_sale_reprint", { saleId }),
+    createReturn: (input: CreateSaleReturnInput) =>
+      invoke<SaleReturnDto>("create_sale_return", { input }),
   },
 
   settings: {
