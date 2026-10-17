@@ -1656,11 +1656,6 @@ export function SalesStationPage({
             <span>Último Ticket</span>
             <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1 py-0.2 rounded font-mono">Alt+R</span>
           </button>
-
-          <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-slate-400 dark:text-slate-400 text-xs font-medium">
-            <span>👆</span>
-            <span>F1-F7 o toque directo</span>
-          </div>
         </div>
       </nav>
 
