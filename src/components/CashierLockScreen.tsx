@@ -25,6 +25,22 @@ export const isSuperAdminUser = (c: CashierUser) => {
   );
 };
 
+// Helper puro para validar si un usuario es un cajero/operador legítimo de la empresa vinculada
+export const isCompanyCashier = (c: CashierUser) => {
+  const roleUpper = (c.role || "").toUpperCase();
+  const profileUpper = (c.profileName || "").toUpperCase();
+  const isLegacySeedAdmin = !c.erpUserId && (c.username === "admin" || c.fullName === "Administrador");
+
+  return (
+    !isLegacySeedAdmin &&
+    Boolean(c.erpUserId) &&
+    !isSuperAdminUser(c) &&
+    roleUpper !== "CLIENTE" &&
+    roleUpper !== "CUSTOMER" &&
+    !profileUpper.includes("CLIENTE")
+  );
+};
+
 export function CashierLockScreen({
   status,
   onUnlocked,
@@ -42,12 +58,7 @@ export function CashierLockScreen({
       // 1. Carga inmediata desde SQLite local para latencia cero (<5ms)
       const list = await api.auth.listCashiers();
       setCashiers(list);
-      const regular = list.filter(
-        (c) =>
-          !isSuperAdminUser(c) &&
-          (c.role || "").toUpperCase() !== "CLIENTE" &&
-          !(c.profileName || "").toUpperCase().includes("CLIENTE")
-      );
+      const regular = list.filter(isCompanyCashier);
       if (regular.length === 1) {
         setSelectedCashier(regular[0]);
       }
@@ -57,12 +68,7 @@ export function CashierLockScreen({
         .syncUsers()
         .then((freshList) => {
           setCashiers(freshList);
-          const freshRegular = freshList.filter(
-            (c) =>
-              !isSuperAdminUser(c) &&
-              (c.role || "").toUpperCase() !== "CLIENTE" &&
-              !(c.profileName || "").toUpperCase().includes("CLIENTE")
-          );
+          const freshRegular = freshList.filter(isCompanyCashier);
           if (freshRegular.length === 1) {
             setSelectedCashier(freshRegular[0]);
           }
@@ -111,20 +117,8 @@ export function CashierLockScreen({
     }
   };
 
-  // 1. Filtro estricto: JAMÁS un cliente puede aparecer en el POS (Veto Zero-Trust en UI)
-  const authorizedCashiers = cashiers.filter((c) => {
-    const roleUpper = (c.role || "").toUpperCase();
-    const profileUpper = (c.profileName || "").toUpperCase();
-    return (
-      roleUpper !== "CLIENTE" &&
-      roleUpper !== "CUSTOMER" &&
-      !profileUpper.includes("CLIENTE")
-    );
-  });
-
-  // 2. Separar Soporte Técnico (SUPERADMINSAAS) para enlace discreto inferior
-  const isSuperAdmin = isSuperAdminUser;
-  const regularCashiers = authorizedCashiers.filter((c) => !isSuperAdmin(c));
+  // 1. Filtrar exclusivamente cajeros legítimos de la empresa vinculada (excluye clientes, superadmins y seed local admin)
+  const regularCashiers = cashiers.filter(isCompanyCashier);
 
   const frequencyMap = getFrequencyMap();
   const sortedCashiers = [...regularCashiers].sort((a, b) => {
@@ -213,12 +207,7 @@ export function CashierLockScreen({
     try {
       const updated = await api.auth.syncUsers();
       setCashiers(updated);
-      const regular = updated.filter(
-        (c) =>
-          !isSuperAdminUser(c) &&
-          (c.role || "").toUpperCase() !== "CLIENTE" &&
-          !(c.profileName || "").toUpperCase().includes("CLIENTE")
-      );
+      const regular = updated.filter(isCompanyCashier);
       if (regular.length === 1) {
         setSelectedCashier(regular[0]);
       }
@@ -455,7 +444,7 @@ export function CashierLockScreen({
                       value=""
                       onChange={(e) => {
                         const id = Number(e.target.value);
-                        const found = authorizedCashiers.find((c) => c.id === id);
+                        const found = regularCashiers.find((c) => c.id === id);
                         if (found) handleSelectCashier(found);
                       }}
                     >

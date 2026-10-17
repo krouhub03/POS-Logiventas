@@ -201,6 +201,9 @@ fn save_synced_users(conn: &rusqlite::Connection, json: &Value) -> AppResult<Vec
         );
         let params_slice: Vec<&dyn rusqlite::ToSql> = valid_erp_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         conn.execute(&query, rusqlite::params_from_iter(params_slice))?;
+
+        // Desactivar cualquier usuario legacy local sin erp_user_id (ej. seed 'admin' de inicialización)
+        let _ = conn.execute("UPDATE users SET active = 0 WHERE erp_user_id IS NULL", []);
     }
 
     Ok(result)
@@ -431,11 +434,17 @@ pub async fn sync_users_from_erp(db: State<'_, Db>) -> AppResult<Vec<CashierUser
 #[tauri::command]
 pub fn list_local_cashiers(db: State<'_, Db>) -> AppResult<Vec<CashierUser>> {
     let conn = db.conn()?;
-    let mut stmt = conn.prepare(
+    let is_paired = get_setting(&conn, "empresa_id").is_some() || get_setting(&conn, "terminal_token").is_some();
+    let query = if is_paired {
+        "SELECT id, erp_user_id, username, full_name, email, role, active, permissions, erp_profile_name, login_count, erp_role_code
+         FROM users WHERE active = 1 AND erp_user_id IS NOT NULL AND (erp_role_code IS NULL OR erp_role_code != 'CLIENTE') AND role != 'customer'
+         ORDER BY login_count DESC, full_name ASC"
+    } else {
         "SELECT id, erp_user_id, username, full_name, email, role, active, permissions, erp_profile_name, login_count, erp_role_code
          FROM users WHERE active = 1 AND (erp_role_code IS NULL OR erp_role_code != 'CLIENTE') AND role != 'customer'
-         ORDER BY login_count DESC, full_name ASC",
-    )?;
+         ORDER BY login_count DESC, full_name ASC"
+    };
+    let mut stmt = conn.prepare(query)?;
 
     let rows = stmt.query_map([], |r| {
         let permissions_raw: Option<String> = r.get(7).ok();
