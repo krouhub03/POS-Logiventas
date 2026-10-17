@@ -122,7 +122,9 @@ export function PairingScreen({
     <div style={styles.container}>
       <div style={styles.card}>
         <div style={styles.header}>
-          <div style={styles.logoBadge}>POS</div>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
+            <img src="/logo_metahabi.png" alt="Metahabi" style={{ height: "46px", objectFit: "contain" }} />
+          </div>
           <h1 style={styles.title}>Vincular Terminal de Caja</h1>
           <p style={styles.subtitle}>
             Conecta esta aplicación de escritorio directamente con el dominio de tu empresa o sucursal.

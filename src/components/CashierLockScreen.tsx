@@ -381,6 +381,11 @@ export function CashierLockScreen({
       {/* Barra Superior con Datos de Terminal */}
       <header style={styles.topBar}>
         <div style={styles.terminalInfo}>
+          <img
+            src="/metahabi-icon.png"
+            alt="Metahabi POS"
+            style={{ width: 32, height: 32, borderRadius: 8, objectFit: "contain", flexShrink: 0 }}
+          />
           <div style={styles.indicatorOnline} title="Operando en SQLite local (Offline-First)" />
           <div>
             <div style={styles.empresaText}>
@@ -410,7 +415,9 @@ export function CashierLockScreen({
         {!selectedCashier ? (
           /* PASO 1: Selector Visual de Cajeros */
           <div style={styles.selectorBox}>
-            <div style={styles.avatarCircle}>👥</div>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "0.85rem" }}>
+              <img src="/logo_metahabi.png" alt="Metahabi" style={{ height: "40px", objectFit: "contain" }} />
+            </div>
             <h2 style={styles.lockTitle}>Selecciona tu Usuario</h2>
             <p style={styles.lockSubtitle}>
               Elige tu perfil de operador para ingresar al punto de venta

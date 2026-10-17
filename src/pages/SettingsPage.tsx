@@ -200,9 +200,11 @@ export function SettingsPage({
       {/* 1. HEADER */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="px-2.5 py-1 bg-gradient-to-r from-red-600 to-rose-700 rounded-lg text-white font-black text-xs tracking-wider shadow">
-            ML
-          </div>
+          <img
+            src="/metahabi-icon.png"
+            alt="Metahabi"
+            className="w-8 h-8 rounded-lg object-contain shadow-2xs"
+          />
           <div>
             <h1 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <span>Configuración del Sistema</span>

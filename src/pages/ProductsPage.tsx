@@ -856,7 +856,8 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           )}
           <div className="h-5 w-px bg-slate-300 dark:bg-slate-700 hidden sm:block"></div>
           <h1 className="text-base font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-            <span>📦 Catálogo & Inventario</span>
+            <img src="/metahabi-icon.png" alt="Metahabi" className="w-5 h-5 object-contain" />
+            <span>Catálogo & Inventario</span>
           </h1>
         </div>
 
