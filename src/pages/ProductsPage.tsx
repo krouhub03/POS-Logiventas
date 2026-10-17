@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
 import { useModals } from "../contexts/ModalContext";
@@ -88,6 +89,40 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formMinStock, setFormMinStock] = useState<number>(5);
   const [formTags, setFormTags] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
+
+  // Estados de Imagen del Producto
+  const [formImagePreview, setFormImagePreview] = useState<string | null>(null);
+  const [formImageBase64, setFormImageBase64] = useState<string | null>(null);
+  const [formImageDeleted, setFormImageDeleted] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      modalAlert({
+        title: "Archivo No Válido",
+        message: "Por favor seleccione un archivo de imagen (PNG, JPG, WebP).",
+        variant: "warning",
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      setFormImagePreview(dataUrl);
+      setFormImageBase64(dataUrl);
+      setFormImageDeleted(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveImage = () => {
+    setFormImagePreview(null);
+    setFormImageBase64(null);
+    setFormImageDeleted(true);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   // Cálculo en vivo del stock armable del combo
   const calculatedBundleStock = useMemo(() => {
@@ -400,6 +435,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormStock(0);
     setFormMinStock(asService ? 0 : 5);
     setFormTags("");
+    setFormImagePreview(null);
+    setFormImageBase64(null);
+    setFormImageDeleted(false);
     setIsFormOpen(true);
   };
 
@@ -420,6 +458,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
     setFormTags(parseTags(p.tags, dbTags).join(", "));
+    setFormImagePreview(p.imageLocalPath ? convertFileSrc(p.imageLocalPath) : null);
+    setFormImageBase64(null);
+    setFormImageDeleted(false);
     setIsFormOpen(true);
 
     if (p.isBundle) {
@@ -503,6 +544,14 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           }));
           await api.products.saveComponents(updated.id, compItems);
         }
+
+        // Procesar imagen si fue cambiada o eliminada
+        if (formImageDeleted) {
+          await api.products.deleteImage(updated.id);
+        } else if (formImageBase64) {
+          await api.products.saveImage(updated.id, formImageBase64);
+        }
+
         showNotification(
           `✓ ${formIsBundle ? "Combo" : formIsService ? "Servicio" : "Producto"} "${formName}" actualizado correctamente.`
         );
@@ -531,6 +580,12 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           }));
           await api.products.saveComponents(created.id, compItems);
         }
+
+        // Si se cargó imagen en nuevo producto, guardarla
+        if (formImageBase64) {
+          await api.products.saveImage(created.id, formImageBase64);
+        }
+
         showNotification(
           `✓ ${formIsBundle ? "Combo" : formIsService ? "Servicio" : "Producto"} "${formName}" creado con éxito.`
         );
@@ -1050,6 +1105,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
+                  <th className="py-3 px-3 w-14 text-center">Foto</th>
                   <th className="py-3 px-4 w-28">Tipo</th>
                   <th className="py-3 px-4 w-40">Código / SKU</th>
                   <th className="py-3 px-4">Nombre Comercial</th>
@@ -1063,7 +1119,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {catalogProducts.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-slate-400 dark:text-slate-500">
+                    <td colSpan={9} className="py-12 text-center text-slate-400 dark:text-slate-500">
                       <div className="text-3xl mb-2">🔍</div>
                       <p className="font-semibold">No se encontraron productos ni servicios en el catálogo.</p>
                       <button
@@ -1089,6 +1145,24 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         key={p.id}
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
                       >
+                        {/* FOTO LOCAL */}
+                        <td className="py-2.5 px-3 text-center">
+                          {p.imageLocalPath ? (
+                            <img
+                              src={convertFileSrc(p.imageLocalPath)}
+                              alt={p.name}
+                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center text-slate-400 mx-auto text-base">
+                              {p.isBundle ? "🍱" : p.isService ? "🛠️" : "📦"}
+                            </div>
+                          )}
+                        </td>
+
                         {/* TIPO */}
                         <td className="py-3 px-4">
                           {p.isBundle ? (
@@ -1690,6 +1764,59 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         onChange={(e) => setFormName(e.target.value)}
                         className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
+                    </div>
+
+                    {/* FOTOGRAFÍA DEL PRODUCTO (OFFLINE LOCAL + SYNC) */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <span>📷 Fotografía del Producto</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Almacenamiento Local Offline</span>
+                        </label>
+                        {formImagePreview && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveImage}
+                            className="text-[11px] font-bold text-red-600 dark:text-red-400 hover:underline cursor-pointer flex items-center gap-1"
+                          >
+                            ✕ Quitar Foto
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3.5">
+                        <div className="w-14 h-14 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+                          {formImagePreview ? (
+                            <img
+                              src={formImagePreview}
+                              alt="Preview"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-2xl text-slate-300 dark:text-slate-600">🖼️</span>
+                          )}
+                        </div>
+
+                        <div className="flex-1 space-y-1">
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept="image/png,image/jpeg,image/webp,image/jpg"
+                            onChange={handleImageFileChange}
+                            className="hidden"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                          >
+                            <span>📁 {formImagePreview ? "Cambiar Imagen" : "Cargar Imagen"}</span>
+                          </button>
+                          <p className="text-[10px] text-slate-400">
+                            PNG, JPG, WebP. Se guarda en disco local y sincroniza vía hash.
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
                     {/* PRECIO DE VENTA Y COSTO */}

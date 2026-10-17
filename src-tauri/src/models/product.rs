@@ -21,6 +21,10 @@ pub struct Product {
     pub is_bundle: bool,
     pub tags: Option<String>,
     pub tax_fixed_cents: i64,
+    pub image_url: Option<String>,
+    pub image_local_path: Option<String>,
+    pub image_hash: Option<String>,
+    pub image_sync_status: Option<String>,
     pub active: bool,
 }
 
@@ -43,6 +47,9 @@ pub struct NewProduct {
     pub is_bundle: Option<bool>,
     pub tags: Option<String>,
     pub tax_fixed_cents: Option<i64>,
+    pub image_url: Option<String>,
+    pub image_local_path: Option<String>,
+    pub image_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +72,10 @@ pub struct UpdateProductInput {
     pub is_bundle: Option<bool>,
     pub tags: Option<String>,
     pub tax_fixed_cents: Option<i64>,
+    pub image_url: Option<String>,
+    pub image_local_path: Option<String>,
+    pub image_hash: Option<String>,
+    pub image_sync_status: Option<String>,
     pub active: Option<bool>,
 }
 

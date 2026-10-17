@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
-import type { Customer, CreateCustomerInput, RecordCustomerPaymentInput } from "../types";
+import type { Customer, CreateCustomerInput, RecordCustomerPaymentInput, PaymentMethod } from "../types";
 
 interface CustomerModalProps {
   isOpen: boolean;
   currentCustomer?: Customer | null;
+  currentUserId?: number;
   onClose: () => void;
   onSelect: (customer: Customer | null) => void;
 }
@@ -13,6 +14,7 @@ interface CustomerModalProps {
 export function CustomerModal({
   isOpen,
   currentCustomer,
+  currentUserId,
   onClose,
   onSelect,
 }: CustomerModalProps) {
@@ -37,10 +39,22 @@ export function CustomerModal({
   // Formulario de Abono a Cartera
   const [paymentCustomer, setPaymentCustomer] = useState<Customer | null>(null);
   const [paymentAmountStr, setPaymentAmountStr] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [availableMethods, setAvailableMethods] = useState<PaymentMethod[]>([]);
+  const [selectedMethodId, setSelectedMethodId] = useState<string>("");
   const [paymentRef, setPaymentRef] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+
+  const getMethodIcon = (type: string, code: string) => {
+    const t = (type || "").toUpperCase();
+    const c = (code || "").toLowerCase();
+    if (t === "EFECTIVO" || c.includes("cash") || c.includes("efectivo")) return "💵";
+    if (t === "TARJETA" || c.includes("card") || c.includes("tarjeta")) return "💳";
+    if (t === "CREDITO" || c.includes("credit") || c.includes("fiar")) return "📝";
+    if (c.includes("nequi") || c.includes("daviplata") || t === "DIGITAL") return "📱";
+    if (t === "BANCO" || c.includes("transfer")) return "🏦";
+    return "🏷️";
+  };
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const newNameInputRef = useRef<HTMLInputElement>(null);
@@ -89,10 +103,48 @@ export function CustomerModal({
           setError("No se pudieron cargar los clientes locales.");
         })
         .finally(() => setLoading(false));
+
+      // Sincronizar medios de pago dinámicos desde la BD / ERP
+      refreshPaymentMethods();
     }
   }, [isOpen]);
 
+  const refreshPaymentMethods = async () => {
+    try {
+      const allMethods = await api.sync.getPaymentMethods();
+      const enabled = allMethods.filter(
+        (m) =>
+          m.active === 1 &&
+          m.terminalEnabled === 1 &&
+          m.type !== "CREDITO" &&
+          !m.code.toLowerCase().includes("credit") &&
+          !m.code.toLowerCase().includes("fiar")
+      );
+      setAvailableMethods(enabled);
+
+      const defaultMethod =
+        enabled.find(
+          (m) => m.type === "EFECTIVO" || m.code.toLowerCase().includes("cash")
+        ) || enabled[0];
+
+      if (defaultMethod) {
+        setSelectedMethodId(defaultMethod.id);
+      }
+      return enabled;
+    } catch (err) {
+      console.error("Error cargando medios de pago:", err);
+      return [];
+    }
+  };
+
   // Búsqueda con debounce
+  useEffect(() => {
+    if (!isOpen) return;
+    if (mode === "payment") {
+      refreshPaymentMethods();
+    }
+  }, [mode, isOpen]);
+
   useEffect(() => {
     if (!isOpen || mode !== "search") return;
     const t = setTimeout(() => {
@@ -174,12 +226,12 @@ export function CustomerModal({
     if (e) e.stopPropagation();
     setPaymentCustomer(customer);
     setPaymentAmountStr("");
-    setPaymentMethod("cash");
     setPaymentRef("");
     setPaymentNotes("");
     setError(null);
     setSuccessMsg(null);
     setMode("payment");
+    refreshPaymentMethods();
     setTimeout(() => paymentAmountInputRef.current?.focus(), 50);
   };
 
@@ -197,12 +249,14 @@ export function CustomerModal({
     setPaymentSubmitting(true);
     setError(null);
 
+    const selectedMethodObj = availableMethods.find((m) => m.id === selectedMethodId);
+
     try {
       const input: RecordCustomerPaymentInput = {
         customerId: paymentCustomer.id,
-        userId: 1, // Usuario actual autenticado
-        paymentMethodId: paymentMethod,
-        method: paymentMethod === "cash" ? "Efectivo" : paymentMethod === "transfer" ? "Transferencia" : "Tarjeta",
+        userId: currentUserId || 1, // Usuario actual autenticado
+        paymentMethodId: selectedMethodObj?.id || selectedMethodId || undefined,
+        method: selectedMethodObj?.name || "Efectivo",
         amountCents,
         reference: paymentRef.trim() || undefined,
         notes: paymentNotes.trim() || undefined,
@@ -510,34 +564,58 @@ export function CustomerModal({
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Medio de Recaudo
+              {/* BOTONERA DINÁMICA DE MEDIOS DE RECAUDO (SINCRONIZADOS CON EL ERP) */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Medio de Recaudo (Sincronizado con ERP) <span className="text-rose-500">*</span>
                   </label>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
-                  >
-                    <option value="cash">💵 Efectivo (Cajón de Dinero)</option>
-                    <option value="transfer">📱 Nequi / Daviplata / Transferencia</option>
-                    <option value="card">💳 Tarjeta Débito / Crédito</option>
-                  </select>
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                    {availableMethods.length > 0
+                      ? `${availableMethods.length} medios disponibles`
+                      : "Cargando..."}
+                  </span>
                 </div>
 
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    N° Comprobante / Referencia (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    value={paymentRef}
-                    onChange={(e) => setPaymentRef(e.target.value)}
-                    placeholder="Ej: M12345 / Aprobación"
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                  />
-                </div>
+                {availableMethods.length === 0 ? (
+                  <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-500 text-center animate-pulse">
+                    Sincronizando medios de pago desde el ERP...
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {availableMethods.map((pm) => {
+                      const isSelected = selectedMethodId === pm.id;
+                      return (
+                        <button
+                          key={pm.id}
+                          type="button"
+                          onClick={() => setSelectedMethodId(pm.id)}
+                          className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border text-left cursor-pointer ${
+                            isSelected
+                              ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.01]"
+                              : "bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                          }`}
+                        >
+                          <span className="text-base">{getMethodIcon(pm.type, pm.code)}</span>
+                          <span className="truncate">{pm.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  N° Comprobante / Referencia (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                  placeholder="Ej: M12345 / Aprobación #4829"
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
+                />
               </div>
 
               <div>

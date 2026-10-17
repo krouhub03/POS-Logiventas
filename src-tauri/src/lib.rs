@@ -84,6 +84,8 @@ pub fn run() {
             commands::customers::update_customer_credit,
             commands::customers::record_customer_payment,
             commands::customers::get_customer_payments,
+            commands::images::save_product_image_local,
+            commands::images::delete_product_image_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

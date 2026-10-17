@@ -341,11 +341,13 @@ pub async fn record_customer_payment(
         "createdAt": created_at
     });
 
-    let _ = tx.execute(
+    if let Err(e) = tx.execute(
         "INSERT INTO sync_queue (entity_type, entity_id, payload, status) \
          VALUES ('customer_payment', ?1, ?2, 'pending')",
         params![payment_id, sync_payload.to_string()],
-    );
+    ) {
+        eprintln!("[cxc-sync] Error encolando customer_payment en sync_queue: {}", e);
+    }
 
     tx.commit().map_err(|e| format!("Error consolidando transacción de abono: {}", e))?;
 

@@ -489,6 +489,33 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             None
         };
 
+        let erp_image_url = p["image_url"].as_str().map(str::trim).filter(|s| !s.is_empty());
+        let erp_image_hash = p["image_hash"].as_str().map(str::trim).filter(|s| !s.is_empty());
+
+        let (current_img_hash, current_local_path, current_sync_status): (Option<String>, Option<String>, Option<String>) = if let Some(lid) = local_match {
+            tx.query_row(
+                "SELECT image_hash, image_local_path, image_sync_status FROM products WHERE id = ?1",
+                params![lid],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap_or((None, None, None))
+        } else {
+            (None, None, None)
+        };
+
+        let (final_img_url, final_local_path, final_img_hash, final_sync_status) = if current_sync_status.as_deref() == Some("pending_upload") {
+            (None, current_local_path, current_img_hash, current_sync_status)
+        } else if let Some(url) = erp_image_url {
+            let file_exists = current_local_path.as_ref().map(|path| std::path::Path::new(path).exists()).unwrap_or(false);
+            if erp_image_hash.is_some() && erp_image_hash == current_img_hash.as_deref() && file_exists {
+                (Some(url.to_string()), current_local_path, current_img_hash, Some("synced".to_string()))
+            } else {
+                (Some(url.to_string()), current_local_path, erp_image_hash.map(String::from), Some("pending_download".to_string()))
+            }
+        } else {
+            (None, None, None, Some("none".to_string()))
+        };
+
         if let Some(local_id) = local_match {
             tx.execute(
                 "UPDATE products SET
@@ -511,8 +538,12 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     tags = ?16,
                     tax_fixed_cents = ?17,
                     category_id = ?18,
+                    image_url = ?19,
+                    image_local_path = ?20,
+                    image_hash = ?21,
+                    image_sync_status = ?22,
                     updated_at = datetime('now')
-                 WHERE id = ?19",
+                 WHERE id = ?23",
                 params![
                     erp_id,
                     sku,
@@ -532,6 +563,10 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     tags,
                     tax_fixed_cents,
                     category_id,
+                    final_img_url,
+                    final_local_path,
+                    final_img_hash,
+                    final_sync_status,
                     local_id
                 ],
             )?;
@@ -540,8 +575,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "INSERT INTO products (
                     erp_id, sku, barcode, name, unit, is_service,
                     price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload,
-                    controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, category_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17, ?18)",
+                    controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, category_id,
+                    image_url, image_local_path, image_hash, image_sync_status
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     erp_id,
                     sku,
@@ -560,7 +596,11 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     is_bundle,
                     tags,
                     tax_fixed_cents,
-                    category_id
+                    category_id,
+                    final_img_url,
+                    final_local_path,
+                    final_img_hash,
+                    final_sync_status,
                 ],
             )?;
         }
@@ -692,6 +732,30 @@ pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
         }
     }
 
+    // Desactivar en SQLite cualquier medio de pago que ya no esté activo o haya sido eliminado en el ERP
+    let erp_active_ids: std::collections::HashSet<String> = payment_methods
+        .iter()
+        .filter(|pm| pm["active"].as_i64().unwrap_or(1) == 1)
+        .filter_map(|pm| pm["id"].as_str().map(|s| s.to_string()))
+        .collect();
+
+    {
+        let mut stmt = tx.prepare("SELECT id FROM payment_methods WHERE active = 1")?;
+        let local_ids: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for local_id in local_ids {
+            if !erp_active_ids.contains(&local_id) {
+                let _ = tx.execute(
+                    "UPDATE payment_methods SET active = 0, updated_at = datetime('now') WHERE id = ?1",
+                    params![local_id],
+                );
+            }
+        }
+    }
+
     tx.commit()?;
     Ok(synced_count)
 }
@@ -755,7 +819,7 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         let token = get_setting(&conn, "terminal_token").unwrap_or_default();
 
         let mut stmt = conn.prepare(
-            "SELECT id, payload FROM sync_queue WHERE status = 'pending' ORDER BY id ASC LIMIT 30"
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending' ORDER BY id ASC LIMIT 30"
         )?;
 
         let rows = stmt.query_map([], |r| {
@@ -1054,7 +1118,13 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 let _ = sync_catalog_internal(&db).await;
             }
 
-            // 4. Emitir evento a la UI de React para actualizar indicadores en tiempo real
+            // 4. Sincronización asíncrona de imágenes (baja prioridad, cada 15 segundos)
+            if loop_count % 3 == 0 {
+                let _ = crate::commands::images::upload_pending_images_internal(&app, &db).await;
+                let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
+            }
+
+            // 5. Emitir evento a la UI de React para actualizar indicadores en tiempo real
             if let Ok(status) = get_sync_status_internal(&db).await {
                 use tauri::Emitter;
                 let _ = app.emit("sync-status-changed", &status);

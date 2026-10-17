@@ -88,6 +88,10 @@ export const api = {
       components: SaveProductComponentItem[]
     ) =>
       invoke<void>("save_product_components", { parentId, components }),
+    saveImage: (productId: number, imageBase64: string) =>
+      invoke<Product>("save_product_image_local", { productId, imageBase64 }),
+    deleteImage: (productId: number) =>
+      invoke<Product>("delete_product_image_local", { productId }),
   },
 
   categories: {

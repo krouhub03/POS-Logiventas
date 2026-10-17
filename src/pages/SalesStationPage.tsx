@@ -1720,6 +1720,7 @@ export function SalesStationPage({
       <CustomerModal
         isOpen={isCustomerModalOpen}
         currentCustomer={currentTicket?.customer || null}
+        currentUserId={cashier.id}
         onClose={() => {
           setIsCustomerModalOpen(false);
           focusInput();

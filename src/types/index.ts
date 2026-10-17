@@ -18,6 +18,10 @@ export interface Product {
   isBundle: boolean;
   tags?: string | null;
   taxFixedCents: number;
+  imageUrl?: string | null;
+  imageLocalPath?: string | null;
+  imageHash?: string | null;
+  imageSyncStatus?: "none" | "pending_download" | "pending_upload" | "synced" | "failed";
   active: boolean;
 }
 
@@ -56,6 +60,9 @@ export interface NewProduct {
   isBundle?: boolean;
   tags?: string | null;
   taxFixedCents?: number;
+  imageUrl?: string | null;
+  imageLocalPath?: string | null;
+  imageHash?: string | null;
 }
 
 /** Espejo de `models::product::UpdateProductInput` (Rust). */
@@ -77,6 +84,10 @@ export interface UpdateProductInput {
   isBundle?: boolean;
   tags?: string | null;
   taxFixedCents?: number;
+  imageUrl?: string | null;
+  imageLocalPath?: string | null;
+  imageHash?: string | null;
+  imageSyncStatus?: "none" | "pending_download" | "pending_upload" | "synced" | "failed";
   active?: boolean;
 }
 

@@ -9,7 +9,8 @@ use crate::models::product::{
 };
 
 const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
-     p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, p.is_bundle, p.tags, p.tax_fixed_cents, c.name";
+     p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, p.is_bundle, p.tags, p.tax_fixed_cents, c.name, \
+     p.image_url, p.image_local_path, p.image_hash, p.image_sync_status";
 const PRODUCT_FROM: &str = "products p LEFT JOIN categories c ON c.id = p.category_id";
 
 /// Calcula dinámicamente el stock disponible de un combo basado en sus componentes hijos.
@@ -33,6 +34,10 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let tags: Option<String> = r.get(16).ok();
     let tax_fixed_cents: i64 = r.get(17).unwrap_or(0);
     let category_name: Option<String> = r.get(18).ok();
+    let image_url: Option<String> = r.get(19).ok();
+    let image_local_path: Option<String> = r.get(20).ok();
+    let image_hash: Option<String> = r.get(21).ok();
+    let image_sync_status: Option<String> = r.get(22).ok();
 
     Ok(Product {
         id: r.get(0)?,
@@ -53,6 +58,10 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         is_bundle: is_bundle_int != 0,
         tags,
         tax_fixed_cents,
+        image_url,
+        image_local_path,
+        image_hash,
+        image_sync_status,
         active: active_int != 0,
     })
 }
@@ -174,11 +183,14 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         );
     }
 
+    let image_sync_status = if input.image_local_path.is_some() { "pending_upload" } else { "none" };
+
     tx.execute(
         "INSERT INTO products (sku, barcode, name, category_id, unit, price_cents, cost_cents, \
          tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload, \
-         controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, ?12, ?13, ?14, ?15, ?16)",
+         controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, \
+         image_url, image_local_path, image_hash, image_sync_status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             input.sku.trim(),
             barcode_clean,
@@ -196,6 +208,10 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
             if is_bundle { 1 } else { 0 },
             tags_val,
             tax_fixed_cents,
+            input.image_url,
+            input.image_local_path,
+            input.image_hash,
+            image_sync_status,
         ],
     )?;
 
@@ -288,6 +304,13 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
             input.id,
         ],
     )?;
+
+    if let Some(ref local_path) = input.image_local_path {
+        tx.execute(
+            "UPDATE products SET image_local_path = ?1, image_hash = ?2, image_sync_status = 'pending_upload' WHERE id = ?3",
+            params![local_path, input.image_hash, input.id],
+        )?;
+    }
 
     let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.id = ?1");
     let product = tx.query_row(&sql, params![input.id], map_product)?;

@@ -2834,11 +2834,13 @@ dependencies = [
 name = "pos-logiventa"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bcrypt",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
