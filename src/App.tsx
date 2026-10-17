@@ -193,6 +193,7 @@ function App() {
     return (
       <PairingScreen
         initialErpUrl={terminalStatus?.erpUrl}
+        terminalStatus={terminalStatus}
         onPaired={(newStatus) => {
           setTerminalStatus(newStatus);
           handleSetCashier(null);

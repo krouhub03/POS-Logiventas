@@ -6,7 +6,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::auth::{
-    CashierUser, ErpCajaOption, PairCodeInput, PairLoginInput, PairLoginResult, TerminalStatus,
+    CashierUser, ErpCajaOption, PairCodeInput, PairLoginInput, PairLoginResult, ReconnectTerminalInput, TerminalStatus,
 };
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
@@ -31,6 +31,7 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
     let pairing_status = get_setting(conn, "pairing_status").unwrap_or_else(|| "unpaired".into());
     let is_paired = pairing_status == "linked";
     let erp_url = get_setting(conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
+    let is_disconnected = get_setting(conn, "is_disconnected").as_deref() == Some("1");
 
     TerminalStatus {
         is_paired,
@@ -45,6 +46,11 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
         empresa_nit: get_setting(conn, "empresa_nit"),
         active_cashier: None,
         active_cashier_revoked: None,
+        last_caja_id: get_setting(conn, "last_caja_id"),
+        last_caja_codigo: get_setting(conn, "last_caja_codigo"),
+        last_caja_nombre: get_setting(conn, "last_caja_nombre"),
+        last_empresa_nombre: get_setting(conn, "last_empresa_nombre"),
+        is_disconnected: Some(is_disconnected),
     }
 }
 
@@ -53,6 +59,33 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
 // ─────────────────────────────────────────────────────────────
 
 fn internal_unpair(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    // Preservar la identidad de la caja antes de desvincular para permitir reconexión ágil
+    if let Some(cid) = get_setting(conn, "caja_id") {
+        set_setting(conn, "last_caja_id", &cid)?;
+    }
+    if let Some(ccod) = get_setting(conn, "caja_codigo") {
+        set_setting(conn, "last_caja_codigo", &ccod)?;
+    }
+    if let Some(cnom) = get_setting(conn, "caja_nombre") {
+        set_setting(conn, "last_caja_nombre", &cnom)?;
+    }
+    if let Some(enom) = get_setting(conn, "empresa_nombre") {
+        set_setting(conn, "last_empresa_nombre", &enom)?;
+    }
+    if let Some(eid) = get_setting(conn, "empresa_id") {
+        set_setting(conn, "last_empresa_id", &eid)?;
+    }
+    if let Some(bid) = get_setting(conn, "bodega_id") {
+        set_setting(conn, "last_bodega_id", &bid)?;
+    }
+    if let Some(bnom) = get_setting(conn, "bodega_nombre") {
+        set_setting(conn, "last_bodega_nombre", &bnom)?;
+    }
+    if let Some(url) = get_setting(conn, "erp_url") {
+        set_setting(conn, "last_erp_url", &url)?;
+    }
+    set_setting(conn, "is_disconnected", "1")?;
+
     set_setting(conn, "pairing_status", "unpaired")?;
     set_setting(conn, "terminal_token", "")?;
     set_setting(conn, "caja_id", "")?;
@@ -260,6 +293,8 @@ pub async fn pair_terminal_code(
     let empresa_id = data["empresa"]["id"].as_str().unwrap_or_default();
     let empresa_nombre = data["empresa"]["nombre"].as_str().unwrap_or_default();
     let empresa_nit = data["empresa"]["nit"].as_str().unwrap_or_default();
+    let bodega_id = data["caja"]["bodegaId"].as_str().or_else(|| data["caja"]["bodega"]["id"].as_str()).unwrap_or_default();
+    let bodega_nombre = data["caja"]["bodega"]["nombre"].as_str().unwrap_or_default();
 
     // Guardar configuración en SQLite y asegurar aislamiento Multi-Tenant
     {
@@ -287,7 +322,14 @@ pub async fn pair_terminal_code(
         set_setting(&conn, "empresa_id", empresa_id)?;
         set_setting(&conn, "empresa_nombre", empresa_nombre)?;
         set_setting(&conn, "empresa_nit", empresa_nit)?;
+        if !bodega_id.is_empty() {
+            set_setting(&conn, "bodega_id", bodega_id)?;
+        }
+        if !bodega_nombre.is_empty() {
+            set_setting(&conn, "bodega_nombre", bodega_nombre)?;
+        }
         set_setting(&conn, "pairing_status", "linked")?;
+        set_setting(&conn, "is_disconnected", "0")?;
     }
 
     // Sincronizar usuarios desde el ERP
@@ -370,6 +412,8 @@ pub async fn pair_terminal_login(
     let empresa_id = data["empresa"]["id"].as_str().unwrap_or_default();
     let empresa_nombre = data["empresa"]["nombre"].as_str().unwrap_or_default();
     let empresa_nit = data["empresa"]["nit"].as_str().unwrap_or_default();
+    let bodega_id = data["caja"]["bodegaId"].as_str().or_else(|| data["caja"]["bodega"]["id"].as_str()).unwrap_or_default();
+    let bodega_nombre = data["caja"]["bodega"]["nombre"].as_str().unwrap_or_default();
 
     {
         let conn = db.conn()?;
@@ -395,7 +439,14 @@ pub async fn pair_terminal_login(
         set_setting(&conn, "empresa_id", empresa_id)?;
         set_setting(&conn, "empresa_nombre", empresa_nombre)?;
         set_setting(&conn, "empresa_nit", empresa_nit)?;
+        if !bodega_id.is_empty() {
+            set_setting(&conn, "bodega_id", bodega_id)?;
+        }
+        if !bodega_nombre.is_empty() {
+            set_setting(&conn, "bodega_nombre", bodega_nombre)?;
+        }
         set_setting(&conn, "pairing_status", "linked")?;
+        set_setting(&conn, "is_disconnected", "0")?;
     }
 
     if let Ok(users_json) = http_fetch_users(&clean_url, token).await {
@@ -745,6 +796,168 @@ pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
 
     let conn = db.conn()?;
     internal_unpair(&conn)?;
+    Ok(fetch_status_sync(&conn))
+}
+
+/// ⚡ Reconecta una terminal POS previamente vinculada o desconectada.
+#[tauri::command]
+pub async fn reconnect_terminal(
+    db: State<'_, Db>,
+    input: ReconnectTerminalInput,
+) -> AppResult<TerminalStatus> {
+    let (clean_url, caja_id, caja_codigo, empresa_id) = {
+        let conn = db.conn()?;
+        let url = input
+            .erp_url
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| get_setting(&conn, "last_erp_url"))
+            .or_else(|| get_setting(&conn, "erp_url"))
+            .unwrap_or_else(|| "http://localhost:3000".to_string())
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
+
+        let cid = input
+            .caja_id
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| get_setting(&conn, "last_caja_id"))
+            .or_else(|| get_setting(&conn, "caja_id"));
+
+        let ccod = input
+            .caja_codigo
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| get_setting(&conn, "last_caja_codigo"))
+            .or_else(|| get_setting(&conn, "caja_codigo"));
+
+        let eid = get_setting(&conn, "last_empresa_id").or_else(|| get_setting(&conn, "empresa_id"));
+
+        (url, cid, ccod, eid)
+    };
+
+    if caja_id.is_none() && caja_codigo.is_none() {
+        return Err(AppError::Auth("No se encontró información de la caja anterior para reconectar. Por favor realiza una vinculación normal.".into()));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/terminal/reconectar", clean_url);
+
+    let mut payload = serde_json::json!({});
+    if let Some(ref cid) = caja_id {
+        payload["cajaId"] = serde_json::json!(cid);
+    }
+    if let Some(ref ccod) = caja_codigo {
+        payload["cajaCodigo"] = serde_json::json!(ccod);
+    }
+    if let Some(ref eid) = empresa_id {
+        payload["empresaId"] = serde_json::json!(eid);
+    }
+    if let Some(ref pin) = input.pin {
+        payload["pin"] = serde_json::json!(pin.trim());
+    }
+    if let Some(ref em) = input.email {
+        payload["email"] = serde_json::json!(em.trim());
+    }
+    if let Some(ref pw) = input.password {
+        payload["password"] = serde_json::json!(pw);
+    }
+
+    let res = client.post(&url).json(&payload).send().await?;
+
+    if !res.status().is_success() {
+        let err_json: Value = res.json().await.unwrap_or_default();
+        let msg = err_json["message"]
+            .as_str()
+            .unwrap_or("No se pudo reconectar la terminal con el ERP");
+        return Err(AppError::Auth(msg.to_string()));
+    }
+
+    let json: Value = res.json().await?;
+    let data = &json["data"];
+
+    let token = data["terminalToken"].as_str().ok_or_else(|| {
+        AppError::Auth("No se recibió token de terminal en la respuesta de reconexión".into())
+    })?;
+    let new_caja_id = data["caja"]["id"].as_str().unwrap_or_default();
+    let new_caja_nombre = data["caja"]["nombre"].as_str().unwrap_or_default();
+    let new_caja_codigo = data["caja"]["codigo"].as_str().unwrap_or_default();
+    let new_empresa_id = data["empresa"]["id"].as_str().unwrap_or_default();
+    let new_empresa_nombre = data["empresa"]["nombre"].as_str().unwrap_or_default();
+    let new_empresa_nit = data["empresa"]["nit"].as_str().unwrap_or_default();
+    let new_bodega_id = data["caja"]["bodegaId"].as_str().or_else(|| data["caja"]["bodega"]["id"].as_str()).unwrap_or_default();
+    let new_bodega_nombre = data["caja"]["bodega"]["nombre"].as_str().unwrap_or_default();
+
+    {
+        let conn = db.conn()?;
+        set_setting(&conn, "erp_url", &clean_url)?;
+        set_setting(&conn, "terminal_token", token)?;
+        set_setting(&conn, "caja_id", new_caja_id)?;
+        set_setting(&conn, "caja_nombre", new_caja_nombre)?;
+        set_setting(&conn, "caja_codigo", new_caja_codigo)?;
+        set_setting(&conn, "empresa_id", new_empresa_id)?;
+        set_setting(&conn, "empresa_nombre", new_empresa_nombre)?;
+        set_setting(&conn, "empresa_nit", new_empresa_nit)?;
+        if !new_bodega_id.is_empty() {
+            set_setting(&conn, "bodega_id", new_bodega_id)?;
+        }
+        if !new_bodega_nombre.is_empty() {
+            set_setting(&conn, "bodega_nombre", new_bodega_nombre)?;
+        }
+        set_setting(&conn, "pairing_status", "linked")?;
+        set_setting(&conn, "is_disconnected", "0")?;
+    }
+
+    // Refrescar usuarios desde el ERP
+    if let Ok(users_json) = http_fetch_users(&clean_url, token).await {
+        let conn = db.conn()?;
+        let _ = save_synced_users(&conn, &users_json);
+    }
+
+    let conn = db.conn()?;
+    Ok(fetch_status_sync(&conn))
+}
+
+/// Pone la terminal en modo desconectado / fuera de línea sin borrar credenciales
+/// para permitir reconexión inmediata en 1 clic.
+#[tauri::command]
+pub async fn disconnect_terminal_temporarily(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if !erp_url.is_empty() && !token.is_empty() {
+        if let Ok(client) = reqwest::Client::builder().timeout(Duration::from_millis(1500)).build() {
+            let url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
+            let _ = client
+                .post(&url)
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({ "accion": "DESCONECTAR_SESION" }))
+                .send()
+                .await;
+        }
+    }
+
+    let conn = db.conn()?;
+    if let Some(cid) = get_setting(&conn, "caja_id") {
+        set_setting(&conn, "last_caja_id", &cid)?;
+    }
+    if let Some(ccod) = get_setting(&conn, "caja_codigo") {
+        set_setting(&conn, "last_caja_codigo", &ccod)?;
+    }
+    if let Some(cnom) = get_setting(&conn, "caja_nombre") {
+        set_setting(&conn, "last_caja_nombre", &cnom)?;
+    }
+    if let Some(enom) = get_setting(&conn, "empresa_nombre") {
+        set_setting(&conn, "last_empresa_nombre", &enom)?;
+    }
+    set_setting(&conn, "is_disconnected", "1")?;
+    set_setting(&conn, "pairing_status", "unpaired")?;
+
     Ok(fetch_status_sync(&conn))
 }
 

@@ -4,10 +4,15 @@ import type { ErpCajaOption, TerminalStatus } from "../types";
 
 interface PairingScreenProps {
   initialErpUrl?: string;
+  terminalStatus?: TerminalStatus | null;
   onPaired: (status: TerminalStatus) => void;
 }
 
-export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaired }: PairingScreenProps) {
+export function PairingScreen({
+  initialErpUrl = "http://localhost:3000",
+  terminalStatus,
+  onPaired,
+}: PairingScreenProps) {
   const [tab, setTab] = useState<"code" | "login">("code");
   const [erpUrl, setErpUrl] = useState(initialErpUrl);
   const [code, setCode] = useState("");
@@ -18,8 +23,35 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
   const [nuevaCajaNombre, setNuevaCajaNombre] = useState("");
   const [nuevaCajaCodigo, setNuevaCajaCodigo] = useState("");
   const [crearNueva, setCrearNueva] = useState(false);
+  const [reconnectPin, setReconnectPin] = useState("");
+  const [showReconnectPinInput, setShowReconnectPinInput] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const hasPreviousCaja = Boolean(terminalStatus?.lastCajaCodigo || terminalStatus?.lastCajaId);
+
+  const handleReconnect = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const status = await api.auth.reconnectTerminal({
+        erpUrl: erpUrl.trim(),
+        cajaId: terminalStatus?.lastCajaId || undefined,
+        cajaCodigo: terminalStatus?.lastCajaCodigo || undefined,
+        pin: reconnectPin.trim() || undefined,
+      });
+      onPaired(status);
+    } catch (err: unknown) {
+      const msg = String(err);
+      if (msg.toLowerCase().includes("pin") && !showReconnectPinInput) {
+        setShowReconnectPinInput(true);
+      }
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handlePairWithCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +107,94 @@ export function PairingScreen({ initialErpUrl = "http://localhost:3000", onPaire
             Conecta esta aplicación de escritorio directamente con el dominio de tu empresa o sucursal.
           </p>
         </div>
+
+        {/* Tarjeta de Reconexión Rápida de Caja Previa */}
+        {hasPreviousCaja && (
+          <div
+            style={{
+              marginBottom: "1.25rem",
+              padding: "1rem 1.25rem",
+              background: "rgba(16, 185, 129, 0.08)",
+              border: "1.5px solid rgba(16, 185, 129, 0.35)",
+              borderRadius: "14px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "1.1rem" }}>⚡</span>
+                  <strong style={{ fontSize: "0.95rem", color: "#10b981" }}>
+                    Caja Desconectada: {terminalStatus?.lastCajaCodigo || "CAJA"}
+                  </strong>
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginTop: "2px" }}>
+                  {terminalStatus?.lastCajaNombre || "Terminal POS"} • {terminalStatus?.lastEmpresaNombre || "Empresa"}
+                </div>
+              </div>
+
+              {!showReconnectPinInput ? (
+                <button
+                  type="button"
+                  onClick={() => handleReconnect()}
+                  disabled={loading}
+                  style={{
+                    padding: "0.6rem 1.25rem",
+                    background: "#10b981",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: "10px",
+                    fontWeight: "bold",
+                    fontSize: "0.85rem",
+                    cursor: loading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.4rem",
+                    boxShadow: "0 2px 8px rgba(16, 185, 129, 0.3)",
+                  }}
+                >
+                  <span>⚡</span>
+                  <span>{loading ? "Reconectando…" : "Reconectar esta Caja"}</span>
+                </button>
+              ) : null}
+            </div>
+
+            {showReconnectPinInput && (
+              <form onSubmit={handleReconnect} style={{ marginTop: "0.85rem", borderTop: "1px dashed rgba(16, 185, 129, 0.25)", paddingTop: "0.85rem" }}>
+                <label style={{ ...styles.label, marginBottom: "0.4rem" }}>
+                  Ingresa tu PIN de operador (4-6 dígitos) para autorizar la reconexión:
+                </label>
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                  <input
+                    style={{ ...styles.input, flex: 1, padding: "0.5rem 0.75rem", fontSize: "1rem", letterSpacing: "0.2em", textAlign: "center" }}
+                    type="password"
+                    maxLength={6}
+                    autoFocus
+                    placeholder="••••"
+                    value={reconnectPin}
+                    onChange={(e) => setReconnectPin(e.target.value.replace(/\D/g, ""))}
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || reconnectPin.length < 4}
+                    style={{
+                      padding: "0.5rem 1.25rem",
+                      background: reconnectPin.length >= 4 ? "#10b981" : "#475569",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: "10px",
+                      fontWeight: "bold",
+                      fontSize: "0.85rem",
+                      cursor: reconnectPin.length >= 4 ? "pointer" : "not-allowed",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {loading ? "Reconectando…" : "Confirmar y Reconectar"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
 
         {/* Selector de Pestañas */}
         <div style={styles.tabs}>

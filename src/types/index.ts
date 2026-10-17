@@ -147,6 +147,20 @@ export interface TerminalStatus {
   empresaNit: string | null;
   activeCashier: CashierUser | null;
   activeCashierRevoked?: boolean;
+  lastCajaId?: string | null;
+  lastCajaCodigo?: string | null;
+  lastCajaNombre?: string | null;
+  lastEmpresaNombre?: string | null;
+  isDisconnected?: boolean;
+}
+
+export interface ReconnectTerminalInput {
+  erpUrl?: string;
+  cajaId?: string;
+  cajaCodigo?: string;
+  pin?: string;
+  email?: string;
+  password?: string;
 }
 
 export interface PairCodeInput {

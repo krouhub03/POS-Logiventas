@@ -22,6 +22,7 @@ import type {
   ProductComponent,
   ProductTag,
   RecordCustomerPaymentInput,
+  ReconnectTerminalInput,
   CreateSaleReturnInput,
   SaleReturnDto,
   SaleReceipt,
@@ -69,6 +70,10 @@ export const api = {
     changePin: (userId: number, currentPin: string, newPin: string) =>
       invoke<boolean>("change_cashier_pin", { userId, currentPin, newPin }),
     unpair: () => invoke<TerminalStatus>("unpair_terminal"),
+    reconnectTerminal: (input: ReconnectTerminalInput) =>
+      invoke<TerminalStatus>("reconnect_terminal", { input }),
+    disconnectTemporarily: () =>
+      invoke<TerminalStatus>("disconnect_terminal_temporarily"),
   },
 
   products: {

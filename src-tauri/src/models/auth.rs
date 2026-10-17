@@ -16,6 +16,27 @@ pub struct TerminalStatus {
     pub active_cashier: Option<CashierUser>,
     #[serde(default)]
     pub active_cashier_revoked: Option<bool>,
+    #[serde(default)]
+    pub last_caja_id: Option<String>,
+    #[serde(default)]
+    pub last_caja_codigo: Option<String>,
+    #[serde(default)]
+    pub last_caja_nombre: Option<String>,
+    #[serde(default)]
+    pub last_empresa_nombre: Option<String>,
+    #[serde(default)]
+    pub is_disconnected: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconnectTerminalInput {
+    pub erp_url: Option<String>,
+    pub caja_id: Option<String>,
+    pub caja_codigo: Option<String>,
+    pub pin: Option<String>,
+    pub email: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

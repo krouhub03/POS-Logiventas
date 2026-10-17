@@ -76,6 +76,8 @@ pub fn run() {
             commands::auth::login_cashier_user_pin,
             commands::auth::change_cashier_pin,
             commands::auth::unpair_terminal,
+            commands::auth::reconnect_terminal,
+            commands::auth::disconnect_terminal_temporarily,
             commands::sales::create_sale,
             commands::sales::get_last_sale,
             commands::sales::get_today_summary,

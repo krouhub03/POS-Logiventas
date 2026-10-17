@@ -798,45 +798,92 @@ export function SettingsPage({
                     </button>
                   </div>
 
-                  {/* SECCIÓN DE DESCONEXIÓN / DESVINCULACIÓN DE CAJA */}
-                  <div className="p-5 bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-1">
-                      <div className="text-sm font-bold text-rose-800 dark:text-rose-200 flex items-center gap-2">
-                        <span>🔌 Desconectar y Desvincular Caja del ERP</span>
+                  {/* SECCIÓN DE DESCONEXIÓN / RECONEXIÓN DE CAJA */}
+                  <div className="space-y-3">
+                    {/* Opción 1: Desconectar Temporalmente (Permite Reconectar en 1 clic) */}
+                    <div className="p-5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <div className="text-sm font-bold text-amber-800 dark:text-amber-200 flex items-center gap-2">
+                          <span>🔌 Desconectar Caja del ERP</span>
+                          <span className="text-[10px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-mono">
+                            Reconectable en 1 Clic
+                          </span>
+                        </div>
+                        <p className="text-xs text-amber-700/80 dark:text-amber-300/80 max-w-xl">
+                          Pausa la conexión con el ERP y marca la terminal como desconectada. Podrás volver a reconectar esta misma caja de inmediato con un solo clic.
+                        </p>
                       </div>
-                      <p className="text-xs text-rose-700/80 dark:text-rose-300/80 max-w-xl">
-                        Al desconectar esta terminal se enviará una señal inmediata al ERP para marcar la caja como desconectada/desvinculada y se cerrará la sesión actual.
-                      </p>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: "Desconectar Caja POS",
+                            message:
+                              "¿Desea desconectar temporalmente esta caja del ERP? Se cerrará la sesión actual pero podrá reconectarla en cualquier momento con un solo clic.",
+                            variant: "warning",
+                            confirmText: "Sí, Desconectar",
+                            cancelText: "Cancelar",
+                          });
+                          if (ok) {
+                            try {
+                              await api.auth.disconnectTemporarily();
+                              onUnpaired();
+                            } catch (e) {
+                              modalAlert({
+                                title: "Error al Desconectar",
+                                message: "Error al desconectar la terminal: " + String(e),
+                                variant: "error",
+                              });
+                            }
+                          }
+                        }}
+                        className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-md shadow-amber-700/20"
+                      >
+                        🔌 Desconectar Caja
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const ok = await confirm({
-                          title: "Desconectar y Desvincular Caja POS",
-                          message:
-                            "¿Está seguro de desconectar esta caja del ERP? El ERP recibirá la señal de desconexión de inmediato y se requerirá vincular nuevamente la terminal para volver a operar.",
-                          variant: "danger",
-                          confirmText: "Sí, Desconectar Caja",
-                          cancelText: "Cancelar",
-                        });
-                        if (ok) {
-                          try {
-                            await api.auth.unpair();
-                            onUnpaired();
-                          } catch (e) {
-                            modalAlert({
-                              title: "Error al Desconectar",
-                              message: "Error al desconectar la terminal: " + String(e),
-                              variant: "error",
-                            });
+                    {/* Opción 2: Desvincular Permanentemente */}
+                    <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center gap-2">
+                          <span>⚠️ Desvincular Terminal (Restablecer)</span>
+                        </div>
+                        <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80 max-w-xl">
+                          Elimina la credencial vinculada para trasladar el software a otra sucursal o asignar una nueva caja.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: "Desvincular Permanentemente",
+                            message:
+                              "¿Está seguro de desvincular esta terminal? Se eliminará la credencial activa en este equipo.",
+                            variant: "danger",
+                            confirmText: "Sí, Desvincular Permanentemente",
+                            cancelText: "Cancelar",
+                          });
+                          if (ok) {
+                            try {
+                              await api.auth.unpair();
+                              onUnpaired();
+                            } catch (e) {
+                              modalAlert({
+                                title: "Error al Desvincular",
+                                message: "Error al desvincular la terminal: " + String(e),
+                                variant: "error",
+                              });
+                            }
                           }
-                        }
-                      }}
-                      className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-md shadow-rose-700/20"
-                    >
-                      🔌 Desconectar Caja del ERP
-                    </button>
+                        }}
+                        className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0"
+                      >
+                        Desvincular
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
