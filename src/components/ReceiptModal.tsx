@@ -53,10 +53,10 @@ export function ReceiptModal({
   const isReprint = (currentReceipt.reprintCount || 0) > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[92vh] overflow-hidden">
-        {/* Cabecera del Modal */}
-        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150 print:bg-transparent print:p-0 print:static print:block">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[92vh] overflow-hidden print:border-none print:shadow-none print:max-w-none print:m-0 print:p-0 print:bg-transparent">
+        {/* Cabecera del Modal (Oculta al imprimir) */}
+        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 print:hidden no-print">
           <div className="flex items-center gap-2">
             <span className="text-lg">🧾</span>
             <div>
@@ -85,10 +85,11 @@ export function ReceiptModal({
         </div>
 
         {/* Visor de Tirilla Térmica (58mm/80mm) */}
-        <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-950 flex justify-center">
+        <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-950 flex justify-center print:bg-transparent print:p-0 print:overflow-visible">
           <div
             ref={printAreaRef}
-            className="w-full max-w-[340px] bg-white text-slate-900 p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-[11px] leading-tight print:shadow-none print:border-none print:m-0 print:p-0 print:w-full print:max-w-none"
+            id="print-receipt-area"
+            className="receipt-print-only w-full max-w-[340px] bg-white text-slate-900 p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-[11px] leading-tight print:shadow-none print:border-none print:m-0 print:p-2 print:w-full print:max-w-[80mm] print:text-black print:bg-white"
             style={{ fontFamily: "'Courier New', Courier, monospace" }}
           >
             {/* ENCABEZADO FISCAL */}
@@ -219,8 +220,8 @@ export function ReceiptModal({
           </div>
         </div>
 
-        {/* Botones de Acción */}
-        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-800/60">
+        {/* Botones de Acción (Ocultos al imprimir) */}
+        <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-800/60 print:hidden no-print">
           <div>
             {onRequestReturn && currentReceipt.returnStatus !== "full" && (
               <button
