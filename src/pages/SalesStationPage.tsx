@@ -196,6 +196,19 @@ export function SalesStationPage({
     localStorage.setItem(STORAGE_KEY_ACTIVE_TICKET, String(activeTicketId));
   }, [activeTicketId]);
 
+  // Escuchar evento de limpieza obligatoria de tickets al cerrar turno de caja
+  useEffect(() => {
+    const handleResetTickets = () => {
+      const cleanTickets: TicketTab[] = [{ id: 1, name: "Ticket 1", lines: [] }];
+      setTickets(cleanTickets);
+      setActiveTicketId(1);
+      localStorage.setItem(STORAGE_KEY_TICKETS, JSON.stringify(cleanTickets));
+      localStorage.setItem(STORAGE_KEY_ACTIVE_TICKET, "1");
+    };
+    window.addEventListener("pos:reset-tickets", handleResetTickets);
+    return () => window.removeEventListener("pos:reset-tickets", handleResetTickets);
+  }, []);
+
   // Input de código de barras
   const [barcodeInput, setBarcodeInput] = useState("");
   const [selectedLineIndex, setSelectedLineIndex] = useState<number>(-1);

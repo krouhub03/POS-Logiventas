@@ -806,6 +806,11 @@ export function CashierLockScreen({
       {showCloseShiftModal && (
         <CloseShiftModal
           onShiftClosed={async () => {
+            // Asegurar que no quede ningún ticket abierto en memoria ni en localStorage
+            localStorage.setItem("pos_active_tickets", JSON.stringify([{ id: 1, name: "Ticket 1", lines: [] }]));
+            localStorage.setItem("pos_active_ticket_id", "1");
+            window.dispatchEvent(new CustomEvent("pos:reset-tickets"));
+
             setShowCloseShiftModal(false);
             if (pendingActionAfterCloseShift === "shutdown") {
               await api.system.closeApp(true);

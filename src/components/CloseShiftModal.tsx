@@ -16,9 +16,54 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Detección de tickets abiertos con productos
+  const [pendingTicketsCount, setPendingTicketsCount] = useState<number>(0);
+  const [pendingItemsCount, setPendingItemsCount] = useState<number>(0);
+  const [ticketsPurged, setTicketsPurged] = useState<boolean>(false);
+
+  const checkPendingTickets = () => {
+    try {
+      const raw = localStorage.getItem("pos_active_tickets");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const withItems = parsed.filter(
+            (t) => (t.lines && t.lines.length > 0) || t.discountCents || t.customer
+          );
+          setPendingTicketsCount(withItems.length);
+          const totalItems = withItems.reduce(
+            (acc, t) => acc + (t.lines?.length || 0),
+            0
+          );
+          setPendingItemsCount(totalItems);
+          return withItems.length;
+        }
+      }
+    } catch {}
+    setPendingTicketsCount(0);
+    setPendingItemsCount(0);
+    return 0;
+  };
+
+  const handlePurgeTickets = () => {
+    try {
+      const emptyTickets = [{ id: 1, name: "Ticket 1", lines: [] }];
+      localStorage.setItem("pos_active_tickets", JSON.stringify(emptyTickets));
+      localStorage.setItem("pos_active_ticket_id", "1");
+      window.dispatchEvent(new CustomEvent("pos:reset-tickets"));
+      setPendingTicketsCount(0);
+      setPendingItemsCount(0);
+      setTicketsPurged(true);
+    } catch (e) {
+      console.error("Error al purgar tickets:", e);
+    }
+  };
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    checkPendingTickets();
+
     api.shifts
       .getShiftSummary()
       .then((data) => {
@@ -68,6 +113,9 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
         declaredCents,
         notes: notes.trim() ? notes.trim() : undefined,
       });
+
+      // Garantizar que no quede ningún ticket abierto al cerrar el turno
+      handlePurgeTickets();
 
       // Imprimir Z-Report si hay impresora configurada
       api.settings.testPrintTicket().catch(() => {});
@@ -143,6 +191,39 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             <div style={styles.formulaNotice}>
               ℹ️ <strong>Cuadre de Efectivo:</strong> Base ({formatCents(summary.openingCents)}) + Ventas Efectivo ({formatCents(summary.cashSalesCents)}) + Abonos Efectivo ({formatCents(summary.customerPaymentsCashCents)}) = <strong>{formatCents(summary.expectedCashCents)}</strong>
             </div>
+
+            {/* Aviso y Bloque de Eliminación de Tickets Abiertos */}
+            {pendingTicketsCount > 0 && !ticketsPurged && (
+              <div style={styles.ticketWarningBox}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.35rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <span style={{ fontSize: "1.1rem" }}>⚠️</span>
+                    <strong style={{ color: "#f59e0b", fontSize: "0.85rem" }}>
+                      {pendingTicketsCount} Ticket(s) con {pendingItemsCount} producto(s) en curso
+                    </strong>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handlePurgeTickets}
+                    style={styles.purgeTicketsBtn}
+                    title="Eliminar todos los productos y tickets abiertos de inmediato"
+                  >
+                    <span>🗑️</span>
+                    <span>Eliminar Tickets Ahora</span>
+                  </button>
+                </div>
+                <p style={{ margin: 0, fontSize: "0.75rem", color: "#cbd5e1", lineHeight: 1.35 }}>
+                  Al cerrar turno no se pueden dejar tickets abiertos. Si no los eliminas manualmente, el sistema los descartará automáticamente al arquear.
+                </p>
+              </div>
+            )}
+
+            {ticketsPurged && (
+              <div style={styles.ticketSuccessBox}>
+                <span>✅</span>
+                <span>Todos los tickets abiertos han sido eliminados. La caja está limpia para el cierre.</span>
+              </div>
+            )}
 
             {/* Campo de Arqueo Físico */}
             <div style={styles.field}>
@@ -456,5 +537,38 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "8px",
     fontSize: "0.85rem",
     marginBottom: "1rem",
+  },
+  ticketWarningBox: {
+    background: "rgba(245, 158, 11, 0.1)",
+    border: "1.5px solid rgba(245, 158, 11, 0.4)",
+    borderRadius: "10px",
+    padding: "0.65rem 0.85rem",
+    marginBottom: "0.75rem",
+  },
+  ticketSuccessBox: {
+    background: "rgba(16, 185, 129, 0.1)",
+    border: "1px solid rgba(16, 185, 129, 0.3)",
+    borderRadius: "10px",
+    padding: "0.5rem 0.85rem",
+    marginBottom: "0.75rem",
+    fontSize: "0.8rem",
+    color: "#34d399",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+  },
+  purgeTicketsBtn: {
+    background: "rgba(239, 68, 68, 0.2)",
+    border: "1px solid rgba(239, 68, 68, 0.5)",
+    color: "#fca5a5",
+    borderRadius: "8px",
+    padding: "0.3rem 0.6rem",
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.3rem",
+    whiteSpace: "nowrap",
   },
 };
