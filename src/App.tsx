@@ -265,6 +265,10 @@ function App() {
           setTerminalStatus(newStatus);
           handleSetCashier(null);
         }}
+        onUnpaired={(newStatus) => {
+          setTerminalStatus(newStatus);
+        }}
+        onCloseApp={handleRequestCloseApp}
       />
     );
   }

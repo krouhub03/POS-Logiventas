@@ -828,6 +828,41 @@ pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     Ok(fetch_status_sync(&conn))
 }
 
+/// 🗑️ Olvida por completo cualquier caja previamente recordada o desconectada.
+#[tauri::command]
+pub async fn forget_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    {
+        let conn = db.conn()?;
+        let existe_abierto: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+            [],
+            |r| r.get(0),
+        )?;
+        if existe_abierto > 0 {
+            return Err(AppError::Validation(
+                "No se puede desvincular u olvidar la caja mientras exista un turno activo. Realiza el arqueo primero.".into(),
+            ));
+        }
+    }
+
+    let conn = db.conn()?;
+    set_setting(&conn, "last_caja_id", "")?;
+    set_setting(&conn, "last_caja_codigo", "")?;
+    set_setting(&conn, "last_caja_nombre", "")?;
+    set_setting(&conn, "last_empresa_nombre", "")?;
+    set_setting(&conn, "last_empresa_id", "")?;
+    set_setting(&conn, "last_bodega_id", "")?;
+    set_setting(&conn, "last_bodega_nombre", "")?;
+    set_setting(&conn, "last_erp_url", "")?;
+    set_setting(&conn, "is_disconnected", "0")?;
+    set_setting(&conn, "pairing_status", "unpaired")?;
+    set_setting(&conn, "terminal_token", "")?;
+    set_setting(&conn, "caja_id", "")?;
+    set_setting(&conn, "caja_nombre", "")?;
+    set_setting(&conn, "caja_codigo", "")?;
+    Ok(fetch_status_sync(&conn))
+}
+
 /// ⚡ Reconecta una terminal POS previamente vinculada o desconectada.
 #[tauri::command]
 pub async fn reconnect_terminal(

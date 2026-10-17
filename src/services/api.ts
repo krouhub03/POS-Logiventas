@@ -71,6 +71,7 @@ export const api = {
     changePin: (userId: number, currentPin: string, newPin: string) =>
       invoke<boolean>("change_cashier_pin", { userId, currentPin, newPin }),
     unpair: () => invoke<TerminalStatus>("unpair_terminal"),
+    forgetTerminal: () => invoke<TerminalStatus>("forget_terminal"),
     reconnectTerminal: (input: ReconnectTerminalInput) =>
       invoke<TerminalStatus>("reconnect_terminal", { input }),
     disconnectTemporarily: () =>
