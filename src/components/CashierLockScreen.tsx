@@ -54,6 +54,7 @@ export function CashierLockScreen({
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const cargarCajeros = useCallback(async () => {
@@ -63,7 +64,7 @@ export function CashierLockScreen({
       setCashiers(list);
       const regular = list.filter(isCompanyCashier);
       if (regular.length === 1) {
-        setSelectedCashier(regular[0]);
+        setSelectedCashier((curr) => curr ?? regular[0]);
       }
 
       // 2. Refresco automático en segundo plano desde el ERP (si hay red)
@@ -73,7 +74,7 @@ export function CashierLockScreen({
           setCashiers(freshList);
           const freshRegular = freshList.filter(isCompanyCashier);
           if (freshRegular.length === 1) {
-            setSelectedCashier(freshRegular[0]);
+            setSelectedCashier((curr) => curr ?? freshRegular[0]);
           }
         })
         .catch(() => {
@@ -86,7 +87,26 @@ export function CashierLockScreen({
 
   useEffect(() => {
     cargarCajeros();
-  }, [cargarCajeros]);
+
+    // Auto-refresco en segundo plano periódico (cada 8s) y al volver a enfocar la ventana
+    const interval = setInterval(() => {
+      if (!pin) {
+        cargarCajeros();
+      }
+    }, 8000);
+
+    const onFocus = () => {
+      if (!pin) {
+        cargarCajeros();
+      }
+    };
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [cargarCajeros, pin]);
 
   const handleSelectCashier = (cashier: CashierUser) => {
     setSelectedCashier(cashier);
@@ -206,13 +226,18 @@ export function CashierLockScreen({
   const handleSyncUsers = async () => {
     setSyncing(true);
     setError(null);
+    setSyncSuccessMsg(null);
     try {
       const updated = await api.auth.syncUsers();
       setCashiers(updated);
       const regular = updated.filter(isCompanyCashier);
       if (regular.length === 1) {
-        setSelectedCashier(regular[0]);
+        setSelectedCashier((curr) => curr ?? regular[0]);
       }
+      setSyncSuccessMsg(
+        `✓ Sincronización exitosa: ${regular.length} operador(es) de caja disponible(s)`
+      );
+      setTimeout(() => setSyncSuccessMsg(null), 4000);
     } catch (err: unknown) {
       setError(`Error al sincronizar usuarios con ERP: ${err}`);
     } finally {
@@ -453,6 +478,13 @@ export function CashierLockScreen({
             </p>
           </div>
 
+          {syncSuccessMsg && (
+            <div className="mb-5 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-semibold text-center flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-1">
+              <span>✓</span>
+              <span>{syncSuccessMsg}</span>
+            </div>
+          )}
+
           {error && (
             <div className="mb-5 p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-semibold text-center flex items-center justify-center gap-2">
               <span>⚠️</span>
@@ -460,16 +492,25 @@ export function CashierLockScreen({
             </div>
           )}
 
-          {cashiers.length === 0 ? (
-            <div className="p-8 text-center text-slate-400">
-              <p className="text-sm font-medium mb-4">No hay usuarios sincronizados en la terminal local.</p>
+          {regularCashiers.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 border border-dashed border-slate-800 rounded-2xl bg-slate-950/40 my-4">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center text-xl">
+                👤
+              </div>
+              <p className="text-sm font-bold text-slate-200 mb-1">
+                No hay operadores de caja autorizados detectados
+              </p>
+              <p className="text-xs text-slate-400 mb-4 max-w-md mx-auto">
+                Asegúrate de que el usuario tenga un <strong>PIN de Caja POS (4 a 6 dígitos)</strong> configurado en el ERP y presiona el botón inferior para sincronizarlo.
+              </p>
               <button
                 type="button"
                 onClick={handleSyncUsers}
                 disabled={syncing}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors cursor-pointer inline-flex items-center gap-2 shadow-lg shadow-emerald-950/50"
               >
-                {syncing ? "Sincronizando…" : "Descargar Usuarios del ERP"}
+                <span className={syncing ? "animate-spin" : ""}>🔄</span>
+                <span>{syncing ? "Sincronizando…" : "Sincronizar Usuarios del ERP"}</span>
               </button>
             </div>
           ) : (
