@@ -238,7 +238,35 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
     let card_sales_cents = row.4;
     let transfer_sales_cents = row.5;
     let other_sales_cents = row.6;
-    let expected_cash_cents = shift.opening_cents + cash_sales_cents;
+
+    let (customer_payments_cash_cents, customer_payments_other_cents): (i64, i64) = conn.query_row(
+        "SELECT 
+            COALESCE(SUM(CASE 
+                WHEN pm.type = 'EFECTIVO' 
+                     OR LOWER(COALESCE(pm.code, '')) LIKE '%cash%' 
+                     OR LOWER(COALESCE(cp.payment_method_id, '')) IN ('cash', 'efectivo', 'pm_cash') 
+                     OR cp.payment_method_id IS NULL 
+                THEN cp.amount_cents 
+                ELSE 0 
+            END), 0) as cp_cash_cents,
+            COALESCE(SUM(CASE 
+                WHEN NOT (
+                     pm.type = 'EFECTIVO' 
+                     OR LOWER(COALESCE(pm.code, '')) LIKE '%cash%' 
+                     OR LOWER(COALESCE(cp.payment_method_id, '')) IN ('cash', 'efectivo', 'pm_cash') 
+                     OR cp.payment_method_id IS NULL
+                )
+                THEN cp.amount_cents 
+                ELSE 0 
+            END), 0) as cp_other_cents
+         FROM customer_payments cp
+         LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
+         WHERE cp.session_id = ?1",
+        params![shift.id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
+
+    let expected_cash_cents = shift.opening_cents + cash_sales_cents + customer_payments_cash_cents;
 
     Ok(ShiftSummary {
         shift_id: shift.id,
@@ -252,6 +280,8 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
         card_sales_cents,
         transfer_sales_cents,
         other_sales_cents,
+        customer_payments_cash_cents,
+        customer_payments_other_cents,
         total_tax_cents,
         expected_cash_cents,
     })
@@ -312,7 +342,27 @@ pub async fn close_shift(
         )?
     };
 
-    let expected_cents = opening_cents + cash_sales_cents;
+    let customer_payments_cash_cents: i64 = {
+        let conn = db.conn()?;
+        conn.query_row(
+            "SELECT 
+                COALESCE(SUM(CASE 
+                    WHEN pm.type = 'EFECTIVO' 
+                         OR LOWER(COALESCE(pm.code, '')) LIKE '%cash%' 
+                         OR LOWER(COALESCE(cp.payment_method_id, '')) IN ('cash', 'efectivo', 'pm_cash') 
+                         OR cp.payment_method_id IS NULL 
+                    THEN cp.amount_cents 
+                    ELSE 0 
+                END), 0)
+             FROM customer_payments cp
+             LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
+             WHERE cp.session_id = ?1",
+            params![shift_id],
+            |r| r.get(0),
+        ).unwrap_or(0)
+    };
+
+    let expected_cents = opening_cents + cash_sales_cents + customer_payments_cash_cents;
     let difference_cents = input.declared_cents - expected_cents;
 
     let closed_at: String;

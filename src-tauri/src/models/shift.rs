@@ -47,6 +47,9 @@ pub struct ShiftSummary {
     pub card_sales_cents: i64,
     pub transfer_sales_cents: i64,
     pub other_sales_cents: i64,
+    pub customer_payments_cash_cents: i64,
+    pub customer_payments_other_cents: i64,
     pub total_tax_cents: i64,
     pub expected_cash_cents: i64,
 }
+

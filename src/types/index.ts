@@ -329,6 +329,8 @@ export interface ShiftSummary {
   cardSalesCents: number;
   transferSalesCents: number;
   otherSalesCents: number;
+  customerPaymentsCashCents: number;
+  customerPaymentsOtherCents: number;
   totalTaxCents: number;
   expectedCashCents: number;
 }

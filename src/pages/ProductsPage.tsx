@@ -94,15 +94,14 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formImagePreview, setFormImagePreview] = useState<string | null>(null);
   const [formImageBase64, setFormImageBase64] = useState<string | null>(null);
   const [formImageDeleted, setFormImageDeleted] = useState(false);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const processImageFile = (file: File) => {
     if (!file.type.startsWith("image/")) {
       modalAlert({
         title: "Archivo No Válido",
-        message: "Por favor seleccione un archivo de imagen (PNG, JPG, WebP).",
+        message: "Por favor seleccione o pegue un archivo de imagen (PNG, JPG, WebP).",
         variant: "warning",
       });
       return;
@@ -116,6 +115,34 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     };
     reader.readAsDataURL(file);
   };
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processImageFile(file);
+    }
+  };
+
+  // Soporte para pegar imágenes desde el portapapeles con Ctrl+V
+  useEffect(() => {
+    if (!isFormOpen) return;
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            processImageFile(file);
+            break;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [isFormOpen]);
 
   const handleRemoveImage = () => {
     setFormImagePreview(null);
@@ -1784,8 +1811,34 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3.5">
-                        <div className="w-14 h-14 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setIsDraggingImage(true);
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          setIsDraggingImage(false);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDraggingImage(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) {
+                            processImageFile(file);
+                          }
+                        }}
+                        className={`p-3 rounded-2xl border-2 transition-all flex items-center gap-3.5 ${
+                          isDraggingImage
+                            ? "border-indigo-500 bg-indigo-50/80 dark:bg-indigo-950/50 scale-[1.01]"
+                            : "border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/40 hover:border-slate-400 dark:hover:border-slate-600"
+                        }`}
+                      >
+                        <div
+                          onClick={() => fileInputRef.current?.click()}
+                          className="w-16 h-16 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0 shadow-xs cursor-pointer hover:opacity-90"
+                          title="Clic para seleccionar imagen"
+                        >
                           {formImagePreview ? (
                             <img
                               src={formImagePreview}
@@ -1805,15 +1858,23 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                             onChange={handleImageFileChange}
                             className="hidden"
                           />
-                          <button
-                            type="button"
-                            onClick={() => fileInputRef.current?.click()}
-                            className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                          >
-                            <span>📁 {formImagePreview ? "Cambiar Imagen" : "Cargar Imagen"}</span>
-                          </button>
-                          <p className="text-[10px] text-slate-400">
-                            PNG, JPG, WebP. Se guarda en disco local y sincroniza vía hash.
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => fileInputRef.current?.click()}
+                              className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold text-xs hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                            >
+                              <span>📁 {formImagePreview ? "Cambiar Imagen" : "Examinar..."}</span>
+                            </button>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                              o arrastra una foto aquí
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                            <span>💡 También puedes pegar cualquier foto copiada con</span>
+                            <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono font-bold text-[9px]">
+                              Ctrl + V
+                            </kbd>
                           </p>
                         </div>
                       </div>

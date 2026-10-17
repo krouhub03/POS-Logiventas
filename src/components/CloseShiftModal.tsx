@@ -101,15 +101,38 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 <span style={styles.cardValueGreen}>+{formatCents(summary.cashSalesCents)}</span>
               </div>
               <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Efectivo Esperado</span>
+                <span style={styles.cardLabel}>Abonos Cartera (Efectivo)</span>
+                <span style={styles.cardValueGreen}>+{formatCents(summary.customerPaymentsCashCents)}</span>
+              </div>
+              <div style={{ ...styles.summaryCard, borderColor: "#0284c7", background: "rgba(2, 132, 199, 0.08)" }}>
+                <span style={{ ...styles.cardLabel, color: "#38bdf8" }}>Efectivo Esperado en Caja</span>
                 <span style={styles.cardValueBlue}>{formatCents(summary.expectedCashCents)}</span>
               </div>
               <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Otras Ventas (Tarj/Transf)</span>
+                <span style={styles.cardLabel}>Otras Ventas (Tarj/Transf/Crédito)</span>
                 <span style={styles.cardValue}>
                   {formatCents(summary.cardSalesCents + summary.transferSalesCents + summary.otherSalesCents)}
                 </span>
               </div>
+              {summary.customerPaymentsOtherCents > 0 ? (
+                <div style={styles.summaryCard}>
+                  <span style={styles.cardLabel}>Abonos Cartera (Otros Medios)</span>
+                  <span style={styles.cardValue}>
+                    {formatCents(summary.customerPaymentsOtherCents)}
+                  </span>
+                </div>
+              ) : (
+                <div style={styles.summaryCard}>
+                  <span style={styles.cardLabel}>Total Facturado (Turno)</span>
+                  <span style={styles.cardValue}>
+                    {formatCents(summary.totalSalesCents)}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div style={styles.formulaNotice}>
+              ℹ️ <strong>Cuadre de Efectivo:</strong> Base ({formatCents(summary.openingCents)}) + Ventas Efectivo ({formatCents(summary.cashSalesCents)}) + Abonos Efectivo ({formatCents(summary.customerPaymentsCashCents)}) = <strong>{formatCents(summary.expectedCashCents)}</strong>
             </div>
 
             {/* Campo de Arqueo Físico */}
@@ -268,7 +291,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: "0.65rem",
-    marginBottom: "1.2rem",
+    marginBottom: "0.75rem",
+  },
+  formulaNotice: {
+    background: "rgba(15, 23, 42, 0.6)",
+    border: "1px dashed #334155",
+    borderRadius: "8px",
+    padding: "0.5rem 0.75rem",
+    fontSize: "0.75rem",
+    color: "#94a3b8",
+    marginBottom: "1rem",
+    lineHeight: 1.4,
   },
   summaryCard: {
     background: "#020617",
