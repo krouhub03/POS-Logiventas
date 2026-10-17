@@ -28,6 +28,9 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title("Metahabi POS");
+            }
             let db_path = app.path().app_data_dir()?.join("logiventa.db");
             let db = Db::open(&db_path)?;
             app.manage(db.clone());
