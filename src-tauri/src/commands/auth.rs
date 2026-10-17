@@ -860,3 +860,107 @@ pub async fn validate_terminal_session(
     Ok(status)
 }
 
+/// Cambia el PIN de seguridad de un usuario, validando el PIN anterior
+/// y sincronizando el nuevo hash con SQLite local y el ERP central (Offline-First con Outbox).
+#[tauri::command]
+pub async fn change_cashier_pin(
+    db: State<'_, Db>,
+    user_id: i64,
+    current_pin: String,
+    new_pin: String,
+) -> AppResult<bool> {
+    let clean_current = current_pin.trim();
+    let clean_new = new_pin.trim();
+
+    if !clean_new.chars().all(|c| c.is_ascii_digit()) || clean_new.len() < 4 || clean_new.len() > 6 {
+        return Err(AppError::Auth("El nuevo PIN debe tener entre 4 y 6 dígitos numéricos".into()));
+    }
+
+    if clean_current == clean_new {
+        return Err(AppError::Auth("El nuevo PIN no puede ser idéntico al PIN actual".into()));
+    }
+
+    // 1. Obtener datos locales del usuario
+    let (erp_user_id, pin_hash_opt, erp_url_opt, token_opt) = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT erp_user_id, pin_hash, full_name FROM users WHERE id = ?1 AND active = 1"
+        )?;
+        let row = stmt.query_row(params![user_id], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
+        }).map_err(|_| AppError::Auth("Usuario no encontrado o inactivo".into()))?;
+
+        let erp_url = get_setting(&conn, "erp_url");
+        let token = get_setting(&conn, "terminal_token");
+        (row.0, row.1, erp_url, token)
+    };
+
+    // 2. Validar PIN actual con bcrypt
+    if let Some(ref pin_hash) = pin_hash_opt {
+        if !bcrypt::verify(clean_current, pin_hash).unwrap_or(false) {
+            return Err(AppError::Auth("El PIN actual ingresado es incorrecto".into()));
+        }
+    } else {
+        return Err(AppError::Auth("El usuario no tiene un PIN previo configurado para validar".into()));
+    }
+
+    // 3. Generar nuevo hash bcrypt
+    let new_hash = bcrypt::hash(clean_new, bcrypt::DEFAULT_COST)
+        .map_err(|e| AppError::Auth(format!("Error al cifrar nuevo PIN: {e}")))?;
+
+    // 4. Actualizar SQLite local y encolar en Outbox
+    {
+        let conn = db.conn()?;
+        conn.execute(
+            "UPDATE users SET pin_hash = ?1, failed_pin_attempts = 0, locked_until = NULL WHERE id = ?2",
+            params![new_hash, user_id],
+        )?;
+
+        if let Some(ref erp_uid) = erp_user_id {
+            let payload = serde_json::json!({
+                "erpUserId": erp_uid,
+                "pin": clean_new,
+                "pinHash": new_hash,
+                "userId": user_id,
+            });
+            conn.execute(
+                "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('user_pin', ?1, ?2, 'pending')",
+                params![user_id, payload.to_string()],
+            )?;
+        }
+    }
+
+    // 5. Intentar despacho HTTP inmediato al ERP si hay red
+    if let (Some(ref erp_uid), Some(ref erp_url), Some(ref token)) = (erp_user_id.as_ref(), erp_url_opt.as_ref(), token_opt.as_ref()) {
+        if !erp_url.is_empty() && !token.is_empty() {
+            if let Ok(client) = reqwest::Client::builder().timeout(Duration::from_millis(3000)).build() {
+                let url = format!("{}/api/pos/v1/terminal/usuarios/cambiar-pin", erp_url.trim_end_matches('/'));
+                if let Ok(res) = client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .json(&serde_json::json!({
+                        "erpUserId": erp_uid,
+                        "pin": clean_new,
+                    }))
+                    .send()
+                    .await
+                {
+                    if res.status().is_success() {
+                        let conn = db.conn()?;
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now') WHERE entity_type = 'user_pin' AND entity_id = ?1 AND status = 'pending'",
+                            params![user_id],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+

@@ -1306,6 +1306,66 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         }
     }
 
+    // ── 4. Despacho de Cambios de PIN de Usuario ('user_pin') ────
+    let pending_pins = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'user_pin' AND status = 'pending' ORDER BY id ASC LIMIT 10"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        list
+    };
+
+    if !pending_pins.is_empty() {
+        total_dispatched += pending_pins.len();
+        let url = format!("{}/api/pos/v1/terminal/usuarios/cambiar-pin", erp_url.trim_end_matches('/'));
+
+        for (id, payload_str) in pending_pins {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                let resp = client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .json(&parsed)
+                    .send()
+                    .await;
+
+                let (is_synced, error_msg) = match resp {
+                    Ok(res) => {
+                        let is_success = res.status().is_success();
+                        if is_success {
+                            (true, None)
+                        } else {
+                            let err_text = res.text().await.unwrap_or_default();
+                            (false, Some(err_text))
+                        }
+                    }
+                    Err(e) => (false, Some(e.to_string())),
+                };
+
+                let conn = db.conn()?;
+                if is_synced {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                        params![id],
+                    );
+                    total_synced += 1;
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![error_msg.unwrap_or_else(|| "Error al sincronizar PIN".to_string()), id],
+                    );
+                    total_failed += 1;
+                }
+            }
+        }
+    }
+
     Ok(OutboxBatchResult {
         dispatched: total_dispatched,
         synced: total_synced,

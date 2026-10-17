@@ -13,6 +13,7 @@ import { CustomerModal } from "../components/CustomerModal";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
 import { ReceiptModal } from "../components/ReceiptModal";
 import { RecentSalesModal } from "../components/RecentSalesModal";
+import { UserProfileSettingsModal } from "../components/UserProfileSettingsModal";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 
 interface CartLine {
@@ -373,6 +374,7 @@ export function SalesStationPage({
   const [isRecentSalesOpen, setIsRecentSalesOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<SaleReceipt | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
 
   const handleReprintLastSale = async () => {
     try {
@@ -448,12 +450,15 @@ export function SalesStationPage({
       !isCobroOpen &&
       !isVariosOpen &&
       !isCustomerModalOpen &&
+      !isRecentSalesOpen &&
+      !isReceiptModalOpen &&
+      !isUserProfileModalOpen &&
       editingTicketId === null &&
       editingQtyLineId === null
     ) {
       barcodeInputRef.current?.focus();
     }
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, editingTicketId, editingQtyLineId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId]);
 
   useEffect(() => {
     if (isActive && editingTicketId === null && editingQtyLineId === null) {
@@ -1295,7 +1300,7 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || editingQtyLineId !== null) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingQtyLineId !== null) return;
     if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1308,7 +1313,10 @@ export function SalesStationPage({
           document.activeElement.tagName === "SELECT");
       if (isOtherInputFocused) return;
 
-      if ((e.key === "r" || e.key === "R") && e.altKey) {
+      if ((e.key === "u" || e.key === "U") && e.altKey) {
+        e.preventDefault();
+        setIsUserProfileModalOpen(true);
+      } else if ((e.key === "r" || e.key === "R") && e.altKey) {
         e.preventDefault();
         handleReprintLastSale();
       } else if (e.key === "F5") {
@@ -1397,12 +1405,12 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
+    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1418,7 +1426,36 @@ export function SalesStationPage({
     };
     window.addEventListener("click", handleGlobalClick);
     return () => window.removeEventListener("click", handleGlobalClick);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, editingTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId]);
+
+  // Temporizador de auto-bloqueo de terminal por inactividad
+  useEffect(() => {
+    if (!isActive || !onLockTerminal) return;
+    const minsStr = localStorage.getItem("pos_auto_lock_minutes");
+    const mins = minsStr ? Number(minsStr) : 0;
+    if (mins <= 0) return;
+
+    let timer: ReturnType<typeof setTimeout>;
+
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        onLockTerminal();
+      }, mins * 60 * 1000);
+    };
+
+    resetTimer();
+    window.addEventListener("mousemove", resetTimer);
+    window.addEventListener("keydown", resetTimer);
+    window.addEventListener("click", resetTimer);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("mousemove", resetTimer);
+      window.removeEventListener("keydown", resetTimer);
+      window.removeEventListener("click", resetTimer);
+    };
+  }, [isActive, onLockTerminal]);
 
   const cashierInitials = (cashier.fullName || "Cajero")
     .split(" ")
@@ -1486,15 +1523,23 @@ export function SalesStationPage({
         </div>
 
         <div className="flex items-center gap-2.5">
-          {/* Avatar del Cajero con Iniciales + Nombre */}
-          <div className="flex items-center gap-2 mr-1">
-            <div className="w-7 h-7 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center font-bold text-xs">
+          {/* Avatar del Cajero con Iniciales + Nombre (Clic abre configuración de operador Alt+U) */}
+          <button
+            type="button"
+            onClick={() => setIsUserProfileModalOpen(true)}
+            className="flex items-center gap-2 mr-1 px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shadow-2xs group"
+            title="Mi Perfil y Preferencias de Estación (Cambiar PIN, tema, sonido) • Atajo: Alt+U"
+          >
+            <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-bold text-[11px] border border-emerald-300 dark:border-emerald-800">
               {cashierInitials}
             </div>
-            <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 hidden sm:inline">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 hidden sm:inline group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
               {cashier.fullName}
             </span>
-          </div>
+            <span className="text-[10px] text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
+              ⚙️
+            </span>
+          </button>
 
           {/* Botón Cerrar Turno */}
           {activeShift && onOpenCloseShiftModal && (
@@ -2335,6 +2380,22 @@ export function SalesStationPage({
             `✅ Devolución #${ret.folio} emitida exitosamente. Reembolso: ${formatCents(ret.totalCents)}`,
             "success"
           );
+        }}
+      />
+
+      {/* Modal de Configuración de Operador / Perfil / Preferencias de Estación (Alt+U) */}
+      <UserProfileSettingsModal
+        isOpen={isUserProfileModalOpen}
+        onClose={() => {
+          setIsUserProfileModalOpen(false);
+          focusInput();
+        }}
+        activeCashier={cashier}
+        onLockTerminal={onLockTerminal}
+        showProductImages={showProductImages}
+        onToggleProductImages={handleToggleShowImages}
+        onPinChanged={() => {
+          showFeedback("PIN de seguridad actualizado correctamente", "success");
         }}
       />
     </div>

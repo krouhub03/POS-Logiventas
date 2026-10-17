@@ -66,6 +66,8 @@ export const api = {
     loginPin: (pin: string) => invoke<CashierUser>("login_cashier_pin", { pin }),
     loginUserPin: (userId: number, pin: string) =>
       invoke<CashierUser>("login_cashier_user_pin", { userId, pin }),
+    changePin: (userId: number, currentPin: string, newPin: string) =>
+      invoke<boolean>("change_cashier_pin", { userId, currentPin, newPin }),
     unpair: () => invoke<TerminalStatus>("unpair_terminal"),
   },
 

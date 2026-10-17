@@ -21,8 +21,17 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
+function isSoundEnabled(): boolean {
+  try {
+    return localStorage.getItem("pos_scan_sound_enabled") !== "false";
+  } catch {
+    return true;
+  }
+}
+
 /** Tono agudo y limpio de escáner exitoso (caja registradora moderna) */
 export function playScanSuccess() {
+  if (!isSoundEnabled()) return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
@@ -45,6 +54,7 @@ export function playScanSuccess() {
 
 /** Tono doble de advertencia (stock bajo o agotado) */
 export function playStockWarning() {
+  if (!isSoundEnabled()) return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
@@ -68,6 +78,7 @@ export function playStockWarning() {
 
 /** Tono grave de error (producto no encontrado) */
 export function playScanError() {
+  if (!isSoundEnabled()) return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
