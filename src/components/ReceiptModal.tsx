@@ -33,6 +33,115 @@ export function ReceiptModal({
 
   if (!isOpen || !currentReceipt) return null;
 
+  const printReceiptViaIframe = () => {
+    if (!printAreaRef.current) return;
+    const content = printAreaRef.current.innerHTML;
+
+    // Crear o reutilizar un iframe oculto aislado
+    let iframe = document.getElementById("pos-receipt-print-frame") as HTMLIFrameElement;
+    if (iframe) {
+      iframe.remove();
+    }
+    iframe = document.createElement("iframe");
+    iframe.id = "pos-receipt-print-frame";
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.visibility = "hidden";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument;
+    if (!doc) {
+      window.print();
+      return;
+    }
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Ticket ${currentReceipt.folio}</title>
+          <style>
+            @page {
+              margin: 0;
+              size: auto;
+            }
+            *, *::before, *::after {
+              box-sizing: border-box;
+            }
+            body {
+              margin: 0;
+              padding: 4mm 5mm;
+              font-family: 'Courier New', Courier, monospace, monospace;
+              font-size: 11px;
+              line-height: 1.25;
+              color: #000;
+              background: #fff;
+              width: 100%;
+              max-width: 80mm;
+            }
+            .text-center { text-align: center; }
+            .text-right { text-align: right; }
+            .font-bold { font-weight: bold; }
+            .font-black { font-weight: 900; }
+            .font-medium { font-weight: 600; }
+            .uppercase { text-transform: uppercase; }
+            .flex { display: flex; }
+            .justify-between { justify-content: space-between; }
+            .items-start { align-items: flex-start; }
+            .border-b { border-bottom: 1px solid #475569; }
+            .border-t { border-top: 1px solid #475569; }
+            .border-dashed { border-style: dashed; }
+            .border-y-2 { border-top: 2px dashed #b45309; border-bottom: 2px dashed #b45309; }
+            .py-1 { padding-top: 2px; padding-bottom: 2px; }
+            .py-2 { padding-top: 4px; padding-bottom: 4px; }
+            .pb-1 { padding-bottom: 2px; }
+            .pb-3 { padding-bottom: 6px; }
+            .pt-0\\.5 { padding-top: 2px; }
+            .pt-1 { padding-top: 2px; }
+            .pt-2 { padding-top: 4px; }
+            .pt-3 { padding-top: 6px; }
+            .my-2 { margin-top: 4px; margin-bottom: 4px; }
+            .pl-2 { padding-left: 6px; }
+            .pr-1 { padding-right: 4px; }
+            .space-y-0\\.5 > * + * { margin-top: 2px; }
+            .space-y-1 > * + * { margin-top: 3px; }
+            .text-\\[11px\\] { font-size: 11px; }
+            .text-\\[10px\\] { font-size: 10px; }
+            .text-\\[9px\\] { font-size: 9px; }
+            .text-xs { font-size: 12px; }
+            .text-sm { font-size: 13px; }
+            .tracking-wider { letter-spacing: 0.05em; }
+            .text-slate-600, .text-slate-500, .text-slate-700 { color: #1e293b; }
+            .text-amber-800, .text-amber-700 { color: #78350f; }
+            .text-rose-600 { color: #be123c; }
+            .bg-amber-50 { background-color: #fef3c7; }
+            .divide-y > * + * { border-top: 1px dashed #cbd5e1; }
+          </style>
+        </head>
+        <body>
+          ${content}
+        </body>
+      </html>
+    `);
+    doc.close();
+
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (err) {
+        console.error("Error al imprimir iframe:", err);
+        window.print();
+      }
+    }, 200);
+  };
+
   const handlePrint = async () => {
     setIsReprinting(true);
     try {
@@ -40,11 +149,11 @@ export function ReceiptModal({
       const updated = await api.sales.reprintSale(currentReceipt.id);
       setCurrentReceipt(updated);
 
-      // Disparar spooler de impresión
-      window.print();
+      // Imprimir mediante el iframe aislado (sin botones ni fondos del modal)
+      printReceiptViaIframe();
     } catch (err) {
       console.error("Error al registrar reimpresión:", err);
-      window.print();
+      printReceiptViaIframe();
     } finally {
       setIsReprinting(false);
     }
@@ -53,10 +162,10 @@ export function ReceiptModal({
   const isReprint = (currentReceipt.reprintCount || 0) > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150 print:bg-transparent print:p-0 print:static print:block">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[92vh] overflow-hidden print:border-none print:shadow-none print:max-w-none print:m-0 print:p-0 print:bg-transparent">
-        {/* Cabecera del Modal (Oculta al imprimir) */}
-        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60 print:hidden no-print">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-lg w-full flex flex-col max-h-[92vh] overflow-hidden">
+        {/* Cabecera del Modal */}
+        <div className="px-5 py-3.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
           <div className="flex items-center gap-2">
             <span className="text-lg">🧾</span>
             <div>
@@ -78,18 +187,18 @@ export function ReceiptModal({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
           >
             ✕
           </button>
         </div>
 
         {/* Visor de Tirilla Térmica (58mm/80mm) */}
-        <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-950 flex justify-center print:bg-transparent print:p-0 print:overflow-visible">
+        <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-950 flex justify-center">
           <div
             ref={printAreaRef}
             id="print-receipt-area"
-            className="receipt-print-only w-full max-w-[340px] bg-white text-slate-900 p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-[11px] leading-tight print:shadow-none print:border-none print:m-0 print:p-2 print:w-full print:max-w-[80mm] print:text-black print:bg-white"
+            className="w-full max-w-[340px] bg-white text-slate-900 p-5 rounded-lg shadow-sm border border-slate-200 font-mono text-[11px] leading-tight"
             style={{ fontFamily: "'Courier New', Courier, monospace" }}
           >
             {/* ENCABEZADO FISCAL */}

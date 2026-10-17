@@ -31,52 +31,9 @@
   }
 }
 
-/* =========================================================================
-   ESTILOS DE IMPRESIÓN (PRINT MEDIA)
-   Oculta la UI del POS, modales, barras y botones; aisla solo el ticket.
-   ========================================================================= */
 @media print {
-  @page {
-    margin: 0;
-    size: auto;
-  }
-
-  body {
-    visibility: hidden !important;
-    background: transparent !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: visible !important;
-  }
-
-  #root {
-    visibility: hidden !important;
-  }
-
-  /* Mostrar exclusivamente el área designada del ticket */
-  .receipt-print-only,
-  .receipt-print-only * {
-    visibility: visible !important;
-  }
-
-  .receipt-print-only {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    max-width: 80mm !important;
-    margin: 0 auto !important;
-    padding: 4mm !important;
-    background: white !important;
-    color: black !important;
-    border: none !important;
-    box-shadow: none !important;
-  }
-
-  /* Ocultar cualquier elemento no deseado */
   .no-print,
   .print-hidden {
     display: none !important;
-    visibility: hidden !important;
   }
 }
