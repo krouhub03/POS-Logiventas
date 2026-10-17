@@ -711,10 +711,57 @@ pub fn login_cashier_pin(db: State<'_, Db>, pin: String) -> AppResult<CashierUse
 }
 
 #[tauri::command]
-pub fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if !erp_url.is_empty() && !token.is_empty() {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+        {
+            let url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
+            let _ = client
+                .post(&url)
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({ "accion": "DESVINCULAR" }))
+                .send()
+                .await;
+        }
+    }
+
     let conn = db.conn()?;
     internal_unpair(&conn)?;
     Ok(fetch_status_sync(&conn))
+}
+
+/// Envía una señal rápida al ERP cuando la ventana del POS se cierra para marcar la caja como desconectada.
+pub async fn notify_terminal_shutdown(db: &Db) {
+    let (erp_url, token) = {
+        let Ok(conn) = db.conn() else { return };
+        let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if !erp_url.is_empty() && !token.is_empty() {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1500))
+            .build()
+        {
+            let url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
+            let _ = client
+                .post(&url)
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({ "accion": "DESCONECTAR_SESION" }))
+                .send()
+                .await;
+        }
+    }
 }
 
 /// Valida periódicamente con el ERP si la caja sigue activa.

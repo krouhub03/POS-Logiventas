@@ -600,18 +600,21 @@ export function SettingsPage({
                     Terminal POS y Conexión ERP
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Detalles de enlace M2M con Megalider ERP
+                    Detalles de enlace M2M, bodega asignada y desconexión de la caja con Megalider ERP
                   </p>
                 </div>
 
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
                       <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
                         Código de Caja
                       </div>
                       <div className="text-base font-bold text-slate-900 dark:text-white mt-1">
                         {terminalStatus.cajaCodigo || "CAJA-01"}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {terminalStatus.cajaNombre || "Caja Principal"}
                       </div>
                     </div>
 
@@ -622,19 +625,35 @@ export function SettingsPage({
                       <div className="text-base font-bold text-slate-900 dark:text-white mt-1">
                         {terminalStatus.empresaNombre || "Megalider"}
                       </div>
+                      {terminalStatus.empresaNit && (
+                        <div className="text-xs font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                          NIT: {terminalStatus.empresaNit}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+                      <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                        Bodega de Despacho
+                      </div>
+                      <div className="text-base font-bold text-emerald-700 dark:text-emerald-400 mt-1">
+                        {terminalStatus.bodegaNombre || "Bodega Principal"}
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Asignación permanente en ERP
+                      </div>
                     </div>
                   </div>
 
-                  <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
-                    <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
-                      URL del Servidor ERP
+                  <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl flex items-center justify-between gap-4">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
+                        URL del Servidor ERP
+                      </div>
+                      <div className="text-sm font-mono text-slate-800 dark:text-slate-300 mt-1">
+                        {terminalStatus.erpUrl}
+                      </div>
                     </div>
-                    <div className="text-sm font-mono text-slate-800 dark:text-slate-300 mt-1">
-                      {terminalStatus.erpUrl}
-                    </div>
-                  </div>
-
-                  <div className="pt-2 flex items-center justify-between">
                     <button
                       type="button"
                       onClick={async () => {
@@ -649,19 +668,32 @@ export function SettingsPage({
                           });
                         }
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
+                      className="px-4 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer shrink-0"
                     >
                       🔄 Sincronizar Usuarios y Cajeros
                     </button>
+                  </div>
+
+                  {/* SECCIÓN DE DESCONEXIÓN / DESVINCULACIÓN DE CAJA */}
+                  <div className="p-5 bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="text-sm font-bold text-rose-800 dark:text-rose-200 flex items-center gap-2">
+                        <span>🔌 Desconectar y Desvincular Caja del ERP</span>
+                      </div>
+                      <p className="text-xs text-rose-700/80 dark:text-rose-300/80 max-w-xl">
+                        Al desconectar esta terminal se enviará una señal inmediata al ERP para marcar la caja como desconectada/desvinculada y se cerrará la sesión actual.
+                      </p>
+                    </div>
 
                     <button
                       type="button"
                       onClick={async () => {
                         const ok = await confirm({
-                          title: "Desvincular Terminal",
-                          message: "¿Está seguro de desvincular esta terminal del ERP? Se requerirá vincularla de nuevo con credenciales o código.",
+                          title: "Desconectar y Desvincular Caja POS",
+                          message:
+                            "¿Está seguro de desconectar esta caja del ERP? El ERP recibirá la señal de desconexión de inmediato y se requerirá vincular nuevamente la terminal para volver a operar.",
                           variant: "danger",
-                          confirmText: "Sí, Desvincular",
+                          confirmText: "Sí, Desconectar Caja",
                           cancelText: "Cancelar",
                         });
                         if (ok) {
@@ -670,16 +702,16 @@ export function SettingsPage({
                             onUnpaired();
                           } catch (e) {
                             modalAlert({
-                              title: "Error al Desvincular",
-                              message: "Error al desvincular: " + String(e),
+                              title: "Error al Desconectar",
+                              message: "Error al desconectar la terminal: " + String(e),
                               variant: "error",
                             });
                           }
                         }
                       }}
-                      className="px-4 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 border border-rose-300 dark:border-rose-800/40 text-rose-700 dark:text-rose-200 text-xs font-bold transition-colors cursor-pointer"
+                      className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-md shadow-rose-700/20"
                     >
-                      ⚠️ Desvincular Terminal
+                      🔌 Desconectar Caja del ERP
                     </button>
                   </div>
                 </div>

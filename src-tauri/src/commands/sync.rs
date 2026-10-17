@@ -94,7 +94,7 @@ pub async fn verify_and_reserve_stock(
         // Primero verificamos si hay algún producto físico que localmente ya esté agotado o insuficiente
         let mut critical_items = Vec::new();
         for (&prod_id, &req_qty) in &required_by_product {
-            let (stock, name, is_service, controls_stock, allow_neg, erp_id): (f64, String, i64, i64, i64, Option<String>) = conn
+            let (stock, name, is_service, controls_stock, _allow_neg, erp_id): (f64, String, i64, i64, i64, Option<String>) = conn
                 .query_row(
                     "SELECT stock, name, is_service, controls_stock, allow_negative_stock, erp_id FROM products WHERE id = ?1",
                     params![prod_id],

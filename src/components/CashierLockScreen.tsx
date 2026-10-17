@@ -1,20 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../services/api";
-import { useModals } from "../contexts/ModalContext";
 import type { CashierUser, TerminalStatus } from "../types";
 
 interface CashierLockScreenProps {
   status: TerminalStatus;
   onUnlocked: (cashier: CashierUser) => void;
-  onUnpaired: () => void;
+  onUnpaired?: () => void;
 }
 
 export function CashierLockScreen({
   status,
   onUnlocked,
-  onUnpaired,
 }: CashierLockScreenProps) {
-  const { confirm } = useModals();
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
   const [pin, setPin] = useState("");
@@ -201,25 +198,6 @@ export function CashierLockScreen({
     }
   };
 
-  const handleDesvincular = async () => {
-    const ok = await confirm({
-      title: "Desvincular Terminal",
-      message:
-        "¿Estás seguro de desvincular esta terminal de caja? Deberás emparejarla nuevamente para volver a operar.",
-      variant: "danger",
-      confirmText: "Sí, Desvincular",
-      cancelText: "Cancelar",
-    });
-    if (ok) {
-      try {
-        await api.auth.unpair();
-        onUnpaired();
-      } catch (err: unknown) {
-        setError(String(err));
-      }
-    }
-  };
-
   interface RoleTheme {
     category: "support" | "admin" | "accountant" | "manager" | "cashier" | "staff";
     color: string;
@@ -403,14 +381,6 @@ export function CashierLockScreen({
             title="Sincronizar lista de usuarios y permisos desde el ERP"
           >
             {syncing ? "Sincronizando…" : "🔄 Sincronizar Usuarios"}
-          </button>
-          <button
-            type="button"
-            onClick={handleDesvincular}
-            style={styles.unpairBtn}
-            title="Desvincular este dispositivo del ERP"
-          >
-            Desvincular
           </button>
         </div>
       </header>

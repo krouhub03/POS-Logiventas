@@ -14,7 +14,15 @@ pub fn run() {
 
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder = builder
+            .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }))
+            .plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -26,6 +34,16 @@ pub fn run() {
             // 🚀 Iniciar Daemon de Sincronización Automática Continua en segundo plano
             commands::sync::start_sync_daemon(app.handle().clone(), db);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Some(db) = window.try_state::<Db>() {
+                    let db_clone = db.inner().clone();
+                    tauri::async_runtime::block_on(async move {
+                        commands::auth::notify_terminal_shutdown(&db_clone).await;
+                    });
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::system::app_info,
