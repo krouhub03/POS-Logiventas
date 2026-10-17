@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "../services/api";
 import type { CashierUser, TerminalStatus } from "../types";
 import { SupportAccessModal } from "./SupportAccessModal";
+import { useModals } from "../contexts/ModalContext";
 
 interface CashierLockScreenProps {
   status: TerminalStatus;
@@ -44,7 +45,9 @@ export const isCompanyCashier = (c: CashierUser) => {
 export function CashierLockScreen({
   status,
   onUnlocked,
+  onUnpaired,
 }: CashierLockScreenProps) {
+  const { confirm, alert: modalAlert } = useModals();
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
@@ -55,7 +58,7 @@ export function CashierLockScreen({
 
   const cargarCajeros = useCallback(async () => {
     try {
-      // 1. Carga inmediata desde SQLite local para latencia cero (<5ms)
+      // 1. Carga inmediata desde base local para latencia cero (<5ms)
       const list = await api.auth.listCashiers();
       setCashiers(list);
       const regular = list.filter(isCompanyCashier);
@@ -117,7 +120,7 @@ export function CashierLockScreen({
     }
   };
 
-  // 1. Filtrar exclusivamente cajeros legítimos de la empresa vinculada (excluye clientes, superadmins y seed local admin)
+  // Filtrar exclusivamente cajeros legítimos de la empresa vinculada
   const regularCashiers = cashiers.filter(isCompanyCashier);
 
   const frequencyMap = getFrequencyMap();
@@ -137,7 +140,6 @@ export function CashierLockScreen({
       setLoading(true);
       setError(null);
       try {
-        // Validación focalizada contra el ID específico del usuario (Zero-Collision)
         const cashier = await api.auth.loginUserPin(selectedCashier.id, pinToTest);
         recordLoginFrequency(cashier.id);
         onUnlocked(cashier);
@@ -167,7 +169,7 @@ export function CashierLockScreen({
     setError(null);
   }, []);
 
-  // Soporte de teclado físico adaptativo
+  // Soporte de teclado físico
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (showSupportModal) {
@@ -218,6 +220,48 @@ export function CashierLockScreen({
     }
   };
 
+  const handleDisconnectTerminal = async () => {
+    const ok = await confirm({
+      title: "¿Desconectar esta Caja?",
+      message:
+        "La terminal se desvinculará de la estación actual. Podrás volver a vincularla o reconectarte cuando lo requieras.",
+      confirmText: "Sí, desconectar",
+      cancelText: "Cancelar",
+      variant: "warning",
+    });
+    if (!ok) return;
+
+    try {
+      await api.auth.disconnectTemporarily();
+      if (onUnpaired) {
+        onUnpaired();
+      }
+    } catch (err) {
+      modalAlert({
+        title: "Error al desconectar",
+        message: String(err),
+        variant: "error",
+      });
+    }
+  };
+
+  const handleCloseApp = async () => {
+    const ok = await confirm({
+      title: "¿Apagar o Salir del POS?",
+      message: "¿Deseas cerrar la aplicación de Punto de Venta?",
+      confirmText: "Apagar Caja",
+      cancelText: "Continuar en POS",
+      variant: "danger",
+    });
+    if (!ok) return;
+
+    try {
+      await api.system.closeApp();
+    } catch (err) {
+      console.error("Error al cerrar app:", err);
+    }
+  };
+
   interface RoleTheme {
     category: "support" | "admin" | "accountant" | "manager" | "cashier" | "staff";
     color: string;
@@ -231,7 +275,6 @@ export function CashierLockScreen({
     const erpRole = (c.erpRoleCode || "").toLowerCase();
     const profile = (c.profileName || "").toLowerCase();
 
-    // 1. Soporte Técnico (SUPERADMINSAAS - Exclusivo, JAMÁS mostrar como Administrador)
     if (
       erpRole === "superadminsaas" ||
       role === "superadminsaas" ||
@@ -247,7 +290,6 @@ export function CashierLockScreen({
       };
     }
 
-    // 2. Administrador de Empresa
     if (
       erpRole === "admin_empresa" ||
       role === "admin" ||
@@ -263,7 +305,6 @@ export function CashierLockScreen({
       };
     }
 
-    // 2. Contador / Finanzas
     if (
       profile.includes("contad") ||
       profile.includes("fiscal") ||
@@ -279,7 +320,6 @@ export function CashierLockScreen({
       };
     }
 
-    // 3. Supervisor / Gerente
     if (
       role === "manager" ||
       profile.includes("gerent") ||
@@ -295,7 +335,6 @@ export function CashierLockScreen({
       };
     }
 
-    // 4. Ventas / Cajero
     if (
       profile.includes("cajer") ||
       profile.includes("vendedor") ||
@@ -311,7 +350,6 @@ export function CashierLockScreen({
       };
     }
 
-    // 5. Staff general
     return {
       category: "staff",
       color: "#94a3b8",
@@ -321,730 +359,358 @@ export function CashierLockScreen({
     };
   };
 
-  const renderRoleIcon = (category: string, size = 20) => {
-    switch (category) {
-      case "support":
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-          </svg>
-        );
-      case "admin":
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            <path d="m9 12 2 2 4-4" />
-          </svg>
-        );
-      case "accountant":
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect width="16" height="20" x="4" y="2" rx="2" />
-            <line x1="8" x2="16" y1="6" y2="6" />
-            <line x1="16" x2="16" y1="14" />
-            <path d="M16 10h.01" />
-            <path d="M12 10h.01" />
-            <path d="M8 10h.01" />
-            <path d="M12 14h.01" />
-            <path d="M8 14h.01" />
-            <path d="M12 18h.01" />
-            <path d="M8 18h.01" />
-          </svg>
-        );
-      case "manager":
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
-            <path d="m9 12 2 2 4-4" />
-          </svg>
-        );
-      case "cashier":
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z" />
-            <path d="M3 6h18" />
-            <path d="M16 10a4 4 0 0 1-8 0" />
-          </svg>
-        );
-      default:
-        return (
-          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
-        );
-    }
-  };
-
   return (
-    <div style={styles.container}>
-      {/* Barra Superior con Datos de Terminal */}
-      <header style={styles.topBar}>
-        <div style={styles.terminalInfo}>
+    <div
+      className="w-screen h-screen bg-[#020617] text-slate-100 font-sans select-none overflow-hidden flex flex-col justify-between"
+      style={{ background: "radial-gradient(circle at 50% 18%, #132247 0%, #080f24 45%, #020617 100%)" }}
+    >
+      {/* Luces sutiles de fondo */}
+      <div className="fixed top-[-10%] left-[20%] w-[600px] h-[300px] bg-blue-600/10 rounded-full blur-[140px] pointer-events-none" />
+      <div className="fixed bottom-[-10%] right-[20%] w-[500px] h-[280px] bg-emerald-500/10 rounded-full blur-[130px] pointer-events-none" />
+
+      {/* ================= BARRA SUPERIOR DE SISTEMA ================= */}
+      <header className="w-full px-7 py-3 bg-slate-950/70 border-b border-slate-800/80 backdrop-blur-md flex items-center justify-between z-20 shrink-0">
+        {/* Izquierda: Marca y Datos de Terminal */}
+        <div className="flex items-center gap-3.5">
           <img
             src="/metahabi-icon.png"
             alt="Metahabi POS"
-            style={{ width: 32, height: 32, borderRadius: 8, objectFit: "contain", flexShrink: 0 }}
+            className="w-9 h-9 rounded-xl object-contain shadow-md shadow-emerald-500/20"
           />
-          <div style={styles.indicatorOnline} title="Operando en SQLite local (Offline-First)" />
           <div>
-            <div style={styles.empresaText}>
-              {status.empresaNombre || "Empresa"} {status.empresaNit ? `(${status.empresaNit})` : ""}
+            <div className="flex items-center gap-2">
+              <span className="text-base font-extrabold tracking-tight text-white">
+                METAHABI <span className="text-emerald-400 font-black">POS</span>
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#10b981]" />
+                En Línea
+              </span>
             </div>
-            <div style={styles.cajaText}>
-              Terminal: <strong>{status.cajaCodigo || "CAJA"}</strong> — {status.cajaNombre || "Caja Principal"}
+            <div className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5 mt-0.5">
+              <span>{status.empresaNombre || "Empresa"} {status.empresaNit ? `(${status.empresaNit})` : ""}</span>
+              <span className="text-slate-600">•</span>
+              <span>
+                Terminal: <strong className="text-slate-200">{status.cajaCodigo || "CAJA"}</strong> — {status.cajaNombre || "Caja Principal"}
+              </span>
             </div>
           </div>
         </div>
 
-        <div style={styles.topActions}>
+        {/* Derecha: Botones de Acción de Sistema */}
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
             onClick={handleSyncUsers}
             disabled={syncing}
-            style={styles.syncBtn}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500/50 shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
             title="Sincronizar lista de usuarios y permisos desde el ERP"
           >
-            {syncing ? "Sincronizando…" : "🔄 Sincronizar Usuarios"}
+            <span className={syncing ? "animate-spin" : ""}>🔄</span>
+            <span>{syncing ? "Sincronizando…" : "Sincronizar Usuarios"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleDisconnectTerminal}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 border border-amber-500/40 hover:border-amber-400 transition-all active:scale-95 cursor-pointer shadow-xs"
+            title="Desconectar o cambiar de terminal de caja"
+          >
+            <span>⚡</span>
+            <span>Desconectar Caja</span>
+          </button>
+
+          <div className="h-6 w-px bg-slate-800 mx-0.5" />
+
+          <button
+            type="button"
+            onClick={handleCloseApp}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-rose-100 border border-rose-500/40 hover:border-rose-400 transition-all active:scale-95 cursor-pointer shadow-xs shadow-rose-950/50"
+            title="Cerrar y apagar la aplicación de Punto de Venta"
+          >
+            <span>⏻</span>
+            <span>Apagar Caja</span>
           </button>
         </div>
       </header>
 
-      {/* Contenido Central */}
-      <main style={styles.centerArea}>
-        {!selectedCashier ? (
-          /* PASO 1: Selector Visual de Cajeros */
-          <div style={styles.selectorBox}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: "0.85rem" }}>
-              <img src="/logo_metahabi.png" alt="Metahabi" style={{ height: "40px", objectFit: "contain" }} />
+      {/* ================= CONTENEDOR CENTRAL DE AUTENTICACIÓN ================= */}
+      <main className="w-full flex-1 flex items-center justify-center p-6 z-10 overflow-y-auto">
+        <div className="w-full max-w-4xl bg-slate-900/80 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-7 shadow-2xl relative overflow-hidden">
+          {/* Línea de acento superior */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-cyan-500 via-emerald-500 to-teal-400" />
+
+          {/* Encabezado del Card */}
+          <div className="text-center mb-6">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/80 shadow-inner mb-2.5">
+              <span className="text-2xl">🔒</span>
             </div>
-            <h2 style={styles.lockTitle}>Selecciona tu Usuario</h2>
-            <p style={styles.lockSubtitle}>
-              Elige tu perfil de operador para ingresar al punto de venta
+            <h2 className="text-2xl font-black tracking-tight text-white">
+              Selecciona tu Usuario
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              Elige tu perfil de operador para ingresar al punto de venta y abrir sesión de turno
             </p>
+          </div>
 
-            {error && <div style={styles.errorBox}>{error}</div>}
+          {error && (
+            <div className="mb-5 p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-semibold text-center flex items-center justify-center gap-2">
+              <span>⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
 
-            {cashiers.length === 0 ? (
-              <div style={styles.emptyUsersBox}>
-                <p>No hay usuarios sincronizados en la terminal local.</p>
-                <button
-                  type="button"
-                  onClick={handleSyncUsers}
-                  disabled={syncing}
-                  style={styles.actionBtn}
-                >
-                  {syncing ? "Sincronizando…" : "Descargar Usuarios del ERP"}
-                </button>
-              </div>
-            ) : (
-              <div style={styles.selectorContent}>
-                {/* 1. Selector Dropdown (Solo usuarios de caja autorizados, excluye clientes) */}
-                <div style={styles.selectCard}>
-                  <label style={styles.selectLabel}>
-                    <span>📋 Buscar / Seleccionar Usuario de la Lista:</span>
-                    <span style={styles.selectCountBadge}>{regularCashiers.length} usuarios</span>
-                  </label>
-                  <div style={styles.selectWrapper}>
-                    <select
-                      style={styles.selectElement}
-                      value=""
-                      onChange={(e) => {
-                        const id = Number(e.target.value);
-                        const found = regularCashiers.find((c) => c.id === id);
-                        if (found) handleSelectCashier(found);
-                      }}
-                    >
-                      <option value="">-- Haz clic aquí para desplegar y seleccionar cualquier usuario --</option>
-                      {regularCashiers.map((c) => {
-                        const theme = getRoleTheme(c);
-                        const roleDesc = c.profileName?.trim()
-                          ? ` — [${c.profileName.trim()}]`
-                          : theme.category === "admin"
-                          ? ` — [Administrador]`
-                          : "";
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {c.fullName} ({c.username}){roleDesc}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
+          {cashiers.length === 0 ? (
+            <div className="p-8 text-center text-slate-400">
+              <p className="text-sm font-medium mb-4">No hay usuarios sincronizados en la terminal local.</p>
+              <button
+                type="button"
+                onClick={handleSyncUsers}
+                disabled={syncing}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors cursor-pointer"
+              >
+                {syncing ? "Sincronizando…" : "Descargar Usuarios del ERP"}
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-12 gap-7 items-start">
+              {/* Columna Izquierda: Operadores (7 columnas) */}
+              <div className="col-span-12 lg:col-span-7 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <span>👥</span> Operadores Frecuentes
+                  </span>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    {regularCashiers.length} autorizados
+                  </span>
                 </div>
 
-                {/* 2. Divisor Visual */}
-                {frequentCashiers.length > 0 && (
-                  <div style={styles.dividerContainer}>
-                    <div style={styles.dividerLine} />
-                    <span style={styles.dividerText}>⚡ O ACCESO RÁPIDO: USUARIOS MÁS FRECUENTES</span>
-                    <div style={styles.dividerLine} />
-                  </div>
-                )}
-
-                {/* 3. Tarjetas con Iconos de Rol para Usuarios Más Frecuentes */}
-                {frequentCashiers.length > 0 && (
-                  <div style={styles.cashierGrid}>
-                    {frequentCashiers.map((c, idx) => {
-                      const theme = getRoleTheme(c);
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => handleSelectCashier(c)}
-                          style={styles.cashierCard}
-                        >
-                          <div style={styles.cardHeader}>
-                            <span style={styles.shortcutBadge}>{idx + 1}</span>
+                {/* Tarjetas de Frecuentes */}
+                <div className="grid grid-cols-1 gap-2.5">
+                  {frequentCashiers.map((c, idx) => {
+                    const theme = getRoleTheme(c);
+                    const isSelected = selectedCashier?.id === c.id;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => handleSelectCashier(c)}
+                        className={`w-full text-left p-3 rounded-2xl border transition-all duration-150 flex items-center justify-between cursor-pointer group ${
+                          isSelected
+                            ? "bg-gradient-to-r from-emerald-950/60 to-slate-900/90 border-emerald-500 shadow-lg shadow-emerald-950/50"
+                            : "bg-slate-950/50 hover:bg-slate-800/60 border-slate-800 hover:border-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {/* Avatar */}
+                          <div className="relative">
                             <div
+                              className="w-11 h-11 rounded-xl flex items-center justify-center font-bold text-sm font-mono border"
                               style={{
-                                ...styles.roleIconBadge,
-                                borderColor: theme.border,
                                 backgroundColor: theme.bg,
+                                borderColor: theme.border,
                                 color: theme.color,
                               }}
-                              title={theme.label}
                             >
-                              {renderRoleIcon(theme.category, 14)}
+                              {c.fullName.slice(0, 2).toUpperCase()}
                             </div>
+                            {isSelected && (
+                              <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center text-[9px] font-black border border-slate-900">
+                                ✓
+                              </div>
+                            )}
                           </div>
-                          <div
-                            style={{
-                              ...styles.cardIconCircle,
-                              backgroundColor: theme.bg,
-                              borderColor: theme.border,
-                              color: theme.color,
-                            }}
-                          >
-                            {renderRoleIcon(theme.category, 30)}
-                          </div>
-                          <div style={styles.cardName}>{c.fullName}</div>
-                          {c.profileName && c.profileName.trim() && (
-                            <div style={{ ...styles.cardProfileSubtitle, color: theme.color }}>
-                              {c.profileName}
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className={`font-bold text-sm transition-colors ${isSelected ? "text-emerald-300" : "text-white group-hover:text-slate-100"}`}>
+                                {c.fullName}
+                              </span>
+                              <span
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border"
+                                style={{
+                                  backgroundColor: theme.bg,
+                                  borderColor: theme.border,
+                                  color: theme.color,
+                                }}
+                              >
+                                {theme.label}
+                              </span>
                             </div>
-                          )}
-                          <div style={styles.cardEmail}>{c.username}</div>
-                        </button>
+                            <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                              @{c.username}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-mono font-bold px-2 py-1 rounded bg-slate-800/80 text-slate-400 border border-slate-700/60">
+                          #{idx + 1}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Dropdown de lista completa */}
+                <div className="pt-2">
+                  <label className="block text-xs font-bold text-slate-400 mb-1.5">
+                    O buscar en lista completa de operadores:
+                  </label>
+                  <select
+                    value={selectedCashier?.id || ""}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      const found = regularCashiers.find((c) => c.id === id);
+                      if (found) handleSelectCashier(found);
+                    }}
+                    className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-200 focus:outline-none focus:border-emerald-500 transition-colors"
+                  >
+                    <option value="">-- Haz clic para seleccionar cualquier operador ({regularCashiers.length}) --</option>
+                    {regularCashiers.map((c) => {
+                      const theme = getRoleTheme(c);
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.fullName} (@{c.username}) — [{theme.label}]
+                        </option>
                       );
                     })}
-                  </div>
-                )}
+                  </select>
+                </div>
 
-                {/* 4. Enlace sutil y discreto para Acceso de Soporte */}
-                <div style={styles.supportFooter}>
+                {/* Acceso de Soporte */}
+                <div className="pt-2 flex justify-start">
                   <button
                     type="button"
                     onClick={() => setShowSupportModal(true)}
-                    style={styles.supportLink}
-                    title="Acceso exclusivo para personal de Soporte Técnico (SaaS)"
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    <span style={styles.supportIcon}>🛠️</span>
-                    <span>Acceso de Soporte</span>
+                    <span>🛠️</span>
+                    <span>Acceso de Soporte Técnico (PIN Maestro)</span>
                   </button>
                 </div>
               </div>
-            )}
-          </div>
-        ) : (
-          /* PASO 2: Ingreso de PIN Personal Dirigido */
-          <div style={styles.lockBox}>
-            <div style={styles.cashierSelectedHeader}>
-              <button
-                type="button"
-                onClick={handleBackToSelect}
-                style={styles.backBtn}
-                title="Volver a la selección de cajeros (Esc)"
-              >
-                ← Cambiar (Esc)
-              </button>
-              <div
-                style={{
-                  ...styles.roleIconBadgeDetailed,
-                  borderColor: getRoleTheme(selectedCashier).border,
-                  backgroundColor: getRoleTheme(selectedCashier).bg,
-                  color: getRoleTheme(selectedCashier).color,
-                }}
-              >
-                {renderRoleIcon(getRoleTheme(selectedCashier).category, 14)}
-                <span>{getRoleTheme(selectedCashier).label}</span>
+
+              {/* Columna Derecha: PIN Pad (5 columnas) */}
+              <div className="col-span-12 lg:col-span-5 bg-slate-950/60 border border-slate-800/90 rounded-2xl p-5 flex flex-col justify-between">
+                {selectedCashier ? (
+                  <div>
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400 font-medium">Ingresando:</span>
+                        <strong className="text-xs text-emerald-400 font-bold">{selectedCashier.fullName}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleBackToSelect}
+                        className="text-[11px] text-slate-400 hover:text-white underline cursor-pointer"
+                      >
+                        Cambiar
+                      </button>
+                    </div>
+
+                    <div className="text-center mt-4">
+                      <span className="text-xs text-slate-400">PIN de Seguridad (4 dígitos)</span>
+                      <div className="flex justify-center gap-3 my-3">
+                        {[0, 1, 2, 3].map((idx) => {
+                          const isFilled = pin.length > idx;
+                          return (
+                            <div
+                              key={idx}
+                              className={`w-3.5 h-3.5 rounded-full border-2 transition-all duration-150 ${
+                                isFilled
+                                  ? "bg-emerald-400 border-emerald-300 shadow-[0_0_12px_#10b981] scale-110"
+                                  : "border-slate-700 bg-slate-800/60"
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Keypad */}
+                    <div className="grid grid-cols-3 gap-2 my-2">
+                      {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((digit) => (
+                        <button
+                          key={digit}
+                          type="button"
+                          onClick={() => handleKeyPress(digit)}
+                          className="h-11 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-white font-bold text-base border border-slate-700/60 shadow-xs transition-all cursor-pointer"
+                        >
+                          {digit}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={handleBackspace}
+                        className="h-11 rounded-xl bg-slate-800/40 hover:bg-slate-700/60 active:scale-95 text-slate-400 hover:text-white font-bold text-base border border-slate-700/60 transition-all cursor-pointer"
+                        title="Borrar dígito"
+                      >
+                        ⌫
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleKeyPress("0")}
+                        className="h-11 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:scale-95 text-white font-bold text-base border border-slate-700/60 shadow-xs transition-all cursor-pointer"
+                      >
+                        0
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClear}
+                        className="h-11 rounded-xl bg-slate-800/40 hover:bg-slate-700/60 active:scale-95 text-slate-400 hover:text-rose-400 font-bold text-xs border border-slate-700/60 transition-all cursor-pointer"
+                        title="Limpiar"
+                      >
+                        C
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={loading || pin.length < 4}
+                      onClick={() => handlePinSubmit(pin)}
+                      className="w-full mt-3 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-extrabold text-xs tracking-wider uppercase shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer"
+                    >
+                      <span>{loading ? "Verificando..." : "🔓 Ingresar a Caja"}</span>
+                    </button>
+                    <p className="text-[10px] text-slate-500 text-center mt-2 font-mono">
+                      Presiona Enter en el teclado físico
+                    </p>
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
+                    <span className="text-3xl mb-2">👈</span>
+                    <p className="text-xs font-semibold text-slate-400">Selecciona tu usuario</p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Elige tu perfil a la izquierda para activar el teclado numérico de ingreso.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
-
-            <div
-              style={{
-                ...styles.avatarCircleThemed,
-                backgroundColor: getRoleTheme(selectedCashier).bg,
-                borderColor: getRoleTheme(selectedCashier).border,
-                color: getRoleTheme(selectedCashier).color,
-              }}
-            >
-              {renderRoleIcon(getRoleTheme(selectedCashier).category, 34)}
-            </div>
-            <h2 style={styles.lockTitle}>{selectedCashier.fullName}</h2>
-            <p style={styles.lockSubtitle}>
-              Ingresa tu PIN de 4 a 6 dígitos para acceder al mostrador
-            </p>
-
-            {error && <div style={styles.errorBox}>{error}</div>}
-
-            {/* Visor de PIN */}
-            <div style={styles.pinDisplay}>
-              {Array.from({ length: 6 }).map((_, i) => (
-                <span
-                  key={i}
-                  style={{
-                    ...styles.pinDot,
-                    ...(i < pin.length ? styles.pinDotFilled : {}),
-                  }}
-                />
-              ))}
-            </div>
-
-            {/* Teclado Numérico en Pantalla */}
-            <div style={styles.keypad}>
-              {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => handleKeyPress(n)}
-                  style={styles.keyBtn}
-                >
-                  {n}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={handleClear}
-                style={{ ...styles.keyBtn, ...styles.keyAction }}
-              >
-                C
-              </button>
-              <button
-                type="button"
-                onClick={() => handleKeyPress("0")}
-                style={styles.keyBtn}
-              >
-                0
-              </button>
-              <button
-                type="button"
-                onClick={handleBackspace}
-                style={{ ...styles.keyBtn, ...styles.keyAction }}
-              >
-                ⌫
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handlePinSubmit(pin)}
-              disabled={loading || pin.length < 4}
-              style={{
-                ...styles.unlockBtn,
-                ...(pin.length < 4 || loading ? styles.unlockDisabled : {}),
-              }}
-            >
-              {loading ? "Verificando..." : "Entrar a la Caja (Enter)"}
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </main>
 
-      {/* Modal de Autenticación de Soporte Técnico (SaaS) */}
+      {/* ================= FOOTER DEL SISTEMA ================= */}
+      <footer className="w-full py-2.5 px-7 border-t border-slate-900 bg-slate-950/40 flex items-center justify-between text-[11px] text-slate-500 z-10 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          <span>Metahabi POS • Estación de Caja Activa</span>
+        </div>
+        <div>
+          <span>Versión 0.1.0 Oficial</span>
+        </div>
+      </footer>
+
+      {/* Modal de Acceso de Soporte */}
       <SupportAccessModal
         isOpen={showSupportModal}
         onClose={() => setShowSupportModal(false)}
-        onSuccess={(unlockedCashier) => {
-          recordLoginFrequency(unlockedCashier.id);
-          onUnlocked(unlockedCashier);
+        onSuccess={(supportUser: CashierUser) => {
+          setShowSupportModal(false);
+          onUnlocked(supportUser);
         }}
         availableCashiers={cashiers}
-        onCashiersUpdated={(fresh) => setCashiers(fresh)}
+        onCashiersUpdated={(updated) => setCashiers(updated)}
       />
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    height: "100vh",
-    background: "#0f172a",
-    color: "#f8fafc",
-    fontFamily: "Inter, system-ui, sans-serif",
-  },
-  topBar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "0.85rem 1.5rem",
-    background: "#1e293b",
-    borderBottom: "1px solid #334155",
-  },
-  terminalInfo: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.85rem",
-  },
-  indicatorOnline: {
-    width: "12px",
-    height: "12px",
-    borderRadius: "50%",
-    background: "#22c55e",
-    boxShadow: "0 0 8px #22c55e",
-  },
-  empresaText: {
-    fontSize: "0.95rem",
-    fontWeight: "bold",
-    color: "#f8fafc",
-  },
-  cajaText: {
-    fontSize: "0.8rem",
-    color: "#94a3b8",
-  },
-  topActions: {
-    display: "flex",
-    gap: "0.5rem",
-  },
-  syncBtn: {
-    background: "#334155",
-    border: "none",
-    borderRadius: "6px",
-    color: "#e2e8f0",
-    padding: "0.4rem 0.8rem",
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  unpairBtn: {
-    background: "transparent",
-    border: "1px solid #475569",
-    borderRadius: "6px",
-    color: "#94a3b8",
-    padding: "0.4rem 0.8rem",
-    fontSize: "0.8rem",
-    cursor: "pointer",
-  },
-  centerArea: {
-    flex: 1,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "1rem",
-  },
-  selectorBox: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: "20px",
-    width: "100%",
-    maxWidth: "680px",
-    padding: "2.5rem 2rem",
-    textAlign: "center",
-    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
-  },
-  selectorContent: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "1.25rem",
-    marginTop: "0.5rem",
-  },
-  selectCard: {
-    background: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: "14px",
-    padding: "1rem 1.25rem",
-    textAlign: "left",
-  },
-  selectLabel: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    fontSize: "0.8rem",
-    fontWeight: "bold",
-    color: "#cbd5e1",
-    marginBottom: "0.5rem",
-  },
-  selectCountBadge: {
-    background: "#1e293b",
-    color: "#38bdf8",
-    fontSize: "0.7rem",
-    padding: "0.15rem 0.5rem",
-    borderRadius: "6px",
-    fontFamily: "monospace",
-  },
-  selectWrapper: {
-    position: "relative",
-    width: "100%",
-  },
-  selectElement: {
-    width: "100%",
-    background: "#1e293b",
-    border: "1px solid #475569",
-    borderRadius: "10px",
-    color: "#f8fafc",
-    padding: "0.75rem 1rem",
-    fontSize: "0.9rem",
-    fontWeight: 600,
-    outline: "none",
-    cursor: "pointer",
-    boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
-  },
-  dividerContainer: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-    margin: "0.25rem 0",
-  },
-  dividerLine: {
-    flex: 1,
-    height: "1px",
-    background: "#334155",
-  },
-  dividerText: {
-    fontSize: "0.7rem",
-    fontWeight: 700,
-    color: "#94a3b8",
-    letterSpacing: "0.05em",
-    textTransform: "uppercase",
-  },
-  lockBox: {
-    background: "#1e293b",
-    border: "1px solid #334155",
-    borderRadius: "20px",
-    width: "100%",
-    maxWidth: "400px",
-    padding: "2rem",
-    textAlign: "center",
-    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
-  },
-  cashierSelectedHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "1rem",
-  },
-  backBtn: {
-    background: "transparent",
-    border: "none",
-    color: "#94a3b8",
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    padding: "0.2rem 0.4rem",
-  },
-  avatarCircle: {
-    fontSize: "2rem",
-    marginBottom: "0.5rem",
-  },
-  lockTitle: {
-    fontSize: "1.35rem",
-    fontWeight: "bold",
-    margin: "0 0 0.25rem",
-  },
-  lockSubtitle: {
-    fontSize: "0.85rem",
-    color: "#94a3b8",
-    margin: "0 0 1.5rem",
-  },
-  cashierGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "1rem",
-    marginTop: "1rem",
-  },
-  cashierCard: {
-    background: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: "12px",
-    padding: "1.25rem 1rem",
-    textAlign: "center",
-    cursor: "pointer",
-    transition: "all 0.15s ease",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-  },
-  cardHeader: {
-    width: "100%",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "0.75rem",
-  },
-  shortcutBadge: {
-    background: "#334155",
-    color: "#94a3b8",
-    fontSize: "0.7rem",
-    fontWeight: "bold",
-    padding: "0.15rem 0.4rem",
-    borderRadius: "4px",
-    fontFamily: "monospace",
-  },
-  roleIconBadge: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "28px",
-    height: "28px",
-    borderRadius: "50%",
-    border: "1px solid",
-    transition: "all 0.15s ease",
-  },
-  roleIconBadgeDetailed: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.4rem",
-    padding: "0.25rem 0.65rem",
-    borderRadius: "9999px",
-    border: "1px solid",
-    fontSize: "0.75rem",
-    fontWeight: 600,
-  },
-  cardIconCircle: {
-    width: "56px",
-    height: "56px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    border: "1px solid",
-    marginBottom: "0.75rem",
-    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.25)",
-  },
-  avatarCircleThemed: {
-    width: "68px",
-    height: "68px",
-    borderRadius: "50%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    border: "1px solid",
-    margin: "0 auto 1.25rem",
-    boxShadow: "0 6px 20px rgba(0, 0, 0, 0.35)",
-  },
-  cardName: {
-    fontSize: "0.95rem",
-    fontWeight: "bold",
-    color: "#f8fafc",
-    marginBottom: "0.2rem",
-  },
-  cardProfileSubtitle: {
-    fontSize: "0.72rem",
-    fontWeight: 600,
-    marginBottom: "0.25rem",
-    textTransform: "uppercase",
-    letterSpacing: "0.03em",
-  },
-  cardEmail: {
-    fontSize: "0.75rem",
-    color: "#64748b",
-  },
-  supportFooter: {
-    marginTop: "1.25rem",
-    paddingTop: "1rem",
-    borderTop: "1px dashed #334155",
-    display: "flex",
-    justifyContent: "center",
-  },
-  supportLink: {
-    background: "rgba(15, 23, 42, 0.6)",
-    border: "1px solid #334155",
-    color: "#64748b",
-    fontSize: "0.78rem",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "0.45rem",
-    cursor: "pointer",
-    padding: "0.35rem 0.75rem",
-    borderRadius: "8px",
-    transition: "all 0.15s ease",
-  },
-  supportIcon: {
-    fontSize: "0.9rem",
-    opacity: 0.8,
-  },
-  emptyUsersBox: {
-    padding: "2rem",
-    color: "#94a3b8",
-    fontSize: "0.9rem",
-  },
-  actionBtn: {
-    marginTop: "1rem",
-    background: "#3b82f6",
-    color: "#ffffff",
-    border: "none",
-    borderRadius: "8px",
-    padding: "0.6rem 1.2rem",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  pinDisplay: {
-    display: "flex",
-    justifyContent: "center",
-    gap: "0.75rem",
-    marginBottom: "1.5rem",
-  },
-  pinDot: {
-    width: "14px",
-    height: "14px",
-    borderRadius: "50%",
-    border: "2px solid #475569",
-    background: "transparent",
-    transition: "all 0.15s ease",
-  },
-  pinDotFilled: {
-    background: "#3b82f6",
-    borderColor: "#3b82f6",
-    transform: "scale(1.15)",
-  },
-  keypad: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: "0.75rem",
-    marginBottom: "1.5rem",
-  },
-  keyBtn: {
-    background: "#0f172a",
-    border: "1px solid #334155",
-    borderRadius: "12px",
-    color: "#f8fafc",
-    fontSize: "1.25rem",
-    fontWeight: 600,
-    padding: "0.85rem 0",
-    cursor: "pointer",
-    transition: "background 0.1s ease",
-  },
-  keyAction: {
-    background: "#1e293b",
-    color: "#94a3b8",
-  },
-  unlockBtn: {
-    width: "100%",
-    background: "#3b82f6",
-    color: "#ffffff",
-    border: "none",
-    borderRadius: "12px",
-    padding: "0.85rem 0",
-    fontSize: "0.95rem",
-    fontWeight: "bold",
-    cursor: "pointer",
-    transition: "background 0.15s ease",
-  },
-  unlockDisabled: {
-    background: "#334155",
-    color: "#64748b",
-    cursor: "not-allowed",
-  },
-  errorBox: {
-    background: "#7f1d1d",
-    border: "1px solid #ef4444",
-    color: "#fca5a5",
-    padding: "0.6rem 0.8rem",
-    borderRadius: "8px",
-    fontSize: "0.8rem",
-    marginBottom: "1rem",
-  },
-};

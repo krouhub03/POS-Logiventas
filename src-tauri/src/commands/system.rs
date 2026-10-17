@@ -51,3 +51,10 @@ pub fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
+/// Cerrar la aplicación de escritorio de forma ordenada.
+#[tauri::command]
+pub fn close_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+
