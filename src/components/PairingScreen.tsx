@@ -30,13 +30,32 @@ export function PairingScreen({
 
   const hasPreviousCaja = Boolean(terminalStatus?.lastCajaCodigo || terminalStatus?.lastCajaId);
 
+  const normalizeErpUrl = (url: string) => {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed) return "http://localhost:3000";
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      return trimmed;
+    }
+    if (
+      trimmed.startsWith("localhost") ||
+      trimmed.startsWith("127.0.0.1") ||
+      trimmed.startsWith("192.168.") ||
+      trimmed.startsWith("10.") ||
+      trimmed.startsWith("172.")
+    ) {
+      return `http://${trimmed}`;
+    }
+    return `https://${trimmed}`;
+  };
+
   const handleReconnect = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setLoading(true);
     setError(null);
     try {
+      const cleanUrl = normalizeErpUrl(erpUrl);
       const status = await api.auth.reconnectTerminal({
-        erpUrl: erpUrl.trim(),
+        erpUrl: cleanUrl,
         cajaId: terminalStatus?.lastCajaId || undefined,
         cajaCodigo: terminalStatus?.lastCajaCodigo || undefined,
         pin: reconnectPin.trim() || undefined,
@@ -59,7 +78,8 @@ export function PairingScreen({
     setError(null);
     try {
       const sanitizedCode = code.replace(/\s+/g, "").toUpperCase();
-      const status = await api.auth.pairCode({ erpUrl: erpUrl.trim(), code: sanitizedCode });
+      const cleanUrl = normalizeErpUrl(erpUrl);
+      const status = await api.auth.pairCode({ erpUrl: cleanUrl, code: sanitizedCode });
       onPaired(status);
     } catch (err: unknown) {
       setError(String(err));
@@ -73,8 +93,9 @@ export function PairingScreen({
     setLoading(true);
     setError(null);
     try {
+      const cleanUrl = normalizeErpUrl(erpUrl);
       const res = await api.auth.pairLogin({
-        erpUrl,
+        erpUrl: cleanUrl,
         email,
         password,
         cajaId: !crearNueva && cajaSeleccionada ? cajaSeleccionada : undefined,

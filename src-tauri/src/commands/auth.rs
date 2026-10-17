@@ -242,9 +242,24 @@ fn save_synced_users(conn: &rusqlite::Connection, json: &Value) -> AppResult<Vec
     Ok(result)
 }
 
-// ─────────────────────────────────────────────────────────────
-// Comandos #[tauri::command]
-// ─────────────────────────────────────────────────────────────
+pub fn sanitize_erp_url(raw_url: &str) -> String {
+    let trimmed = raw_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "http://localhost:3000".to_string();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        trimmed.to_string()
+    } else if trimmed.starts_with("localhost")
+        || trimmed.starts_with("127.0.0.1")
+        || trimmed.starts_with("192.168.")
+        || trimmed.starts_with("10.")
+        || trimmed.starts_with("172.")
+    {
+        format!("http://{}", trimmed)
+    } else {
+        format!("https://{}", trimmed)
+    }
+}
 
 #[tauri::command]
 pub fn get_terminal_status(db: State<'_, Db>) -> AppResult<TerminalStatus> {
@@ -257,7 +272,7 @@ pub async fn pair_terminal_code(
     db: State<'_, Db>,
     input: PairCodeInput,
 ) -> AppResult<TerminalStatus> {
-    let clean_url = input.erp_url.trim().trim_end_matches('/').to_string();
+    let clean_url = sanitize_erp_url(&input.erp_url);
     let url = format!("{}/api/pos/v1/terminal/vincular", clean_url);
 
     let client = reqwest::Client::builder()
@@ -347,7 +362,7 @@ pub async fn pair_terminal_login(
     db: State<'_, Db>,
     input: PairLoginInput,
 ) -> AppResult<PairLoginResult> {
-    let clean_url = input.erp_url.trim().trim_end_matches('/').to_string();
+    let clean_url = sanitize_erp_url(&input.erp_url);
     let url = format!("{}/api/pos/v1/terminal/login-setup", clean_url);
 
     let client = reqwest::Client::builder()
@@ -807,15 +822,13 @@ pub async fn reconnect_terminal(
 ) -> AppResult<TerminalStatus> {
     let (clean_url, caja_id, caja_codigo, empresa_id) = {
         let conn = db.conn()?;
-        let url = input
+        let raw_url = input
             .erp_url
             .filter(|s| !s.trim().is_empty())
             .or_else(|| get_setting(&conn, "last_erp_url"))
             .or_else(|| get_setting(&conn, "erp_url"))
-            .unwrap_or_else(|| "http://localhost:3000".to_string())
-            .trim()
-            .trim_end_matches('/')
-            .to_string();
+            .unwrap_or_else(|| "http://localhost:3000".to_string());
+        let url = sanitize_erp_url(&raw_url);
 
         let cid = input
             .caja_id
