@@ -100,7 +100,7 @@ $$\text{Cambio} = \sum \text{Pagos} - \text{Total}$$
 
 ---
 
-## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0017`)
+## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0022`)
 
 La base de datos SQLite se almacena en `%APPDATA%\com.briankrou.pos-logiventa\logiventa.db`.
 
@@ -268,7 +268,7 @@ erDiagram
 ```
 
 ### 4.2. Historial de Migraciones (`src-tauri/src/db/migrations.rs`)
-El runner aplica secuencialmente las 19 migraciones dentro de transacciones individuales actualizando `PRAGMA user_version`:
+El runner aplica secuencialmente las 22 migraciones dentro de transacciones individuales actualizando `PRAGMA user_version`:
 
 1. `0001_initial.sql`: Tablas nucleares (`users`, `categories`, `products`, `customers`, `cash_sessions`, `sales`, `sale_items`, `payments`, `inventory_movements`, `settings`).
 2. `0002_terminal_settings.sql`: Columnas `erp_user_id` y llaves de vinculación M2M en `settings`.
@@ -289,6 +289,9 @@ El runner aplica secuencialmente las 19 migraciones dentro de transacciones indi
 17. `0017_pin_rate_limiting.sql`: Columnas `failed_pin_attempts` y `locked_until` en `users` para protección contra fuerza bruta local (suspensión de 60s tras 5 intentos fallidos).
 18. `0018_product_components.sql`: Tabla `product_components` para recetas, combos y kits con explosión atómica de inventario.
 19. `0019_customer_credit_and_payments.sql`: Soporte integral de cartera de clientes (`credit_limit_cents`, `current_balance_cents`, `is_credit_blocked`, `credit_days`, `notes`) y tabla `customer_payments` para abonos en caja.
+20. `0020_sync_queue_customer_payments.sql`: Extensión de la cola outbox (`sync_queue`) para eventos de abonos de cartera de clientes.
+21. `0021_product_images.sql`: Columnas `image_path`, `image_hash` y `image_sync_status` en `products` para gestión de fotografía local y sincronización.
+22. `0022_strict_no_negative_stock.sql`: Forzado de política estricta de inventario en BD (`allow_negative_stock = 0` y `controls_stock = 1` para artículos físicos y combos).
 
 ---
 

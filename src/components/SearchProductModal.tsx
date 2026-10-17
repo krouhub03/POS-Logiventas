@@ -252,7 +252,7 @@ export function SearchProductModal({
   // Manejo de selección con validación de existencias
   const handleSelectProduct = (p: Product) => {
     onSelect(p);
-    if (p.isService || !p.controlsStock || p.stock > 0) {
+    if (p.isService || p.stock > 0) {
       onClose();
     }
   };

@@ -105,7 +105,30 @@ function getInitialTickets(): TicketTab[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        return parsed.map((t: TicketTab) => ({
+          ...t,
+          lines: Array.isArray(t.lines)
+            ? t.lines
+                .filter((l: CartLine) => l.isService || l.currentStock === undefined || l.currentStock > 0)
+                .map((l: CartLine) => {
+                  if (!l.isService && l.currentStock !== undefined && l.quantity > l.currentStock) {
+                    const qty = l.currentStock;
+                    const subtotal = Math.round(l.unitPriceCents * qty);
+                    const fixedTax = Math.round((l.taxFixedCents || 0) * qty);
+                    const tax = calculateTaxCents(subtotal, l.taxRateBp) + fixedTax;
+                    return {
+                      ...l,
+                      quantity: qty,
+                      subtotalCents: subtotal,
+                      taxCents: tax,
+                      totalCents: subtotal + tax,
+                      controlsStock: true,
+                    };
+                  }
+                  return l;
+                })
+            : [],
+        }));
       }
     }
   } catch (e) {
@@ -262,37 +285,62 @@ export function SalesStationPage({
         setCatalogProductsMap(prodMap);
         setProductImagesMap(imgMap);
 
-        // Actualizar también los tickets en memoria y localStorage si les falta imageLocalPath, stock o cambió
+        // Actualizar también los tickets en memoria y localStorage si les falta imageLocalPath, stock o si la cantidad supera la existencia real
         setTickets((prevTickets) => {
           let changed = false;
           const nextTickets = prevTickets.map((ticket) => {
             let ticketChanged = false;
-            const nextLines = ticket.lines.map((line) => {
+            const nextLines: CartLine[] = [];
+
+            for (const line of ticket.lines) {
               if (line.productId) {
                 const info = imgMap[line.productId];
                 const fullProd = prodMap[line.productId];
+                if (fullProd && !fullProd.isService && fullProd.stock <= 0) {
+                  ticketChanged = true;
+                  changed = true;
+                  continue;
+                }
+
+                const maxStock = fullProd && !fullProd.isService ? fullProd.stock : line.currentStock;
+                const clampedQty =
+                  maxStock !== undefined && !line.isService && line.quantity > maxStock
+                    ? maxStock
+                    : line.quantity;
+
                 if (
                   info &&
                   (line.imageLocalPath !== info.imageLocalPath ||
                     line.imageUrl !== info.imageUrl ||
                     line.isService !== info.isService ||
                     line.isBundle !== info.isBundle ||
-                    (fullProd && line.currentStock !== fullProd.stock))
+                    line.controlsStock !== !info.isService ||
+                    (fullProd && line.currentStock !== fullProd.stock) ||
+                    clampedQty !== line.quantity)
                 ) {
                   ticketChanged = true;
                   changed = true;
-                  return {
+                  const newSubtotal = Math.round(line.unitPriceCents * clampedQty);
+                  const fixedTax = Math.round((line.taxFixedCents || 0) * clampedQty);
+                  const newTax = calculateTaxCents(newSubtotal, line.taxRateBp) + fixedTax;
+                  nextLines.push({
                     ...line,
+                    quantity: clampedQty,
+                    subtotalCents: newSubtotal,
+                    taxCents: newTax,
+                    totalCents: newSubtotal + newTax,
                     currentStock: fullProd ? fullProd.stock : line.currentStock,
+                    controlsStock: !info.isService,
                     imageLocalPath: info.imageLocalPath,
                     imageUrl: info.imageUrl,
                     isService: info.isService,
                     isBundle: info.isBundle,
-                  };
+                  });
+                  continue;
                 }
               }
-              return line;
-            });
+              nextLines.push(line);
+            }
             return ticketChanged ? { ...ticket, lines: nextLines } : ticket;
           });
           return changed ? nextTickets : prevTickets;
@@ -624,33 +672,31 @@ export function SalesStationPage({
       return { ok: true };
     }
 
-    // Caso B: Producto físico individual
-    if (product.controlsStock && !product.allowNegativeStock) {
-      if (product.stock <= 0) {
-        return {
-          ok: false,
-          severity: "error",
-          errorMsg: `❌ SIN EXISTENCIAS: "${product.name}" no tiene unidades disponibles en inventario (Stock: 0 ${product.unit || "UND"}).`,
-        };
-      }
+    // Caso B: Producto físico individual (NUNCA permitir superar el stock disponible)
+    if (product.stock <= 0) {
+      return {
+        ok: false,
+        severity: "error",
+        errorMsg: `❌ SIN EXISTENCIAS: "${product.name}" no tiene unidades disponibles en inventario (Stock: 0 ${product.unit || "UND"}).`,
+      };
+    }
 
-      const prev = committed[product.id] || { directQty: 0, bundleQty: 0 };
-      const alreadyCommitted = prev.directQty + prev.bundleQty;
+    const prev = committed[product.id] || { directQty: 0, bundleQty: 0 };
+    const alreadyCommitted = prev.directQty + prev.bundleQty;
 
-      if (alreadyCommitted + deltaQty > product.stock + 1e-9) {
-        if (prev.bundleQty > 0) {
-          return {
-            ok: false,
-            severity: "warning",
-            errorMsg: `⚠️ UNIDADES YA INCLUIDAS EN COMBO/KIT: "${product.name}" tiene ${product.stock} ${product.unit || "UND"} en inventario, pero ${prev.bundleQty} ya están comprometidas dentro de un Combo en este ticket.`,
-          };
-        }
+    if (alreadyCommitted + deltaQty > product.stock + 1e-9) {
+      if (prev.bundleQty > 0) {
         return {
           ok: false,
           severity: "warning",
-          errorMsg: `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit || "UND"} (ya tienes ${prev.directQty} en el ticket).`,
+          errorMsg: `⚠️ UNIDADES YA INCLUIDAS EN COMBO/KIT: "${product.name}" tiene ${product.stock} ${product.unit || "UND"} en inventario, pero ${prev.bundleQty} ya están comprometidas dentro de un Combo en este ticket.`,
         };
       }
+      return {
+        ok: false,
+        severity: "warning",
+        errorMsg: `⚠️ STOCK INSUFICIENTE: "${product.name}" solo tiene ${product.stock} ${product.unit || "UND"} disponibles en inventario (ya tienes ${prev.directQty} en el ticket).`,
+      };
     }
 
     return { ok: true };
@@ -688,6 +734,7 @@ export function SalesStationPage({
         ...existing,
         quantity: newQty,
         currentStock: product.stock,
+        controlsStock: !product.isService,
         subtotalCents: newSubtotal,
         taxCents: newTax,
         totalCents: newTotal,
@@ -717,7 +764,7 @@ export function SalesStationPage({
         totalCents: unitSubtotal + unitTax,
         unit: product.unit || "UND",
         currentStock: product.stock,
-        controlsStock: product.controlsStock,
+        controlsStock: !product.isService,
         imageUrl: product.imageUrl,
         imageLocalPath: product.imageLocalPath,
         isService: product.isService,
@@ -837,7 +884,7 @@ export function SalesStationPage({
     const target = cartLines[idx];
     const newQty = Math.round((target.quantity + delta) * 1000) / 1000;
 
-    // Validación al incrementar (+): validar stock físico compartido (directo + combos)
+    // Validación al incrementar (+): validar stock físico compartido (directo + combos) y límite duro de existencias
     if (delta > 0 && !target.isService) {
       const catalogProd = target.productId ? catalogProductsMap[target.productId] : undefined;
       if (catalogProd) {
@@ -847,7 +894,8 @@ export function SalesStationPage({
           showFeedback(check.errorMsg || "Existencia máxima alcanzada", check.severity || "warning");
           return;
         }
-      } else if (target.controlsStock && target.currentStock !== undefined && newQty > target.currentStock) {
+      }
+      if (target.currentStock !== undefined && newQty > target.currentStock) {
         playStockWarning();
         showFeedback(
           `⚠️ EXISTENCIA MÁXIMA ALCANZADA: "${target.description}" solo tiene ${target.currentStock} ${target.unit || "UND"} en inventario.`,
@@ -932,7 +980,8 @@ export function SalesStationPage({
               focusInput();
               return;
             }
-          } else if (target.controlsStock && target.currentStock !== undefined && parsed > target.currentStock) {
+          }
+          if (target.currentStock !== undefined && parsed > target.currentStock) {
             playStockWarning();
             showFeedback(
               `⚠️ STOCK INSUFICIENTE: "${target.description}" solo tiene ${target.currentStock} ${target.unit || "UND"} en inventario.`,

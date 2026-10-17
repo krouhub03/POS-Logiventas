@@ -89,8 +89,6 @@ pub fn enrich_bundle_product(conn: &rusqlite::Connection, p: &mut Product) {
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let is_service_int: i64 = r.get(11)?;
     let active_int: i64 = r.get(12)?;
-    let controls_stock_int: i64 = r.get(13).unwrap_or(if is_service_int != 0 { 0 } else { 1 });
-    let allow_negative_stock_int: i64 = r.get(14).unwrap_or(1);
     let is_bundle_int: i64 = r.get(15).unwrap_or(0);
     let tags: Option<String> = r.get(16).ok();
     let tax_fixed_cents: i64 = r.get(17).unwrap_or(0);
@@ -114,8 +112,8 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         stock: r.get(9)?,
         min_stock: r.get(10)?,
         is_service: is_service_int != 0,
-        controls_stock: controls_stock_int != 0,
-        allow_negative_stock: if is_bundle_int != 0 { false } else { allow_negative_stock_int != 0 },
+        controls_stock: is_service_int == 0,
+        allow_negative_stock: false,
         is_bundle: is_bundle_int != 0,
         tags,
         tax_fixed_cents,
