@@ -1937,7 +1937,7 @@ export function SalesStationPage({
               <tr>
                 <th className="py-2.5 px-3 w-12 text-center">#</th>
                 {showProductImages && (
-                  <th className="py-2.5 px-2 w-14 text-center">Foto</th>
+                  <th className="py-2.5 px-2 w-20 text-center">Foto</th>
                 )}
                 <th className="py-2.5 px-3 w-36">Código de Barras</th>
                 <th className="py-2.5 px-3">Descripción del Producto</th>
@@ -1978,13 +1978,13 @@ export function SalesStationPage({
                     <tr
                       key={line.id}
                       onClick={() => setSelectedLineIndex(index)}
-                      className={`cursor-pointer transition-colors ${
+                      className={`cursor-pointer transition-colors align-middle ${
                         isSelected
                           ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 border-l-4 border-l-emerald-600 dark:border-l-emerald-500"
                           : "hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200"
                       }`}
                     >
-                      <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs">
+                      <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs align-middle">
                         {index + 1}
                       </td>
                       {showProductImages && (() => {
@@ -2007,7 +2007,7 @@ export function SalesStationPage({
                         const imgSrc = resolveProductImageSrc(localPath, remoteUrl, kind);
 
                         return (
-                          <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          <td className="py-2 px-2 text-center align-middle" onClick={(e) => e.stopPropagation()}>
                             <img
                               src={imgSrc}
                               alt={line.description}
@@ -2021,7 +2021,7 @@ export function SalesStationPage({
                                 );
                               }}
                               title="Doble clic para maximizar imagen"
-                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-2xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
+                              className="w-16 h-16 object-cover rounded-xl border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
                               onError={async (e) => {
                                 // Fallback automático por Base64 desde el backend si el WebView no resuelve la URL personalizada
                                 if (line.productId && customSrc) {
@@ -2041,16 +2041,16 @@ export function SalesStationPage({
                           </td>
                         );
                       })()}
-                      <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
+                      <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300 align-middle">
                         {line.barcode}
                       </td>
-                      <td className="py-2.5 px-3 font-sans font-medium text-slate-900 dark:text-white">
+                      <td className="py-2.5 px-3 font-sans font-medium text-slate-900 dark:text-white align-middle">
                         {line.description}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300">
+                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300 align-middle">
                         {formatCents(line.unitPriceCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center">
+                      <td className="py-2.5 px-3 text-center align-middle">
                         {line.taxRateBp > 0 || (line.taxFixedCents && line.taxFixedCents > 0) ? (
                           <div className="flex flex-col items-center leading-tight">
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
@@ -2071,7 +2071,7 @@ export function SalesStationPage({
                         )}
                       </td>
                       <td
-                        className="py-2.5 px-3 text-center"
+                        className="py-2.5 px-3 text-center align-middle"
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           handleStartEditQty(line);
@@ -2115,10 +2115,10 @@ export function SalesStationPage({
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm">
+                      <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm align-middle">
                         {formatCents(line.totalCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center">
+                      <td className="py-2.5 px-3 text-center align-middle">
                         {line.currentStock !== undefined ? (
                           (() => {
                             const enEsperaOtros = tickets
