@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
 import { useModals } from "../contexts/ModalContext";
@@ -30,6 +29,10 @@ const PRESET_TAG_COLORS = [
 ];
 
 import { parseTags } from "../lib/tags";
+import { toAssetUrl } from "../lib/images";
+import { ImageLightboxModal } from "../components/ImageLightboxModal";
+
+export { toAssetUrl };
 
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
@@ -96,6 +99,30 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formImageDeleted, setFormImageDeleted] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Estado para visor maximizado de imagen (Lightbox)
+  const [lightboxData, setLightboxData] = useState<{
+    isOpen: boolean;
+    imageSrc: string | null;
+    title: string;
+    subtitle?: string;
+    productId?: number;
+  }>({
+    isOpen: false,
+    imageSrc: null,
+    title: "",
+  });
+
+  const handleOpenLightbox = (imageSrc: string | null, title: string, subtitle?: string, productId?: number) => {
+    if (!imageSrc && !productId) return;
+    setLightboxData({
+      isOpen: true,
+      imageSrc,
+      title,
+      subtitle,
+      productId,
+    });
+  };
 
   const processImageFile = (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -485,10 +512,26 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
     setFormTags(parseTags(p.tags, dbTags).join(", "));
-    setFormImagePreview(p.imageLocalPath ? convertFileSrc(p.imageLocalPath) : null);
+    const initialPreview = toAssetUrl(p.imageLocalPath) || p.imageUrl || null;
+    setFormImagePreview(initialPreview);
     setFormImageBase64(null);
     setFormImageDeleted(false);
     setIsFormOpen(true);
+
+    // Cargar Base64 desde disco/SQLite como respaldo inmediato 100% garantizado
+    if (p.imageLocalPath || p.id) {
+      api.products
+        .getImageBase64(p.id)
+        .then((b64) => {
+          if (b64) {
+            setFormImagePreview((prev) => {
+              // No sobrescribir si el usuario ya seleccionó una foto nueva en el formulario
+              return formImageBase64 ? prev : b64;
+            });
+          }
+        })
+        .catch(console.warn);
+    }
 
     if (p.isBundle) {
       api.products
@@ -1173,12 +1216,23 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors group"
                       >
                         {/* FOTO LOCAL */}
-                        <td className="py-2.5 px-3 text-center">
-                          {p.imageLocalPath ? (
+                        <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          {p.imageLocalPath || p.imageUrl ? (
                             <img
-                              src={convertFileSrc(p.imageLocalPath)}
+                              src={toAssetUrl(p.imageLocalPath) || p.imageUrl || undefined}
                               alt={p.name}
-                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                const src = toAssetUrl(p.imageLocalPath) || p.imageUrl || null;
+                                handleOpenLightbox(
+                                  src,
+                                  p.name,
+                                  `Código / SKU: ${p.sku} • Precio: ${formatCents(p.priceCents)}`,
+                                  p.id
+                                );
+                              }}
+                              title="Doble clic para maximizar imagen"
+                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
                               onError={(e) => {
                                 (e.currentTarget as HTMLElement).style.display = "none";
                               }}
@@ -1843,7 +1897,31 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                             <img
                               src={formImagePreview}
                               alt="Preview"
-                              className="w-full h-full object-cover"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenLightbox(
+                                  formImagePreview,
+                                  formName || "Foto del Producto",
+                                  formSku ? `SKU: ${formSku}` : undefined,
+                                  editingProduct?.id
+                                );
+                              }}
+                              title="Doble clic para maximizar imagen"
+                              className="w-full h-full object-cover cursor-zoom-in"
+                              onError={async (e) => {
+                                if (editingProduct?.id) {
+                                  try {
+                                    const b64 = await api.products.getImageBase64(editingProduct.id);
+                                    if (b64) {
+                                      setFormImagePreview(b64);
+                                      return;
+                                    }
+                                  } catch (err) {
+                                    console.warn("[ProductsPage] Error al cargar fallback Base64:", err);
+                                  }
+                                }
+                                (e.currentTarget as HTMLElement).style.display = "none";
+                              }}
                             />
                           ) : (
                             <span className="text-2xl text-slate-300 dark:text-slate-600">🖼️</span>
@@ -2589,6 +2667,16 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           </div>
         </div>
       )}
+
+      {/* Visor de Imagen Ampliada (Lightbox) */}
+      <ImageLightboxModal
+        isOpen={lightboxData.isOpen}
+        onClose={() => setLightboxData((prev) => ({ ...prev, isOpen: false }))}
+        imageSrc={lightboxData.imageSrc}
+        title={lightboxData.title}
+        subtitle={lightboxData.subtitle}
+        productId={lightboxData.productId}
+      />
 
     </div>
   );

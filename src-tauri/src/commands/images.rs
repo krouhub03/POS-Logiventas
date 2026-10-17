@@ -450,3 +450,45 @@ pub fn delete_product_image_local(
 
     Ok(product)
 }
+
+/// Obtiene la imagen de un producto en formato Data URL Base64 (`data:image/webp;base64,...`)
+/// para garantizar la previsualización inmediata en cualquier entorno webview.
+#[tauri::command]
+pub fn get_product_image_base64(
+    db: State<'_, Db>,
+    product_id: i64,
+) -> AppResult<Option<String>> {
+    if product_id <= 0 {
+        return Ok(None);
+    }
+
+    let local_path: Option<String> = {
+        let conn = db.conn()?;
+        conn.query_row(
+            "SELECT image_local_path FROM products WHERE id = ?1",
+            params![product_id],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten()
+    };
+
+    let path_str = match local_path {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+
+    let path = PathBuf::from(&path_str);
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return Ok(None),
+    };
+
+    let b64 = BASE64_STANDARD.encode(&bytes);
+    Ok(Some(format!("data:image/webp;base64,{b64}")))
+}
+

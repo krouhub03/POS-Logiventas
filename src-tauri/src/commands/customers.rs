@@ -252,11 +252,11 @@ pub async fn record_customer_payment(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // 1. Obtener datos actuales del cliente
-    let (customer_name, current_balance): (String, i64) = tx
+    let (customer_name, current_balance, customer_erp_id, customer_tax_id): (String, i64, Option<String>, Option<String>) = tx
         .query_row(
-            "SELECT name, current_balance_cents FROM customers WHERE id = ?1",
+            "SELECT name, current_balance_cents, erp_id, tax_id FROM customers WHERE id = ?1",
             params![input.customer_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .map_err(|_| format!("Cliente con ID {} no encontrado", input.customer_id))?;
 
@@ -323,14 +323,27 @@ pub async fn record_customer_payment(
         )
         .unwrap_or_else(|_| "now".into());
 
+    // Resolver erp_user_id del cajero si existe
+    let erp_user_id: Option<String> = tx
+        .query_row(
+            "SELECT erp_user_id FROM users WHERE id = ?1",
+            params![input.user_id],
+            |r| r.get(0),
+        )
+        .ok()
+        .flatten();
+
     // 6. Encolar en sync_queue para reportar el ingreso a tesorería en el ERP
     let sync_payload = serde_json::json!({
         "localPaymentId": payment_id,
         "folio": folio,
         "customerId": input.customer_id,
+        "customerErpId": customer_erp_id,
+        "customerTaxId": customer_tax_id,
         "customerName": customer_name,
         "sessionId": active_shift_id,
         "userId": input.user_id,
+        "erpUserId": erp_user_id,
         "paymentMethodId": input.payment_method_id,
         "method": input.method,
         "amountCents": input.amount_cents,

@@ -92,6 +92,8 @@ export const api = {
       invoke<Product>("save_product_image_local", { productId, imageBase64 }),
     deleteImage: (productId: number) =>
       invoke<Product>("delete_product_image_local", { productId }),
+    getImageBase64: (productId: number) =>
+      invoke<string | null>("get_product_image_base64", { productId }),
   },
 
   categories: {

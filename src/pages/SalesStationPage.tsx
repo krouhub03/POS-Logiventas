@@ -10,6 +10,8 @@ import { SearchProductModal } from "../components/SearchProductModal";
 import { CobroModal } from "../components/CobroModal";
 import { VariosModal } from "../components/VariosModal";
 import { CustomerModal } from "../components/CustomerModal";
+import { ImageLightboxModal } from "../components/ImageLightboxModal";
+import { toAssetUrl } from "../lib/images";
 
 interface CartLine {
   id: string;
@@ -26,6 +28,8 @@ interface CartLine {
   unit?: string;
   currentStock?: number;
   controlsStock?: boolean;
+  imageUrl?: string | null;
+  imageLocalPath?: string | null;
 }
 
 interface TicketTab {
@@ -167,6 +171,52 @@ export function SalesStationPage({
   const [editingQtyLineId, setEditingQtyLineId] = useState<string | null>(null);
   const [editingQtyValue, setEditingQtyValue] = useState<string>("");
   const qtyInputRef = useRef<HTMLInputElement>(null);
+
+  // Configuración de visualización de fotos de productos en el ticket (persistido)
+  const [showProductImages, setShowProductImages] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("pos_show_cart_images");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleShowImages = () => {
+    setShowProductImages((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("pos_show_cart_images", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
+  // Estado para visor maximizado de imagen (Lightbox)
+  const [lightboxData, setLightboxData] = useState<{
+    isOpen: boolean;
+    imageSrc: string | null;
+    title: string;
+    subtitle?: string;
+    productId?: number;
+  }>({
+    isOpen: false,
+    imageSrc: null,
+    title: "",
+  });
+
+  const handleOpenLightbox = (imageSrc: string | null, title: string, subtitle?: string, productId?: number) => {
+    if (!imageSrc && !productId) return;
+    setLightboxData({
+      isOpen: true,
+      imageSrc,
+      title,
+      subtitle,
+      productId,
+    });
+  };
 
   // Modales
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -427,6 +477,8 @@ export function SalesStationPage({
         subtotalCents: newSubtotal,
         taxCents: newTax,
         totalCents: newTotal,
+        imageUrl: existing.imageUrl || product.imageUrl,
+        imageLocalPath: existing.imageLocalPath || product.imageLocalPath,
       };
       updateCurrentTicketLines(updatedLines);
       setSelectedLineIndex(existingIndex);
@@ -449,6 +501,8 @@ export function SalesStationPage({
         unit: product.unit || "UND",
         currentStock: product.stock,
         controlsStock: product.controlsStock,
+        imageUrl: product.imageUrl,
+        imageLocalPath: product.imageLocalPath,
       };
       const updated = [...cartLines, newLine];
       updateCurrentTicketLines(updated);
@@ -1420,6 +1474,19 @@ export function SalesStationPage({
             </span>
             <span>Borrar</span>
           </button>
+
+          <button
+            type="button"
+            onClick={handleToggleShowImages}
+            className={`px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs border ${
+              showProductImages
+                ? "bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800/60"
+                : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/70 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+            }`}
+            title={showProductImages ? "Ocultar fotos de productos en el ticket" : "Mostrar fotos de productos en el ticket"}
+          >
+            <span>{showProductImages ? "🖼️ Ocultar Fotos" : "📷 Ver Fotos"}</span>
+          </button>
         </div>
       </div>
 
@@ -1464,6 +1531,9 @@ export function SalesStationPage({
             <thead className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10">
               <tr>
                 <th className="py-2.5 px-3 w-12 text-center">#</th>
+                {showProductImages && (
+                  <th className="py-2.5 px-2 w-14 text-center">Foto</th>
+                )}
                 <th className="py-2.5 px-3 w-36">Código de Barras</th>
                 <th className="py-2.5 px-3">Descripción del Producto</th>
                 <th className="py-2.5 px-3 w-28 text-right">Precio Venta</th>
@@ -1475,7 +1545,7 @@ export function SalesStationPage({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-24 text-center font-sans">
+                  <td colSpan={showProductImages ? 8 : 7} className="py-24 text-center font-sans">
                     <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center mx-auto mb-3 text-slate-300 dark:text-slate-600 shadow-2xs">
                       <EmptyCartIcon />
                     </div>
@@ -1511,6 +1581,35 @@ export function SalesStationPage({
                       <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs">
                         {index + 1}
                       </td>
+                      {showProductImages && (
+                        <td className="py-1.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                          {line.imageLocalPath || line.imageUrl ? (
+                            <img
+                              src={toAssetUrl(line.imageLocalPath) || line.imageUrl || undefined}
+                              alt={line.description}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                const src = toAssetUrl(line.imageLocalPath) || line.imageUrl || null;
+                                handleOpenLightbox(
+                                  src,
+                                  line.description,
+                                  `Código: ${line.barcode} • Precio: ${formatCents(line.unitPriceCents)}`,
+                                  line.productId
+                                );
+                              }}
+                              title="Doble clic para maximizar imagen"
+                              className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700 mx-auto shadow-2xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center text-slate-400 mx-auto text-sm">
+                              📦
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
                         {line.barcode}
                       </td>
@@ -1734,6 +1833,16 @@ export function SalesStationPage({
           }
           focusInput();
         }}
+      />
+
+      {/* Visor de Imagen Ampliada (Lightbox) */}
+      <ImageLightboxModal
+        isOpen={lightboxData.isOpen}
+        onClose={() => setLightboxData((prev) => ({ ...prev, isOpen: false }))}
+        imageSrc={lightboxData.imageSrc}
+        title={lightboxData.title}
+        subtitle={lightboxData.subtitle}
+        productId={lightboxData.productId}
       />
     </div>
   );

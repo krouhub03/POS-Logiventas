@@ -813,11 +813,28 @@ pub async fn toggle_payment_method_terminal_status(
 
 /// 📤 Despacha las ventas pendientes en la cola outbox (sync_queue) hacia el ERP.
 pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
-    let (erp_url, token, pending_records, ventas_json) = {
+    let (erp_url, token) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
         let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
 
+    if token.is_empty() {
+        return Ok(OutboxBatchResult { dispatched: 0, synced: 0, failed: 0 });
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let mut total_dispatched = 0;
+    let mut total_synced = 0;
+    let mut total_failed = 0;
+
+    // ── 1. Despacho de Ventas ('sale') ─────────────────────────────────────
+    let (pending_sales, ventas_json) = {
+        let conn = db.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending' ORDER BY id ASC LIMIT 30"
         )?;
@@ -826,115 +843,196 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
         })?;
 
-        let mut pending_records = Vec::new();
-        let mut ventas_json = Vec::new();
+        let mut pending = Vec::new();
+        let mut json_list = Vec::new();
 
         for r in rows {
             let (id, payload_str) = r?;
             if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
                 let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
-                pending_records.push((id, folio));
-                ventas_json.push(parsed);
+                pending.push((id, folio));
+                json_list.push(parsed);
             }
         }
 
-        (erp_url, token, pending_records, ventas_json)
+        (pending, json_list)
     };
 
-    if token.is_empty() || pending_records.is_empty() {
-        return Ok(OutboxBatchResult { dispatched: 0, synced: 0, failed: 0 });
+    if !pending_sales.is_empty() {
+        total_dispatched += pending_sales.len();
+        let url = format!("{}/api/pos/v1/sync/ventas", erp_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "ventas": ventas_json }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                let folio = item["folio"].as_str()?.to_string();
+                                let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                let err = item["error"].as_str().map(|s| s.to_string());
+                                Some((folio, (status, err)))
+                            }).collect()
+                        })
+                        .unwrap_or_default();
+
+                    for (id, folio) in &pending_sales {
+                        let (status, err) = resultados_map.get(folio)
+                            .cloned()
+                            .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este ticket".to_string())));
+
+                        if status == "synced" || status == "skipped" {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                params![id],
+                            );
+                            total_synced += 1;
+                        } else {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                                params![err.unwrap_or_else(|| "Fallo al procesar venta en ERP".to_string()), id],
+                            );
+                            total_failed += 1;
+                        }
+                    }
+                } else {
+                    for (id, _) in &pending_sales {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            params![res_text, id],
+                        );
+                    }
+                    total_failed += pending_sales.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (id, _) in &pending_sales {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![err_str, id],
+                    );
+                }
+                total_failed += pending_sales.len();
+            }
+        }
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()?;
+    // ── 2. Despacho de Abonos de Cartera ('customer_payment') ───────────────
+    let (pending_payments, abonos_json) = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'customer_payment' AND status = 'pending' ORDER BY id ASC LIMIT 30"
+        )?;
 
-    let url = format!("{}/api/pos/v1/sync/ventas", erp_url.trim_end_matches('/'));
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&serde_json::json!({ "ventas": ventas_json }))
-        .send()
-        .await;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
 
-    let res = match resp {
-        Ok(r) => r,
-        Err(e) => {
-            let conn = db.conn()?;
-            let err_str = e.to_string();
-            for (id, _) in &pending_records {
-                let _ = conn.execute(
-                    "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                    params![err_str, id],
-                );
+        let mut pending = Vec::new();
+        let mut json_list = Vec::new();
+
+        for r in rows {
+            let (id, payload_str) = r?;
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                pending.push((id, folio));
+                json_list.push(parsed);
             }
-            return Ok(OutboxBatchResult {
-                dispatched: pending_records.len(),
-                synced: 0,
-                failed: pending_records.len(),
-            });
         }
+
+        (pending, json_list)
     };
 
-    let is_success = res.status().is_success();
-    let res_text = res.text().await.unwrap_or_default();
+    if !pending_payments.is_empty() {
+        total_dispatched += pending_payments.len();
+        let url = format!("{}/api/pos/v1/sync/abonos", erp_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "abonos": abonos_json }))
+            .send()
+            .await;
 
-    let conn = db.conn()?;
-    if is_success {
-        let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
-        let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
-            .as_array()
-            .map(|arr| {
-                arr.iter().filter_map(|item| {
-                    let folio = item["folio"].as_str()?.to_string();
-                    let status = item["status"].as_str().unwrap_or("failed").to_string();
-                    let err = item["error"].as_str().map(|s| s.to_string());
-                    Some((folio, (status, err)))
-                }).collect()
-            })
-            .unwrap_or_default();
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                let folio = item["folio"].as_str()?.to_string();
+                                let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                let err = item["error"].as_str().map(|s| s.to_string());
+                                Some((folio, (status, err)))
+                            }).collect()
+                        })
+                        .unwrap_or_default();
 
-        let mut synced_count = 0;
-        let mut failed_count = 0;
+                    for (id, folio) in &pending_payments {
+                        let (status, err) = resultados_map.get(folio)
+                            .cloned()
+                            .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este recibo de abono".to_string())));
 
-        for (id, folio) in &pending_records {
-            let (status, err) = resultados_map.get(folio)
-                .cloned()
-                .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este ticket".to_string())));
-
-            if status == "synced" || status == "skipped" {
-                let _ = conn.execute(
-                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
-                    params![id],
-                );
-                synced_count += 1;
-            } else {
-                let _ = conn.execute(
-                    "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                    params![err.unwrap_or_else(|| "Fallo al procesar venta en ERP".to_string()), id],
-                );
-                failed_count += 1;
+                        if status == "synced" || status == "skipped" {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                params![id],
+                            );
+                            total_synced += 1;
+                        } else {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                                params![err.unwrap_or_else(|| "Fallo al procesar abono en ERP".to_string()), id],
+                            );
+                            total_failed += 1;
+                        }
+                    }
+                } else {
+                    for (id, _) in &pending_payments {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            params![res_text, id],
+                        );
+                    }
+                    total_failed += pending_payments.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (id, _) in &pending_payments {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![err_str, id],
+                    );
+                }
+                total_failed += pending_payments.len();
             }
         }
-
-        Ok(OutboxBatchResult {
-            dispatched: pending_records.len(),
-            synced: synced_count,
-            failed: failed_count,
-        })
-    } else {
-        for (id, _) in &pending_records {
-            let _ = conn.execute(
-                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                params![res_text, id],
-            );
-        }
-        Ok(OutboxBatchResult {
-            dispatched: pending_records.len(),
-            synced: 0,
-            failed: pending_records.len(),
-        })
     }
+
+    Ok(OutboxBatchResult {
+        dispatched: total_dispatched,
+        synced: total_synced,
+        failed: total_failed,
+    })
 }
 
 #[tauri::command]
