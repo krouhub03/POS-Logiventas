@@ -3,6 +3,7 @@ import { api } from "../services/api";
 import type { CashierUser, TerminalStatus } from "../types";
 import { SupportAccessModal } from "./SupportAccessModal";
 import { CloseShiftModal } from "./CloseShiftModal";
+import { ForgotPinModal } from "./ForgotPinModal";
 import { useModals } from "../contexts/ModalContext";
 
 interface CashierLockScreenProps {
@@ -52,6 +53,7 @@ export function CashierLockScreen({
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
+  const [showForgotPinModal, setShowForgotPinModal] = useState(false);
   const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
   const [pendingActionAfterCloseShift, setPendingActionAfterCloseShift] = useState<"shutdown" | "disconnect" | null>(null);
   const [pin, setPin] = useState("");
@@ -763,6 +765,17 @@ export function CashierLockScreen({
                     <p className="text-[10px] text-slate-500 text-center mt-2 font-mono">
                       Presiona Enter en el teclado físico
                     </p>
+
+                    <div className="text-center mt-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotPinModal(true)}
+                        className="text-[11px] text-emerald-400/90 hover:text-emerald-300 hover:underline transition-colors cursor-pointer font-medium inline-flex items-center gap-1.5"
+                      >
+                        <span>🔑</span>
+                        <span>¿Olvidaste tu PIN?</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
@@ -800,6 +813,18 @@ export function CashierLockScreen({
         }}
         availableCashiers={cashiers}
         onCashiersUpdated={(updated) => setCashiers(updated)}
+      />
+
+      {/* Modal de Ayuda: ¿Olvidaste tu PIN? */}
+      <ForgotPinModal
+        isOpen={showForgotPinModal}
+        onClose={() => setShowForgotPinModal(false)}
+        selectedCashier={selectedCashier}
+        onSyncComplete={(updated) => {
+          setCashiers(updated);
+          const current = updated.find((c) => c.id === selectedCashier?.id);
+          if (current) setSelectedCashier(current);
+        }}
       />
 
       {/* Modal de Cierre y Arqueo de Turno Requerido */}
