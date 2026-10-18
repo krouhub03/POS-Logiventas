@@ -42,6 +42,10 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "Krouhub",
+    "copyright": "Copyright © 2026 Krouhub (krouhub.com). Todos los derechos reservados.",
+    "shortDescription": "Metahabi POS - Sistema de punto de venta desarrollado por Krouhub",
+    "longDescription": "Metahabi POS es un sistema de punto de venta y facturación offline-first desarrollado por Krouhub (krouhub.com), conectado a la plataforma Metahabi ERP (metahabi.com).",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
