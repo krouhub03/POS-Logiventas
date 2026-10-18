@@ -21,7 +21,8 @@
         "center": true,
         "resizable": true,
         "maximized": true,
-        "fullscreen": true
+        "fullscreen": true,
+        "backgroundColor": "#020617"
       }
     ],
     "security": {
