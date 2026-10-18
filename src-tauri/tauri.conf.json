@@ -47,7 +47,19 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "language": "es-ES",
+        "dialogImagePath": "./assets/installer/wix-dialog.bmp",
+        "bannerPath": "./assets/installer/wix-banner.bmp"
+      },
+      "nsis": {
+        "languages": ["Spanish"],
+        "sidebarImage": "./assets/installer/nsis-sidebar.bmp",
+        "headerImage": "./assets/installer/nsis-header.bmp"
+      }
+    }
   },
   "plugins": {
     "updater": {
