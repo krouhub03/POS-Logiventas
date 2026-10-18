@@ -29,6 +29,79 @@
     background-color: #020617;
     color: #f8fafc;
   }
+
+  /* Barra de desplazamiento nativa estilizada adaptada al tema */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  }
+
+  :root.dark * {
+    scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 9999px;
+    transition: background-color 0.2s ease;
+  }
+
+  :root.dark ::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.45);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.65);
+  }
+
+  :root.dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(52, 211, 153, 0.7);
+  }
+
+  /* Clase de scrollbar de precisión para modales y paneles */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  }
+
+  :root.dark .custom-scrollbar {
+    scrollbar-color: rgba(52, 211, 153, 0.35) transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 9999px;
+  }
+
+  :root.dark .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+    border-radius: 9999px;
+  }
+
+  :root.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(52, 211, 153, 0.3);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.8);
+  }
 }
 
 @media print {

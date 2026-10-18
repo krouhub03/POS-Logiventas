@@ -31,11 +31,11 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
   ) {
     return {
       icon: "🤝",
-      border: "border-amber-500/30 hover:border-amber-500/60",
+      border: "border-amber-400/40 dark:border-amber-500/30 hover:border-amber-500 dark:hover:border-amber-500/60",
       glow: "bg-amber-500/5",
-      titleColor: "text-amber-200",
-      amountColor: "text-amber-300",
-      badgeStyle: "bg-amber-950/70 border-amber-600/40 text-amber-300",
+      titleColor: "text-amber-700 dark:text-amber-200",
+      amountColor: "text-amber-600 dark:text-amber-300",
+      badgeStyle: "bg-amber-100 dark:bg-amber-950/70 border border-amber-300 dark:border-amber-600/40 text-amber-800 dark:text-amber-300",
       note: "Cartera • Pendiente por cobrar a clientes",
     };
   }
@@ -49,11 +49,11 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
   ) {
     return {
       icon: "💳",
-      border: "border-sky-500/30 hover:border-sky-500/60",
+      border: "border-sky-400/40 dark:border-sky-500/30 hover:border-sky-500 dark:hover:border-sky-500/60",
       glow: "bg-sky-500/5",
-      titleColor: "text-sky-200",
-      amountColor: "text-sky-300",
-      badgeStyle: "bg-sky-950/70 border-sky-600/40 text-sky-300",
+      titleColor: "text-sky-700 dark:text-sky-200",
+      amountColor: "text-sky-600 dark:text-sky-300",
+      badgeStyle: "bg-sky-100 dark:bg-sky-950/70 border border-sky-300 dark:border-sky-600/40 text-sky-800 dark:text-sky-300",
       note: "Débito / Crédito • Verificar comprobantes impresos",
     };
   }
@@ -67,11 +67,11 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
   ) {
     return {
       icon: "📱",
-      border: "border-purple-500/30 hover:border-purple-500/60",
+      border: "border-purple-400/40 dark:border-purple-500/30 hover:border-purple-500 dark:hover:border-purple-500/60",
       glow: "bg-purple-500/5",
-      titleColor: "text-purple-200",
-      amountColor: "text-purple-300",
-      badgeStyle: "bg-purple-950/70 border-purple-600/40 text-purple-300",
+      titleColor: "text-purple-700 dark:text-purple-200",
+      amountColor: "text-purple-600 dark:text-purple-300",
+      badgeStyle: "bg-purple-100 dark:bg-purple-950/70 border border-purple-300 dark:border-purple-600/40 text-purple-800 dark:text-purple-300",
       note: "Transferencias móviles confirmadas en app",
     };
   }
@@ -85,22 +85,22 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
   ) {
     return {
       icon: "🏦",
-      border: "border-teal-500/30 hover:border-teal-500/60",
+      border: "border-teal-400/40 dark:border-teal-500/30 hover:border-teal-500 dark:hover:border-teal-500/60",
       glow: "bg-teal-500/5",
-      titleColor: "text-teal-200",
-      amountColor: "text-teal-300",
-      badgeStyle: "bg-teal-950/70 border-teal-600/40 text-teal-300",
+      titleColor: "text-teal-700 dark:text-teal-200",
+      amountColor: "text-teal-600 dark:text-teal-300",
+      badgeStyle: "bg-teal-100 dark:bg-teal-950/70 border border-teal-300 dark:border-teal-600/40 text-teal-800 dark:text-teal-300",
       note: "Comprobante electrónico verificado en cuenta",
     };
   }
 
   return {
     icon: "⚡",
-    border: "border-indigo-500/30 hover:border-indigo-500/60",
+    border: "border-indigo-400/40 dark:border-indigo-500/30 hover:border-indigo-500 dark:hover:border-indigo-500/60",
     glow: "bg-indigo-500/5",
-    titleColor: "text-indigo-200",
-    amountColor: "text-indigo-300",
-    badgeStyle: "bg-indigo-950/70 border-indigo-600/40 text-indigo-300",
+    titleColor: "text-indigo-700 dark:text-indigo-200",
+    amountColor: "text-indigo-600 dark:text-indigo-300",
+    badgeStyle: "bg-indigo-100 dark:bg-indigo-950/70 border border-indigo-300 dark:border-indigo-600/40 text-indigo-800 dark:text-indigo-300",
     note: "Registrado digitalmente en el sistema",
   };
 }
@@ -275,50 +275,50 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   };
 
   return (
-    <div className="fixed inset-0 bg-[#070a10]/85 backdrop-blur-md z-50 flex items-center justify-center p-3 md:p-6 overflow-y-auto">
-      {/* Contenedor Modal de Alto Impacto con Estilo Cybernetic Stitch */}
+    <div className="fixed inset-0 bg-slate-950/60 dark:bg-[#070a10]/85 backdrop-blur-md z-50 flex items-center justify-center p-3 md:p-6 overflow-y-auto">
+      {/* Contenedor Modal de Alto Impacto adaptado al tema activo (Claro / Oscuro) */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-headline"
-        className="relative w-full max-w-[940px] bg-[#111726]/95 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto shadow-[0_0_35px_-5px_rgba(16,185,129,0.22)] animate-in fade-in zoom-in-95 duration-150"
+        className="relative w-full max-w-[940px] bg-white dark:bg-[#111726]/95 border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto shadow-slate-900/10 dark:shadow-[0_0_35px_-5px_rgba(16,185,129,0.22)] animate-in fade-in zoom-in-95 duration-150 transition-colors"
       >
         {/* Barra superior de acento cibernético esmeralda/cielo */}
         <div className="h-1 w-full bg-gradient-to-r from-emerald-500/80 via-emerald-400 to-sky-500" />
 
         {/* 1. Encabezado del Modal */}
-        <div className="px-6 py-4 bg-[#0a0e18]/90 border-b border-white/10 flex items-center justify-between gap-4">
+        <div className="px-6 py-4 bg-slate-50/90 dark:bg-[#0a0e18]/90 border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-4 transition-colors">
           <div className="flex items-center gap-3.5">
             {/* Ícono de Terminal / Punto de Venta */}
-            <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-2xl shadow-sm shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 text-2xl shadow-sm shrink-0">
               💼
             </div>
             <div>
               <div className="flex items-center gap-2.5">
                 <h1
                   id="modal-headline"
-                  className="text-xl sm:text-2xl font-bold text-white tracking-tight"
+                  className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight"
                 >
                   Entrega y Cierre de Caja
                 </h1>
-                <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-emerald-500/30 uppercase tracking-widest font-semibold hidden sm:inline-block">
+                <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 uppercase tracking-widest font-semibold hidden sm:inline-block">
                   [ ARQUEO DE TURNO ]
                 </span>
               </div>
               {summary && (
-                <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-400">
+                <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-500 dark:text-slate-400">
                   <span className="flex items-center gap-1.5">
                     <span>👤</span>
                     <span>
-                      Cajero: <strong className="text-slate-200 font-medium">{summary.userName}</strong>
+                      Cajero: <strong className="text-slate-800 dark:text-slate-200 font-medium">{summary.userName}</strong>
                     </span>
                     {summary.folio && (
-                      <span className="text-slate-500 font-mono">• {summary.folio}</span>
+                      <span className="text-slate-400 dark:text-slate-500 font-mono">• {summary.folio}</span>
                     )}
                   </span>
-                  <span className="text-slate-600">•</span>
-                  <span className="inline-flex items-center gap-1 font-mono text-[11px] bg-emerald-950/60 text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-slate-400 dark:text-slate-600">•</span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[11px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     Caja Activa
                   </span>
                 </div>
@@ -331,7 +331,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-slate-300 hover:text-white transition-all active:scale-95 text-xs font-mono cursor-pointer disabled:opacity-50"
+            className="group flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-white/10 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white transition-all active:scale-95 text-xs font-mono cursor-pointer disabled:opacity-50"
             title="Volver a la caja sin cerrar (Esc)"
           >
             <span>Esc</span>
@@ -341,34 +341,37 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
 
         {/* Banner de error */}
         {error && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs flex items-center space-x-2">
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800/80 text-rose-800 dark:text-rose-300 text-xs flex items-center space-x-2">
             <span className="text-base shrink-0">⚠️</span>
             <span className="flex-1 font-medium">{error}</span>
           </div>
         )}
 
-        {/* Cuerpo del Modal */}
+        {/* Cuerpo del Modal con scrollbar estilizada adaptada al tema */}
         {loadingSummary ? (
-          <div className="py-16 text-center text-slate-400 text-sm space-y-2">
-            <span className="inline-block animate-spin text-emerald-400 text-2xl">🔄</span>
-            <div className="font-medium text-slate-200">Calculando las ventas y el dinero del turno...</div>
+          <div className="py-16 text-center text-slate-500 dark:text-slate-400 text-sm space-y-2">
+            <span className="inline-block animate-spin text-emerald-600 dark:text-emerald-400 text-2xl">🔄</span>
+            <div className="font-medium text-slate-800 dark:text-slate-200">Calculando las ventas y el dinero del turno...</div>
             <p className="text-xs text-slate-500">Consultando registros y base de datos local</p>
           </div>
         ) : summary ? (
-          <form onSubmit={handleSubmit} className="p-6 overflow-y-auto max-h-[calc(90vh-140px)] space-y-5">
+          <form
+            onSubmit={handleSubmit}
+            className="p-6 overflow-y-auto max-h-[calc(90vh-140px)] space-y-5 custom-scrollbar"
+          >
             {/* Aviso amigable si hay ventas sin finalizar */}
             {pendingTicketsCount > 0 && !ticketsPurged && (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50/70 dark:bg-amber-950/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-start sm:items-center gap-2.5">
-                  <span className="text-amber-400 text-lg shrink-0">⚠️</span>
-                  <p className="text-amber-200 text-xs font-medium leading-snug">
+                  <span className="text-amber-500 dark:text-amber-400 text-lg shrink-0">⚠️</span>
+                  <p className="text-amber-800 dark:text-amber-200 text-xs font-medium leading-snug">
                     Tienes <strong>{pendingTicketsCount} venta(s)</strong> sin terminar con {pendingItemsCount} producto(s). Si cierras el turno ahora, se borrarán automáticamente para dejar la caja limpia al siguiente turno.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handlePurgeTickets}
-                  className="shrink-0 inline-flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all active:scale-95 cursor-pointer"
+                  className="shrink-0 inline-flex items-center gap-1.5 bg-amber-200 hover:bg-amber-300 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 text-amber-900 dark:text-amber-300 border border-amber-400/50 dark:border-amber-500/40 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all active:scale-95 cursor-pointer"
                 >
                   <span>🗑️</span>
                   <span>Borrar ventas pendientes ahora</span>
@@ -377,14 +380,14 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             )}
 
             {ticketsPurged && (
-              <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-2">
                 <span>✅</span>
                 <span>Todas las ventas pendientes han sido borradas. La caja está limpia para entregar.</span>
               </div>
             )}
 
             {/* 2. Hero Card: ¿Cuánto dinero en efectivo debe haber en el cajón? */}
-            <div className="bg-gradient-to-br from-[#0c1322] via-[#10192d] to-[#0d1624] border border-emerald-500/30 rounded-xl p-5 relative overflow-hidden shadow-lg">
+            <div className="bg-gradient-to-br from-emerald-50/70 via-slate-50 to-sky-50/50 dark:from-[#0c1322] dark:via-[#10192d] dark:to-[#0d1624] border border-emerald-400/40 dark:border-emerald-500/30 rounded-xl p-5 relative overflow-hidden shadow-sm dark:shadow-lg transition-colors">
               {/* Halo sutil de fondo */}
               <div className="absolute -right-16 -top-16 w-56 h-56 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
               
@@ -392,22 +395,22 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-xl">💵</span>
-                    <h2 className="text-base sm:text-lg text-white font-bold tracking-tight">
+                    <h2 className="text-base sm:text-lg text-slate-900 dark:text-white font-bold tracking-tight">
                       ¿Cuánto dinero en efectivo debe haber en el cajón?
                     </h2>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-xl">
                     Suma automática calculada por ventas registradas en efectivo más el fondo inicial de apertura.
                   </p>
                 </div>
                 <div className="flex flex-col md:items-end">
-                  <span className="font-mono text-[11px] text-emerald-400 uppercase tracking-wider font-semibold">
+                  <span className="font-mono text-[11px] text-emerald-700 dark:text-emerald-400 uppercase tracking-wider font-semibold">
                     Esperado en Caja
                   </span>
-                  <div className="text-2xl sm:text-3xl font-mono font-bold text-emerald-400 tracking-tight flex items-baseline gap-1">
-                    <span className="text-xl text-emerald-500/70">$</span>
+                  <div className="text-2xl sm:text-3xl font-mono font-bold text-emerald-600 dark:text-emerald-400 tracking-tight flex items-baseline gap-1">
+                    <span className="text-xl text-emerald-500/80">$</span>
                     <span>{formatCents(summary.expectedCashCents).replace("$", "").trim()}</span>
-                    <span className="text-xs font-mono text-slate-400 font-normal tracking-widest ml-1">
+                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400 font-normal tracking-widest ml-1">
                       COP
                     </span>
                   </div>
@@ -415,19 +418,19 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
               </div>
 
               {/* Chips de desglose transparente */}
-              <div className="mt-4 pt-3.5 border-t border-white/10 flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-2 bg-[#070b14] border border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-300">
-                  <span className="w-2 h-2 rounded-full bg-sky-400" />
+              <div className="mt-4 pt-3.5 border-t border-slate-200 dark:border-white/10 flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-2 bg-white dark:bg-[#070b14] border border-slate-200 dark:border-white/10 px-3 py-1.5 rounded-lg text-xs font-mono text-slate-700 dark:text-slate-300 shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-sky-500" />
                   <span>
                     Base inicial en caja:{" "}
-                    <strong className="text-white font-semibold">
+                    <strong className="text-slate-900 dark:text-white font-semibold">
                       {formatCents(summary.openingCents)}
                     </strong>
                   </span>
                 </div>
-                <span className="text-slate-500 font-bold">+</span>
-                <div className="flex items-center gap-2 bg-[#070b14] border border-emerald-900/60 px-3 py-1.5 rounded-lg text-xs font-mono text-emerald-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="text-slate-400 dark:text-slate-500 font-bold">+</span>
+                <div className="flex items-center gap-2 bg-white dark:bg-[#070b14] border border-emerald-200 dark:border-emerald-900/60 px-3 py-1.5 rounded-lg text-xs font-mono text-emerald-700 dark:text-emerald-400 shadow-xs">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   <span>
                     Ventas cobradas en efectivo:{" "}
                     <strong className="font-semibold">
@@ -438,9 +441,9 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
 
                 {summary.customerPaymentsCashCents > 0 && (
                   <>
-                    <span className="text-slate-500 font-bold">+</span>
-                    <div className="flex items-center gap-2 bg-[#070b14] border border-teal-900/60 px-3 py-1.5 rounded-lg text-xs font-mono text-teal-300">
-                      <span className="w-2 h-2 rounded-full bg-teal-400" />
+                    <span className="text-slate-400 dark:text-slate-500 font-bold">+</span>
+                    <div className="flex items-center gap-2 bg-white dark:bg-[#070b14] border border-teal-200 dark:border-teal-900/60 px-3 py-1.5 rounded-lg text-xs font-mono text-teal-700 dark:text-teal-300 shadow-xs">
+                      <span className="w-2 h-2 rounded-full bg-teal-500" />
                       <span>
                         Abonos cartera en efectivo:{" "}
                         <strong className="font-semibold">
@@ -451,8 +454,8 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                   </>
                 )}
 
-                <div className="ml-auto text-xs text-slate-400 hidden lg:flex items-center gap-1.5">
-                  <span className="text-emerald-400">✓</span>
+                <div className="ml-auto text-xs text-slate-500 dark:text-slate-400 hidden lg:flex items-center gap-1.5">
+                  <span className="text-emerald-600 dark:text-emerald-400">✓</span>
                   <span>{summary.salesCount} venta(s) realizadas</span>
                 </div>
               </div>
@@ -463,11 +466,11 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">💳</span>
-                  <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight">
                     Otros Medios de Pago Registrados (No van en billetes físicos)
                   </h3>
                 </div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161c2c] border border-white/10 text-[11px] text-slate-400 font-mono">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-100 dark:bg-[#161c2c] border border-slate-200 dark:border-white/10 text-[11px] text-slate-600 dark:text-slate-400 font-mono">
                   <span>⚙️</span>
                   <span>Medios configurables según tu negocio</span>
                 </div>
@@ -481,7 +484,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                     return (
                       <div
                         key={method.code}
-                        className={`bg-[#121622]/90 border ${theme.border} rounded-xl p-3.5 transition-all duration-200 group flex flex-col justify-between relative overflow-hidden`}
+                        className={`bg-white dark:bg-[#121622]/90 border ${theme.border} rounded-xl p-3.5 transition-all duration-200 group flex flex-col justify-between relative overflow-hidden shadow-xs dark:shadow-none`}
                       >
                         <div
                           className={`absolute top-0 right-0 w-16 h-16 ${theme.glow} rounded-bl-full pointer-events-none`}
@@ -511,7 +514,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                             <span className="text-[10px] font-normal opacity-70">COP</span>
                           </div>
                         </div>
-                        <p className="text-[11px] text-slate-400 mt-2.5 pt-2 border-t border-white/10 leading-tight">
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2.5 pt-2 border-t border-slate-100 dark:border-white/10 leading-tight">
                           {theme.note}
                         </p>
                       </div>
@@ -519,29 +522,29 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                   })}
                 </div>
               ) : (
-                <div className="p-4 bg-[#0a0e18] border border-white/10 rounded-xl text-center text-xs text-slate-400">
+                <div className="p-4 bg-slate-50 dark:bg-[#0a0e18] border border-slate-200 dark:border-white/10 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400">
                   <span>No se registraron ventas en otros medios (tarjetas, transferencias o créditos) durante este turno.</span>
                 </div>
               )}
 
               {/* Tira de Resumen debajo de la matriz */}
-              <div className="p-3 bg-[#0a0e18] border border-white/10 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2 text-slate-300">
-                  <span className="w-2 h-2 rounded-full bg-sky-400" />
+              <div className="p-3 bg-slate-100 dark:bg-[#0a0e18] border border-slate-200 dark:border-white/10 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs transition-colors">
+                <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                  <span className="w-2 h-2 rounded-full bg-sky-500" />
                   <span className="text-xs">
                     Total ventas en otros medios:{" "}
-                    <strong className="text-sky-300 font-mono text-sm">
+                    <strong className="text-sky-700 dark:text-sky-300 font-mono text-sm">
                       {formatCents(nonCashTotalCents)} COP
                     </strong>
-                    <span className="text-slate-400 font-normal">
+                    <span className="text-slate-500 dark:text-slate-400 font-normal">
                       {" "}
                       (Registrado digitalmente, no en efectivo)
                     </span>
                   </span>
                 </div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-slate-800 border border-white/10 font-mono font-semibold text-slate-200 self-start sm:self-auto">
-                  <span className="text-slate-400 font-normal">Total Turno Facturado:</span>
-                  <span className="text-emerald-400 text-sm">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 font-mono font-semibold text-slate-800 dark:text-slate-200 self-start sm:self-auto shadow-xs">
+                  <span className="text-slate-500 dark:text-slate-400 font-normal">Total Turno Facturado:</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 text-sm">
                     {formatCents(summary.totalSalesCents)} COP
                   </span>
                 </div>
@@ -549,24 +552,24 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             </section>
 
             {/* 4. Conteo Físico: ¿Cuánto dinero en efectivo contaste en tu cajón? */}
-            <section className="bg-[#141a29]/90 border border-white/10 rounded-xl p-5 space-y-3">
+            <section className="bg-slate-50 dark:bg-[#141a29]/90 border border-slate-200 dark:border-white/10 rounded-xl p-5 space-y-3 transition-colors">
               <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
                 <label
                   htmlFor="cash-input"
-                  className="text-sm sm:text-base font-bold text-white flex items-center gap-2"
+                  className="text-sm sm:text-base font-bold text-slate-900 dark:text-white flex items-center gap-2"
                 >
-                  <span className="text-emerald-400 text-xl">💵</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 text-xl">💵</span>
                   <span>¿Cuánto dinero en efectivo contaste en tu cajón?</span>
                 </label>
-                <span className="font-mono text-xs text-emerald-400 font-medium">Paso requerido</span>
+                <span className="font-mono text-xs text-emerald-600 dark:text-emerald-400 font-medium">Paso requerido</span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 Cuenta todos los billetes y monedas que entregas físicamente al supervisor o guardas en la caja fuerte.
               </p>
 
               {/* Input grande con Glow Esmeralda */}
-              <div className="relative flex items-center bg-[#070a10] border-2 border-emerald-500/60 rounded-xl px-4 py-3 shadow-[0_0_20px_rgba(16,185,129,0.2)] focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-400/30 transition-all">
-                <span className="font-mono text-2xl md:text-3xl font-bold text-emerald-400 mr-2 select-none">
+              <div className="relative flex items-center bg-white dark:bg-[#070a10] border-2 border-emerald-500 rounded-xl px-4 py-3 shadow-[0_0_20px_rgba(16,185,129,0.15)] dark:shadow-[0_0_20px_rgba(16,185,129,0.2)] focus-within:border-emerald-600 dark:focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-400/30 transition-all">
+                <span className="font-mono text-2xl md:text-3xl font-bold text-emerald-600 dark:text-emerald-400 mr-2 select-none">
                   $
                 </span>
                 <input
@@ -579,14 +582,14 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                   placeholder="0"
                   value={declaredPesos}
                   onChange={(e) => setDeclaredPesos(e.target.value)}
-                  className="w-full bg-transparent border-0 p-0 font-mono text-2xl md:text-3xl font-bold text-emerald-400 focus:ring-0 focus:outline-none tracking-wider placeholder:text-slate-700"
+                  className="w-full bg-transparent border-0 p-0 font-mono text-2xl md:text-3xl font-bold text-emerald-700 dark:text-emerald-400 focus:ring-0 focus:outline-none tracking-wider placeholder:text-slate-400 dark:placeholder:text-slate-700"
                 />
                 <div className="flex items-center gap-2 ml-3 shrink-0">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#062c1d] border border-emerald-500/50 text-emerald-300 font-mono text-xs font-semibold select-none">
-                    <span className="text-emerald-400">✓</span>
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-[#062c1d] border border-emerald-200 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300 font-mono text-xs font-semibold select-none">
+                    <span className="text-emerald-600 dark:text-emerald-400">✓</span>
                     <span>Contado Físico</span>
                   </span>
-                  <span className="hidden sm:inline-flex items-center px-2 py-1 rounded bg-slate-800 border border-white/10 font-mono text-[11px] text-slate-400">
+                  <span className="hidden sm:inline-flex items-center px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10 font-mono text-[11px] text-slate-500 dark:text-slate-400">
                     ↵ Enter
                   </span>
                 </div>
@@ -596,22 +599,22 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             {/* 5. Resultado del Arqueo en Tiempo Real (Cuadre de Caja) */}
             {declaredPesos !== "" && (
               <div
-                className={`border rounded-xl p-4.5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-lg transition-all ${
+                className={`border rounded-xl p-4.5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-md transition-all ${
                   differenceCents === 0
-                    ? "bg-gradient-to-r from-[#072418] via-[#093221] to-[#072418] border-emerald-500/50 shadow-emerald-950/20"
+                    ? "bg-gradient-to-r from-emerald-50 via-emerald-100/60 to-emerald-50 border-emerald-400 text-emerald-900 dark:bg-gradient-to-r dark:from-[#072418] dark:via-[#093221] dark:to-[#072418] dark:border-emerald-500/50 dark:shadow-emerald-950/20"
                     : differenceCents < 0
-                    ? "bg-gradient-to-r from-[#260c0e] via-[#351216] to-[#260c0e] border-rose-500/50 shadow-rose-950/20"
-                    : "bg-gradient-to-r from-[#0c1e2b] via-[#122838] to-[#0c1e2b] border-sky-500/50 shadow-sky-950/20"
+                    ? "bg-gradient-to-r from-rose-50 via-rose-100/60 to-rose-50 border-rose-400 text-rose-900 dark:bg-gradient-to-r dark:from-[#260c0e] dark:via-[#351216] dark:to-[#260c0e] dark:border-rose-500/50 dark:shadow-rose-950/20"
+                    : "bg-gradient-to-r from-sky-50 via-sky-100/60 to-sky-50 border-sky-400 text-sky-900 dark:bg-gradient-to-r dark:from-[#0c1e2b] dark:via-[#122838] dark:to-[#0c1e2b] dark:border-sky-500/50 dark:shadow-sky-950/20"
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3.5">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 mt-0.5 sm:mt-0 ${
                       differenceCents === 0
-                        ? "bg-emerald-500/20 border border-emerald-400/40 text-emerald-400"
+                        ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
                         : differenceCents < 0
-                        ? "bg-rose-500/20 border border-rose-400/40 text-rose-400"
-                        : "bg-sky-500/20 border border-sky-400/40 text-sky-400"
+                        ? "bg-rose-500/20 border border-rose-500/40 text-rose-700 dark:text-rose-400"
+                        : "bg-sky-500/20 border border-sky-500/40 text-sky-700 dark:text-sky-400"
                     }`}
                   >
                     {differenceCents === 0 ? "✓" : differenceCents < 0 ? "⚠️" : "ℹ️"}
@@ -621,10 +624,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                       <h3
                         className={`text-base font-bold ${
                           differenceCents === 0
-                            ? "text-emerald-400"
+                            ? "text-emerald-800 dark:text-emerald-400"
                             : differenceCents < 0
-                            ? "text-rose-400"
-                            : "text-sky-400"
+                            ? "text-rose-800 dark:text-rose-400"
+                            : "text-sky-800 dark:text-sky-400"
                         }`}
                       >
                         {differenceCents === 0
@@ -636,10 +639,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                       <span
                         className={`px-2 py-0.5 rounded-full font-mono text-[11px] font-bold ${
                           differenceCents === 0
-                            ? "bg-emerald-500 text-[#002113]"
+                            ? "bg-emerald-600 text-white dark:bg-emerald-500 dark:text-[#002113]"
                             : differenceCents < 0
-                            ? "bg-rose-500 text-white"
-                            : "bg-sky-500 text-white"
+                            ? "bg-rose-600 text-white dark:bg-rose-500"
+                            : "bg-sky-600 text-white dark:bg-sky-500"
                         }`}
                       >
                         {differenceCents === 0
@@ -649,7 +652,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                           : "SOBRANTE"}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-300/90 mt-0.5">
+                    <p className="text-xs text-slate-700 dark:text-slate-300/90 mt-0.5">
                       {differenceCents === 0
                         ? "El dinero contado coincide exactamente con el valor calculado por el sistema."
                         : differenceCents < 0
@@ -663,24 +666,24 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 <div
                   className={`flex flex-col sm:items-end border px-4 py-2.5 rounded-lg shrink-0 ${
                     differenceCents === 0
-                      ? "bg-[#051c13]/80 border-emerald-500/30"
+                      ? "bg-white/80 dark:bg-[#051c13]/80 border-emerald-300 dark:border-emerald-500/30"
                       : differenceCents < 0
-                      ? "bg-[#20090c]/80 border-rose-500/30"
-                      : "bg-[#081723]/80 border-sky-500/30"
+                      ? "bg-white/80 dark:bg-[#20090c]/80 border-rose-300 dark:border-rose-500/30"
+                      : "bg-white/80 dark:bg-[#081723]/80 border-sky-300 dark:border-sky-500/30"
                   }`}
                 >
-                  <span className="font-mono text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 font-semibold">
                     BALANCE DE ARQUEO
                   </span>
                   <div className="flex items-baseline gap-2">
-                    <span className="text-xs text-slate-400 font-medium">Diferencia:</span>
+                    <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Diferencia:</span>
                     <span
                       className={`font-mono text-lg font-bold tracking-tight ${
                         differenceCents === 0
-                          ? "text-emerald-400"
+                          ? "text-emerald-700 dark:text-emerald-400"
                           : differenceCents < 0
-                          ? "text-rose-400"
-                          : "text-sky-400"
+                          ? "text-rose-700 dark:text-rose-400"
+                          : "text-sky-700 dark:text-sky-400"
                       }`}
                     >
                       {differenceCents === 0 ? "$0 COP" : `${formatCents(Math.abs(differenceCents))} COP`}
@@ -689,10 +692,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                   <span
                     className={`inline-flex items-center gap-1 font-mono text-[11px] mt-0.5 ${
                       differenceCents === 0
-                        ? "text-emerald-300"
+                        ? "text-emerald-700 dark:text-emerald-300"
                         : differenceCents < 0
-                        ? "text-rose-300"
-                        : "text-sky-300"
+                        ? "text-rose-700 dark:text-rose-300"
+                        : "text-sky-700 dark:text-sky-300"
                     }`}
                   >
                     {differenceCents === 0
@@ -709,14 +712,14 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
             <div className="space-y-2">
               <label
                 htmlFor="shift-notes"
-                className="text-xs font-medium text-slate-300 flex items-center justify-between"
+                className="text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center justify-between"
               >
                 <span className="flex items-center gap-1.5">
                   <span>📝</span>
                   <span>¿Algún comentario o novedad sobre tu turno?</span>
                   <span className="text-slate-500 text-[11px] font-normal">(Opcional)</span>
                 </span>
-                <span className="font-mono text-[10px] text-slate-400">
+                <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
                   Caracteres: {notes.length}/250
                 </span>
               </label>
@@ -727,31 +730,31 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Ej: Todo entregado al administrador sin novedad, billetes de 50k fajados..."
-                className="w-full bg-[#0a0e18] border border-white/10 rounded-lg px-3.5 py-2.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors"
+                className="w-full bg-slate-50 dark:bg-[#0a0e18] border border-slate-200 dark:border-white/10 rounded-lg px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors"
               />
             </div>
 
             {/* 7. Barra de Acciones del Pie del Modal */}
-            <div className="pt-3 border-t border-white/10 flex flex-col-reverse sm:flex-row items-center justify-between gap-3">
+            <div className="pt-3 border-t border-slate-200 dark:border-white/10 flex flex-col-reverse sm:flex-row items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={onCancel}
                 disabled={loading}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-white/10 text-slate-200 text-xs font-semibold tracking-wide transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-white hover:bg-slate-100 dark:bg-slate-800/60 dark:hover:bg-slate-700/80 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-200 text-xs font-semibold tracking-wide transition-all active:scale-95 cursor-pointer disabled:opacity-50"
               >
                 <span>←</span>
                 <span>Volver a la Caja</span>
               </button>
 
               <div className="w-full sm:w-auto flex items-center gap-3">
-                <span className="hidden md:inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="hidden md:inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
                   Listo para sellar turno
                 </span>
                 <button
                   type="submit"
                   disabled={loading || declaredPesos === ""}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-lg bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-[#002819] text-sm font-bold shadow-lg shadow-emerald-950/40 border-t border-white/30 transition-all duration-150 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-700 dark:from-emerald-500 dark:via-emerald-400 dark:to-emerald-600 hover:from-emerald-500 hover:to-emerald-600 text-white dark:text-[#002819] text-sm font-bold shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 border-t border-white/30 transition-all duration-150 active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span>🔒</span>
                   <span>{loading ? "Cerrando turno..." : "Terminar Turno y Cerrar Caja"}</span>
