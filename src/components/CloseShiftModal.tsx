@@ -487,11 +487,11 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                           className={`absolute top-0 right-0 w-16 h-16 ${theme.glow} rounded-bl-full pointer-events-none`}
                         />
                         <div>
-                          <div className="flex items-center justify-between gap-1 mb-2">
-                            <div className="flex items-center gap-1.5 truncate">
+                          <div className="flex items-start justify-between gap-1.5 mb-2">
+                            <div className="flex items-center gap-1.5 min-w-0 pr-1">
                               <span className="text-base shrink-0">{theme.icon}</span>
                               <span
-                                className={`text-xs font-bold ${theme.titleColor} truncate`}
+                                className={`text-xs font-bold ${theme.titleColor} line-clamp-1`}
                                 title={method.name}
                               >
                                 {method.name}

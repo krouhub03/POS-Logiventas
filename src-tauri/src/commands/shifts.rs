@@ -345,20 +345,6 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
         }
     }
 
-    // 3. Garantizar que Crédito / Fiado siempre esté presente en los medios configurables/básicos
-    if !breakdown_map.contains_key("credit") && !breakdown_map.contains_key("credito") {
-        breakdown_map.insert(
-            "credit".to_string(),
-            ShiftPaymentBreakdown {
-                code: "credit".to_string(),
-                name: "Crédito / Fiado".to_string(),
-                payment_type: "CREDITO".to_string(),
-                amount_cents: 0,
-                tx_count: 0,
-            },
-        );
-    }
-
     let mut payment_breakdown: Vec<ShiftPaymentBreakdown> = breakdown_map.into_values().collect();
     // Ordenar: primero los que tienen dinero facturado > 0 (mayor a menor), luego alfabéticamente
     payment_breakdown.sort_by(|a, b| {
