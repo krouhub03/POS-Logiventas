@@ -6,7 +6,9 @@ use tauri::State;
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::shift::{CashShift, CloseShiftInput, OpenShiftInput, ShiftSummary};
+use crate::models::shift::{
+    CashShift, CloseShiftInput, OpenShiftInput, ShiftPaymentBreakdown, ShiftSummary,
+};
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
     conn.query_row(
@@ -276,6 +278,93 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
 
     let expected_cash_cents = shift.opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
 
+    // Obtener desglose dinámico de todos los medios de pago configurados y con operaciones
+    let mut breakdown_map: std::collections::HashMap<String, ShiftPaymentBreakdown> = std::collections::HashMap::new();
+
+    // 1. Obtener todas las ventas agrupadas por medio de pago en este turno
+    let mut p_stmt = conn.prepare(
+        "SELECT 
+            COALESCE(p.method, 'other') as p_method,
+            COALESCE(pm.name, CASE 
+                WHEN LOWER(p.method) IN ('cash', 'efectivo') THEN 'Efectivo M/N'
+                WHEN LOWER(p.method) IN ('credit', 'credito', 'fiado') THEN 'Crédito / Fiado'
+                WHEN LOWER(p.method) IN ('card', 'tarjeta') THEN 'Tarjeta Débito / Crédito'
+                WHEN LOWER(p.method) IN ('transfer', 'transferencia') THEN 'Transferencia'
+                ELSE p.method
+            END) as p_name,
+            COALESCE(pm.type, CASE 
+                WHEN LOWER(p.method) IN ('cash', 'efectivo') THEN 'EFECTIVO'
+                WHEN LOWER(p.method) IN ('credit', 'credito', 'fiado') THEN 'CREDITO'
+                WHEN LOWER(p.method) IN ('card', 'tarjeta') THEN 'TARJETA'
+                WHEN LOWER(p.method) IN ('transfer', 'transferencia') THEN 'TRANSFERENCIA'
+                ELSE 'OTRO'
+            END) as p_type,
+            COALESCE(SUM(p.amount_cents), 0) as total_cents,
+            COUNT(p.id) as count_tx
+         FROM payments p
+         JOIN sales s ON s.id = p.sale_id
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.cash_session_id = ?1 AND s.status = 'completed'
+         GROUP BY p_method, p_name, p_type",
+    )?;
+
+    let rows = p_stmt.query_map(params![shift.id], |r| {
+        Ok(ShiftPaymentBreakdown {
+            code: r.get(0)?,
+            name: r.get(1)?,
+            payment_type: r.get(2)?,
+            amount_cents: r.get(3)?,
+            tx_count: r.get(4)?,
+        })
+    })?;
+
+    for r in rows {
+        if let Ok(item) = r {
+            breakdown_map.insert(item.code.to_lowercase(), item);
+        }
+    }
+
+    // 2. Cargar medios de pago configurados en el negocio (activos y habilitados para esta terminal)
+    let mut pm_stmt = conn.prepare(
+        "SELECT code, name, type FROM payment_methods WHERE active = 1 AND terminal_enabled = 1",
+    )?;
+    let pm_rows = pm_stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    })?;
+
+    for r in pm_rows {
+        if let Ok((code, name, p_type)) = r {
+            let key = code.to_lowercase();
+            breakdown_map.entry(key.clone()).or_insert_with(|| ShiftPaymentBreakdown {
+                code,
+                name,
+                payment_type: p_type,
+                amount_cents: 0,
+                tx_count: 0,
+            });
+        }
+    }
+
+    // 3. Garantizar que Crédito / Fiado siempre esté presente en los medios configurables/básicos
+    if !breakdown_map.contains_key("credit") && !breakdown_map.contains_key("credito") {
+        breakdown_map.insert(
+            "credit".to_string(),
+            ShiftPaymentBreakdown {
+                code: "credit".to_string(),
+                name: "Crédito / Fiado".to_string(),
+                payment_type: "CREDITO".to_string(),
+                amount_cents: 0,
+                tx_count: 0,
+            },
+        );
+    }
+
+    let mut payment_breakdown: Vec<ShiftPaymentBreakdown> = breakdown_map.into_values().collect();
+    // Ordenar: primero los que tienen dinero facturado > 0 (mayor a menor), luego alfabéticamente
+    payment_breakdown.sort_by(|a, b| {
+        b.amount_cents.cmp(&a.amount_cents).then_with(|| a.name.cmp(&b.name))
+    });
+
     Ok(ShiftSummary {
         shift_id: shift.id,
         folio: shift.folio,
@@ -292,6 +381,7 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
         customer_payments_other_cents,
         total_tax_cents,
         expected_cash_cents,
+        payment_breakdown,
     })
 }
 

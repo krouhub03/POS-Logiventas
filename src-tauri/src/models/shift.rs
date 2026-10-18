@@ -35,6 +35,16 @@ pub struct CloseShiftInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ShiftPaymentBreakdown {
+    pub code: String,
+    pub name: String,
+    pub payment_type: String,
+    pub amount_cents: i64,
+    pub tx_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShiftSummary {
     pub shift_id: i64,
     pub folio: String,
@@ -51,5 +61,7 @@ pub struct ShiftSummary {
     pub customer_payments_other_cents: i64,
     pub total_tax_cents: i64,
     pub expected_cash_cents: i64,
+    #[serde(default)]
+    pub payment_breakdown: Vec<ShiftPaymentBreakdown>,
 }
 

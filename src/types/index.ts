@@ -434,6 +434,14 @@ export interface CloseShiftInput {
   notes?: string;
 }
 
+export interface ShiftPaymentBreakdown {
+  code: string;
+  name: string;
+  paymentType: string;
+  amountCents: number;
+  txCount: number;
+}
+
 export interface ShiftSummary {
   shiftId: number;
   folio: string;
@@ -450,6 +458,7 @@ export interface ShiftSummary {
   customerPaymentsOtherCents: number;
   totalTaxCents: number;
   expectedCashCents: number;
+  paymentBreakdown?: ShiftPaymentBreakdown[];
 }
 
 export interface Customer {
