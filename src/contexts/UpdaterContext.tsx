@@ -7,6 +7,7 @@ import {
   ReactNode,
 } from "react";
 import { updaterService } from "../services/updater";
+import { api } from "../services/api";
 
 export type UpdaterStatus =
   | "idle"
@@ -19,6 +20,7 @@ export type UpdaterStatus =
 interface UpdaterContextType {
   status: UpdaterStatus;
   progressPercent: number;
+  currentVersion: string | null;
   newVersion: string | null;
   releaseNotes: string | null;
   errorMsg: string | null;
@@ -33,10 +35,18 @@ const UpdaterContext = createContext<UpdaterContextType | undefined>(undefined);
 export function UpdaterProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<UpdaterStatus>("idle");
   const [progressPercent, setProgressPercent] = useState<number>(0);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [newVersion, setNewVersion] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(false);
+
+  // Cargar versión instalada del binario local
+  useEffect(() => {
+    api.system.appInfo()
+      .then((info) => setCurrentVersion(info.version))
+      .catch((err) => console.warn("[Updater] No se pudo leer appInfo:", err));
+  }, []);
 
   const checkForUpdates = useCallback(async (manual: boolean = false) => {
     try {
@@ -47,11 +57,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
 
       if (!update) {
         setStatus("up-to-date");
-        if (manual) {
-          setTimeout(() => setStatus("idle"), 4000);
-        } else {
-          setStatus("idle");
-        }
+        setTimeout(() => setStatus("idle"), 3500);
         return;
       }
 
@@ -73,9 +79,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       console.error("[Updater] Error procesando actualización:", err);
       setErrorMsg(err instanceof Error ? err.message : String(err));
       setStatus("error");
-      if (manual) {
-        setTimeout(() => setStatus("idle"), 5000);
-      }
+      setTimeout(() => setStatus("idle"), manual ? 5000 : 2500);
     }
   }, []);
 
@@ -92,13 +96,13 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
     setBannerDismissed(true);
   }, []);
 
-  // Verificación silenciosa en segundo plano al arrancar (tras 4 segundos)
+  // Verificación al arrancar (1 segundo tras montar la interfaz)
   useEffect(() => {
     const timer = setTimeout(() => {
       checkForUpdates(false).catch((err) =>
         console.warn("[Updater] Falló comprobación automática inicial:", err)
       );
-    }, 4000);
+    }, 1000);
 
     // Revisar periódicamente cada 60 minutos
     const interval = setInterval(() => {
@@ -120,6 +124,7 @@ export function UpdaterProvider({ children }: { children: ReactNode }) {
       value={{
         status,
         progressPercent,
+        currentVersion,
         newVersion,
         releaseNotes,
         errorMsg,
