@@ -41,9 +41,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: 'Logiventa POS v__VERSION__'
-          releaseBody: 'Actualización automática de Logiventa POS v__VERSION__. Consulta los activos adjuntos para descargar o instalar.'
+          releaseName: 'Metahabi POS v__VERSION__'
+          releaseBody: 'Actualización automática de Metahabi POS v__VERSION__. Descarga el instalador o deja que tu terminal POS se actualice silenciosamente en segundo plano.'
           releaseDraft: false
           prerelease: false
