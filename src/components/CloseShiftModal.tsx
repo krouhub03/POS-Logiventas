@@ -69,7 +69,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
       .then((data) => {
         setSummary(data);
         setLoadingSummary(false);
-        // Por seguridad y auditoría de arqueo ciego, se inicializa vacío para que el cajero cuente el dinero
+        // Focus en el campo de conteo físico
         setTimeout(() => inputRef.current?.focus(), 100);
       })
       .catch((err) => {
@@ -91,17 +91,21 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   const expectedCents = summary?.expectedCashCents ?? 0;
   const differenceCents = declaredPesos === "" ? 0 : declaredCents - expectedCents;
 
+  const digitalSalesCents = summary
+    ? summary.cardSalesCents + summary.transferSalesCents + summary.otherSalesCents + summary.customerPaymentsOtherCents
+    : 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!summary) return;
 
     if (declaredPesos.trim() === "") {
-      setError("Debes ingresar el conteo físico de efectivo en caja para realizar el arqueo.");
+      setError("Por favor ingresa la cantidad de dinero en efectivo que contaste en tu caja.");
       return;
     }
 
     if (parseFloat(declaredPesos) < 0) {
-      setError("El efectivo declarado no puede ser negativo.");
+      setError("El dinero contado no puede ser un número negativo.");
       return;
     }
 
@@ -114,10 +118,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
         notes: notes.trim() ? notes.trim() : undefined,
       });
 
-      // Garantizar que no quede ningún ticket abierto al cerrar el turno
+      // Garantizar que no quede ningún ticket abierto en memoria ni en localStorage
       handlePurgeTickets();
 
-      // Imprimir Z-Report si hay impresora configurada
+      // Imprimir comprobante de cierre si hay impresora configurada
       api.settings.testPrintTicket().catch(() => {});
 
       onShiftClosed(closedShift);
@@ -129,112 +133,175 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   };
 
   return (
-    <div style={styles.overlay}>
-      <div style={styles.modal}>
-        <div style={styles.header}>
-          <div style={styles.badge}>CORTE Z / NIIF v6.2</div>
-          <h2 style={styles.title}>Cierre de Turno y Arqueo Z-Report</h2>
-          {summary && (
-            <p style={styles.subtitle}>
-              Folio: <strong>{summary.folio}</strong> | Cajero: <strong>{summary.userName}</strong>
-            </p>
-          )}
-        </div>
-
-        {error && <div style={styles.errorBanner}>{error}</div>}
-
-        {loadingSummary ? (
-          <div style={styles.loadingBox}>Cargando resumen de ventas y recaudos...</div>
-        ) : summary ? (
-          <form onSubmit={handleSubmit} style={styles.form}>
-            {/* Panel de Resumen Financiero */}
-            <div style={styles.summaryGrid}>
-              <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Base Inicial</span>
-                <span style={styles.cardValue}>{formatCents(summary.openingCents)}</span>
-              </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Ventas Efectivo</span>
-                <span style={styles.cardValueGreen}>+{formatCents(summary.cashSalesCents)}</span>
-              </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Abonos Cartera (Efectivo)</span>
-                <span style={styles.cardValueGreen}>+{formatCents(summary.customerPaymentsCashCents)}</span>
-              </div>
-              <div style={{ ...styles.summaryCard, borderColor: "#0284c7", background: "rgba(2, 132, 199, 0.08)" }}>
-                <span style={{ ...styles.cardLabel, color: "#38bdf8" }}>Efectivo Esperado en Caja</span>
-                <span style={styles.cardValueBlue}>{formatCents(summary.expectedCashCents)}</span>
-              </div>
-              <div style={styles.summaryCard}>
-                <span style={styles.cardLabel}>Otras Ventas (Tarj/Transf/Crédito)</span>
-                <span style={styles.cardValue}>
-                  {formatCents(summary.cardSalesCents + summary.transferSalesCents + summary.otherSalesCents)}
-                </span>
-              </div>
-              {summary.customerPaymentsOtherCents > 0 ? (
-                <div style={styles.summaryCard}>
-                  <span style={styles.cardLabel}>Abonos Cartera (Otros Medios)</span>
-                  <span style={styles.cardValue}>
-                    {formatCents(summary.customerPaymentsOtherCents)}
-                  </span>
-                </div>
-              ) : (
-                <div style={styles.summaryCard}>
-                  <span style={styles.cardLabel}>Total Facturado (Turno)</span>
-                  <span style={styles.cardValue}>
-                    {formatCents(summary.totalSalesCents)}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-slate-900/95 border border-slate-700/60 rounded-2xl shadow-2xl p-6 text-slate-100 font-sans backdrop-blur-xl my-auto animate-in fade-in zoom-in-95 duration-150">
+        
+        {/* ─────────────────────────────────────────────────────────────
+            HEADER (Amigable y sin códigos crípticos)
+        ───────────────────────────────────────────────────────────── */}
+        <div className="flex items-start justify-between pb-4 border-b border-slate-800">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-emerald-400 text-xl shadow-inner">
+              💼
+            </div>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                Entrega y Cierre de Caja
+              </h1>
+              {summary && (
+                <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400 flex-wrap">
+                  <span>Cajero: <strong className="text-slate-200">{summary.userName}</strong></span>
+                  <span className="text-slate-600">•</span>
+                  <span>Turno en curso</span>
+                  <span className="inline-flex items-center gap-1 bg-emerald-950/50 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full text-[10px] font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    Caja Activa
                   </span>
                 </div>
               )}
             </div>
+          </div>
 
-            <div style={styles.formulaNotice}>
-              ℹ️ <strong>Cuadre de Efectivo:</strong> Base ({formatCents(summary.openingCents)}) + Ventas Efectivo ({formatCents(summary.cashSalesCents)}) + Abonos Efectivo ({formatCents(summary.customerPaymentsCashCents)}) = <strong>{formatCents(summary.expectedCashCents)}</strong>
-            </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-colors flex items-center gap-1 text-xs border border-transparent hover:border-slate-700 cursor-pointer"
+            title="Volver a la caja sin cerrar (Esc)"
+          >
+            <span className="hidden sm:inline opacity-60">Esc</span>
+            <span className="text-base font-bold">✕</span>
+          </button>
+        </div>
 
-            {/* Aviso y Bloque de Eliminación de Tickets Abiertos */}
+        {/* Banner de error */}
+        {error && (
+          <div className="mt-4 p-3 rounded-xl bg-rose-950/50 border border-rose-800/60 text-rose-300 text-xs flex items-center space-x-2">
+            <span className="text-base shrink-0">⚠️</span>
+            <span className="flex-1">{error}</span>
+          </div>
+        )}
+
+        {loadingSummary ? (
+          <div className="py-12 text-center text-slate-400 text-sm">
+            <span className="inline-block animate-spin text-emerald-400 text-xl mb-2">🔄</span>
+            <div>Calculando las ventas y el dinero del turno...</div>
+          </div>
+        ) : summary ? (
+          <form onSubmit={handleSubmit} className="pt-4 space-y-4">
+            
+            {/* ─────────────────────────────────────────────────────────────
+                ALERTA DE VENTAS PENDIENTES (LENGUAJE 100% AMIGABLE)
+            ───────────────────────────────────────────────────────────── */}
             {pendingTicketsCount > 0 && !ticketsPurged && (
-              <div style={styles.ticketWarningBox}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", marginBottom: "0.35rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                    <span style={{ fontSize: "1.1rem" }}>⚠️</span>
-                    <strong style={{ color: "#f59e0b", fontSize: "0.85rem" }}>
-                      {pendingTicketsCount} Ticket(s) con {pendingItemsCount} producto(s) en curso
-                    </strong>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handlePurgeTickets}
-                    style={styles.purgeTicketsBtn}
-                    title="Eliminar todos los productos y tickets abiertos de inmediato"
-                  >
-                    <span>🗑️</span>
-                    <span>Eliminar Tickets Ahora</span>
-                  </button>
+              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-start sm:items-center gap-2.5">
+                  <span className="text-amber-400 text-lg shrink-0">⚠️</span>
+                  <p className="text-amber-200 text-xs font-medium leading-snug">
+                    Tienes <strong>{pendingTicketsCount} venta(s)</strong> sin terminar con {pendingItemsCount} producto(s). Si cierras el turno ahora, se borrarán para dejar la caja limpia al siguiente turno.
+                  </p>
                 </div>
-                <p style={{ margin: 0, fontSize: "0.75rem", color: "#cbd5e1", lineHeight: 1.35 }}>
-                  Al cerrar turno no se pueden dejar tickets abiertos. Si no los eliminas manualmente, el sistema los descartará automáticamente al arquear.
-                </p>
+                <button
+                  type="button"
+                  onClick={handlePurgeTickets}
+                  className="shrink-0 inline-flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all active:scale-95 cursor-pointer"
+                >
+                  <span>🗑️</span>
+                  <span>Borrar ventas pendientes ahora</span>
+                </button>
               </div>
             )}
 
             {ticketsPurged && (
-              <div style={styles.ticketSuccessBox}>
+              <div className="p-2.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
                 <span>✅</span>
-                <span>Todos los tickets abiertos han sido eliminados. La caja está limpia para el cierre.</span>
+                <span>Todas las ventas pendientes han sido borradas. La caja está limpia para entregar.</span>
               </div>
             )}
 
-            {/* Campo de Arqueo Físico */}
-            <div style={styles.field}>
-              <label style={styles.label}>
-                Efectivo Físico Contado en Cajón (Arqueo de Cierre)
+            {/* ─────────────────────────────────────────────────────────────
+                TARJETA PRINCIPAL: ¿CUÁNTO DINERO DEBE HABER EN EL CAJÓN?
+            ───────────────────────────────────────────────────────────── */}
+            <div className="bg-slate-800/80 border border-sky-500/40 rounded-2xl p-4 sm:p-5 relative overflow-hidden shadow-lg">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs uppercase tracking-wider text-sky-400 font-bold flex items-center gap-1.5">
+                  <span>💵</span>
+                  <span>¿Cuánto dinero debe haber en el cajón?</span>
+                </span>
+                <span className="text-[11px] font-mono text-slate-400 bg-slate-900/80 px-2 py-0.5 rounded-full border border-slate-700/60">
+                  Calculado por el sistema
+                </span>
+              </div>
+
+              {/* Monto Hero */}
+              <div className="my-1 flex items-baseline gap-2">
+                <span className="text-3xl sm:text-4xl font-extrabold text-sky-300 tracking-tight">
+                  {formatCents(summary.expectedCashCents)}
+                </span>
+              </div>
+
+              {/* Desglose en 2 columnas muy sencillas */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-3 border-t border-slate-700/60 mt-2">
+                <div className="flex items-center justify-between bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-300 flex items-center gap-1.5">
+                    <span className="text-slate-400">🪙</span>
+                    <span>Dinero inicial (Base):</span>
+                  </span>
+                  <span className="text-xs font-mono font-bold text-white">
+                    {formatCents(summary.openingCents)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-800">
+                  <span className="text-xs text-slate-300 flex items-center gap-1.5">
+                    <span className="text-emerald-400">➕</span>
+                    <span>Ventas cobradas en efectivo:</span>
+                  </span>
+                  <span className="text-xs font-mono font-bold text-emerald-400">
+                    +{formatCents(summary.cashSalesCents)}
+                  </span>
+                </div>
+
+                {summary.customerPaymentsCashCents > 0 && (
+                  <div className="col-span-1 sm:col-span-2 flex items-center justify-between bg-slate-900/70 px-3 py-2 rounded-xl border border-slate-800">
+                    <span className="text-xs text-slate-300 flex items-center gap-1.5">
+                      <span className="text-emerald-400">🤝</span>
+                      <span>Pagos recibidos de clientes (Efectivo):</span>
+                    </span>
+                    <span className="text-xs font-mono font-bold text-emerald-400">
+                      +{formatCents(summary.customerPaymentsCashCents)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Chip para ventas digitales (que no van en el cajón) */}
+              {digitalSalesCents > 0 && (
+                <div className="mt-2.5 bg-slate-950/70 px-3 py-2 rounded-xl border border-slate-800 flex items-center gap-2 text-xs text-slate-300">
+                  <span className="text-sky-400 text-base">💳</span>
+                  <p className="leading-tight">
+                    <strong className="text-white">Pagos con Tarjeta o Transferencia: {formatCents(digitalSalesCents)}</strong>
+                    <span className="block sm:inline sm:ml-1 text-slate-400 text-[11px]">
+                      (Registrado digitalmente, no está en el cajón de billetes)
+                    </span>
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* ─────────────────────────────────────────────────────────────
+                CAMPO PRINCIPAL: ¿CUÁNTO DINERO EN EFECTIVO CONTASTE TÚ?
+            ───────────────────────────────────────────────────────────── */}
+            <div className="space-y-1.5">
+              <label htmlFor="declared-cash-input" className="block text-sm font-semibold text-white">
+                ¿Cuánto dinero en efectivo contaste en tu cajón?
               </label>
-              <div style={styles.inputWrapper}>
-                <span style={styles.currencyPrefix}>$</span>
+              
+              <div className="relative flex items-center bg-slate-950 border-2 border-emerald-500/70 rounded-2xl px-4 py-2.5 shadow-[0_0_20px_rgba(16,185,129,0.15)] focus-within:border-emerald-400 focus-within:ring-2 focus-within:ring-emerald-400/30 transition-all">
+                <span className="text-2xl font-mono text-slate-500 mr-3 select-none">$</span>
                 <input
+                  id="declared-cash-input"
                   ref={inputRef}
-                  style={styles.input}
                   type="number"
                   step="any"
                   min="0"
@@ -242,76 +309,116 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                   placeholder="0.00"
                   value={declaredPesos}
                   onChange={(e) => setDeclaredPesos(e.target.value)}
+                  className="w-full bg-transparent border-none p-0 text-2xl sm:text-3xl font-mono font-bold text-emerald-400 focus:outline-none focus:ring-0 placeholder:text-slate-700"
                 />
+                <div className="flex items-center gap-1 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-lg text-emerald-400 text-[11px] font-mono shrink-0 select-none">
+                  <span>✓</span>
+                  <span>Dinero en Mano</span>
+                </div>
               </div>
-              <span style={styles.hint}>
-                Cuenta físicamente todos los billetes y monedas que entregas en caja.
-              </span>
+              <p className="text-xs text-slate-400 flex items-center gap-1.5 pt-0.5">
+                <span>💡</span>
+                <span>Cuenta todos los billetes y monedas que entregas en mano al administrador o encargado.</span>
+              </p>
             </div>
 
-            {/* Indicador de Diferencia de Arqueo */}
+            {/* ─────────────────────────────────────────────────────────────
+                RESULTADO VISUAL DEL ARQUEO (SÚPER VISUAL Y CLARO)
+            ───────────────────────────────────────────────────────────── */}
             {declaredPesos !== "" && (
               <div
-                style={{
-                  ...styles.differenceBox,
-                  ...(differenceCents === 0
-                    ? styles.diffBalanced
+                className={`p-4 rounded-2xl border-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all ${
+                  differenceCents === 0
+                    ? "bg-emerald-950/30 border-emerald-500/60 text-emerald-300"
                     : differenceCents < 0
-                    ? styles.diffShortage
-                    : styles.diffSurplus),
-                }}
+                    ? "bg-rose-950/30 border-rose-500/60 text-rose-300"
+                    : "bg-amber-950/30 border-amber-500/60 text-amber-300"
+                }`}
               >
-                <div>
-                  <strong>
-                    {differenceCents === 0
-                      ? "✓ Cuadre Perfecto (Sin Diferencia)"
-                      : differenceCents < 0
-                      ? "⚠️ Faltante de Caja"
-                      : "ℹ️ Sobrante de Caja"}
-                  </strong>
-                  <div style={{ fontSize: "0.8rem", opacity: 0.9 }}>
-                    {differenceCents < 0
-                      ? "Se contabilizará como cuenta por cobrar al cajero."
-                      : differenceCents > 0
-                      ? "Se contabilizará como ingreso por sobrante de caja."
-                      : "La caja cierra con cero diferencias contables."}
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`w-9 h-9 rounded-full flex items-center justify-center text-lg shrink-0 ${
+                      differenceCents === 0
+                        ? "bg-emerald-500/20 text-emerald-400"
+                        : differenceCents < 0
+                        ? "bg-rose-500/20 text-rose-400"
+                        : "bg-amber-500/20 text-amber-400"
+                    }`}
+                  >
+                    {differenceCents === 0 ? "✓" : differenceCents < 0 ? "⚠️" : "ℹ️"}
+                  </div>
+                  <div>
+                    <p className="font-bold text-sm leading-tight text-white">
+                      {differenceCents === 0
+                        ? "¡Cuadre Perfecto!"
+                        : differenceCents < 0
+                        ? "Falta dinero en caja"
+                        : "Sobra dinero en caja"}
+                    </p>
+                    <p className="text-xs opacity-90 mt-0.5">
+                      {differenceCents === 0
+                        ? "El dinero contado coincide exactamente con lo registrado por el sistema."
+                        : differenceCents < 0
+                        ? "Hay menos dinero en el cajón del que debería haber según las ventas."
+                        : "Hay más dinero en el cajón del que registró el sistema."}
+                    </p>
                   </div>
                 </div>
-                <div style={{ fontSize: "1.2rem", fontWeight: 800 }}>
-                  {formatCents(Math.abs(differenceCents))}
+
+                <div className="shrink-0 self-end sm:self-center">
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-mono font-extrabold ${
+                      differenceCents === 0
+                        ? "bg-emerald-500 text-slate-950"
+                        : differenceCents < 0
+                        ? "bg-rose-500 text-white"
+                        : "bg-amber-500 text-slate-950"
+                    }`}
+                  >
+                    <span>Diferencia:</span>
+                    <span>{differenceCents === 0 ? "$0" : formatCents(Math.abs(differenceCents))}</span>
+                  </span>
                 </div>
               </div>
             )}
 
-            <div style={styles.field}>
-              <label style={styles.label}>Observaciones / Justificación de Cierre</label>
+            {/* ─────────────────────────────────────────────────────────────
+                COMENTARIOS O NOTAS (OPCIONAL)
+            ───────────────────────────────────────────────────────────── */}
+            <div className="space-y-1">
+              <label htmlFor="shift-notes" className="block text-xs font-medium text-slate-400">
+                ¿Algún comentario sobre tu turno? (Opcional)
+              </label>
               <input
-                style={styles.inputSimple}
+                id="shift-notes"
                 type="text"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ej. Cierre de turno sin novedades, dinero entregado a administración."
+                placeholder="Ej: Todo entregado sin novedad, billetes de 50k organizados..."
+                className="w-full bg-slate-950/80 border border-slate-700/70 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-slate-500 transition-all"
               />
             </div>
 
-            <div style={styles.actions}>
+            {/* ─────────────────────────────────────────────────────────────
+                BOTONES DE ACCIÓN CLAROS
+            ───────────────────────────────────────────────────────────── */}
+            <div className="pt-2 border-t border-slate-800 flex flex-col-reverse sm:flex-row items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={onCancel}
                 disabled={loading}
-                style={styles.cancelBtn}
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition-all cursor-pointer disabled:opacity-50"
               >
-                Volver al POS
+                Volver a la Caja
               </button>
+
               <button
                 type="submit"
                 disabled={loading || declaredPesos === ""}
-                style={{
-                  ...styles.submitBtn,
-                  ...(loading || declaredPesos === "" ? styles.btnDisabled : {}),
-                }}
+                className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.25)] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {loading ? "Consolidando en ERP..." : "Confirmar Cierre y Enviar Z-Report"}
+                <span>🔒</span>
+                <span>{loading ? "Cerrando turno..." : "Terminar Turno y Cerrar Caja"}</span>
               </button>
             </div>
           </form>
@@ -320,255 +427,3 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  overlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: "rgba(3, 7, 18, 0.88)",
-    backdropFilter: "blur(6px)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 9999,
-  },
-  modal: {
-    background: "#0f172a",
-    border: "1px solid #1e293b",
-    borderRadius: "16px",
-    width: "560px",
-    maxWidth: "94vw",
-    padding: "2rem",
-    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.75)",
-  },
-  header: {
-    textAlign: "center",
-    marginBottom: "1.25rem",
-  },
-  badge: {
-    display: "inline-block",
-    background: "rgba(59, 130, 246, 0.15)",
-    color: "#60a5fa",
-    fontSize: "0.75rem",
-    fontWeight: 700,
-    letterSpacing: "0.08em",
-    padding: "0.25rem 0.65rem",
-    borderRadius: "9999px",
-    marginBottom: "0.5rem",
-    border: "1px solid rgba(59, 130, 246, 0.3)",
-  },
-  title: {
-    fontSize: "1.35rem",
-    fontWeight: 700,
-    color: "#f8fafc",
-    margin: "0.25rem 0",
-  },
-  subtitle: {
-    fontSize: "0.85rem",
-    color: "#94a3b8",
-    margin: 0,
-  },
-  loadingBox: {
-    textAlign: "center",
-    padding: "3rem 1rem",
-    color: "#94a3b8",
-    fontSize: "0.95rem",
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "0.65rem",
-    marginBottom: "0.75rem",
-  },
-  formulaNotice: {
-    background: "rgba(15, 23, 42, 0.6)",
-    border: "1px dashed #334155",
-    borderRadius: "8px",
-    padding: "0.5rem 0.75rem",
-    fontSize: "0.75rem",
-    color: "#94a3b8",
-    marginBottom: "1rem",
-    lineHeight: 1.4,
-  },
-  summaryCard: {
-    background: "#020617",
-    border: "1px solid #1e293b",
-    borderRadius: "8px",
-    padding: "0.75rem",
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.2rem",
-  },
-  cardLabel: {
-    fontSize: "0.7rem",
-    fontWeight: 600,
-    color: "#64748b",
-    textTransform: "uppercase",
-  },
-  cardValue: {
-    fontSize: "1.05rem",
-    fontWeight: 700,
-    color: "#f8fafc",
-  },
-  cardValueGreen: {
-    fontSize: "1.05rem",
-    fontWeight: 700,
-    color: "#10b981",
-  },
-  cardValueBlue: {
-    fontSize: "1.1rem",
-    fontWeight: 800,
-    color: "#38bdf8",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "1rem",
-  },
-  field: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "0.35rem",
-  },
-  label: {
-    fontSize: "0.78rem",
-    fontWeight: 600,
-    color: "#cbd5e1",
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
-  inputWrapper: {
-    position: "relative",
-    display: "flex",
-    alignItems: "center",
-  },
-  currencyPrefix: {
-    position: "absolute",
-    left: "1rem",
-    color: "#64748b",
-    fontSize: "1.4rem",
-    fontWeight: 700,
-  },
-  input: {
-    width: "100%",
-    background: "#020617",
-    border: "2px solid #334155",
-    borderRadius: "10px",
-    padding: "0.75rem 1rem 0.75rem 2.2rem",
-    fontSize: "1.5rem",
-    fontWeight: 700,
-    color: "#38bdf8",
-    outline: "none",
-  },
-  inputSimple: {
-    width: "100%",
-    background: "#020617",
-    border: "1px solid #334155",
-    borderRadius: "8px",
-    padding: "0.65rem 0.85rem",
-    fontSize: "0.9rem",
-    color: "#f8fafc",
-    outline: "none",
-  },
-  differenceBox: {
-    padding: "0.85rem 1rem",
-    borderRadius: "8px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  diffBalanced: {
-    background: "rgba(16, 185, 129, 0.12)",
-    border: "1px solid rgba(16, 185, 129, 0.35)",
-    color: "#34d399",
-  },
-  diffShortage: {
-    background: "rgba(239, 68, 68, 0.12)",
-    border: "1px solid rgba(239, 68, 68, 0.35)",
-    color: "#f87171",
-  },
-  diffSurplus: {
-    background: "rgba(59, 130, 246, 0.12)",
-    border: "1px solid rgba(59, 130, 246, 0.35)",
-    color: "#60a5fa",
-  },
-  hint: {
-    fontSize: "0.75rem",
-    color: "#64748b",
-  },
-  actions: {
-    display: "flex",
-    gap: "0.75rem",
-    marginTop: "0.5rem",
-  },
-  cancelBtn: {
-    flex: 1,
-    background: "#1e293b",
-    border: "1px solid #334155",
-    color: "#cbd5e1",
-    padding: "0.75rem",
-    borderRadius: "8px",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  submitBtn: {
-    flex: 2,
-    background: "#2563eb",
-    border: "none",
-    color: "#ffffff",
-    padding: "0.75rem",
-    borderRadius: "8px",
-    fontWeight: 700,
-    fontSize: "0.95rem",
-    cursor: "pointer",
-  },
-  btnDisabled: {
-    opacity: 0.5,
-    cursor: "not-allowed",
-  },
-  errorBanner: {
-    background: "rgba(239, 68, 68, 0.15)",
-    border: "1px solid rgba(239, 68, 68, 0.4)",
-    color: "#fca5a5",
-    padding: "0.65rem 0.85rem",
-    borderRadius: "8px",
-    fontSize: "0.85rem",
-    marginBottom: "1rem",
-  },
-  ticketWarningBox: {
-    background: "rgba(245, 158, 11, 0.1)",
-    border: "1.5px solid rgba(245, 158, 11, 0.4)",
-    borderRadius: "10px",
-    padding: "0.65rem 0.85rem",
-    marginBottom: "0.75rem",
-  },
-  ticketSuccessBox: {
-    background: "rgba(16, 185, 129, 0.1)",
-    border: "1px solid rgba(16, 185, 129, 0.3)",
-    borderRadius: "10px",
-    padding: "0.5rem 0.85rem",
-    marginBottom: "0.75rem",
-    fontSize: "0.8rem",
-    color: "#34d399",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-  },
-  purgeTicketsBtn: {
-    background: "rgba(239, 68, 68, 0.2)",
-    border: "1px solid rgba(239, 68, 68, 0.5)",
-    color: "#fca5a5",
-    borderRadius: "8px",
-    padding: "0.3rem 0.6rem",
-    fontSize: "0.75rem",
-    fontWeight: 600,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.3rem",
-    whiteSpace: "nowrap",
-  },
-};
