@@ -2436,6 +2436,7 @@ export function SalesStationPage({
         }}
         activeCashier={cashier}
         onLockTerminal={onLockTerminal}
+        onNavigateToSettings={onNavigateToSettings}
         showProductImages={showProductImages}
         onToggleProductImages={handleToggleShowImages}
         onPinChanged={() => {

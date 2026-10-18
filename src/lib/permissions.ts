@@ -28,11 +28,32 @@ export type PosPermission =
   | string;
 
 /**
+ * Determina si el operador posee rango de Administrador (Superadmin o Admin de Empresa).
+ */
+export function isAdminUser(user: CashierUser | null): boolean {
+  if (!user || !user.active) return false;
+  const roleUpper = (user.role || "").toUpperCase();
+  const erpRoleUpper = (user.erpRoleCode || "").toUpperCase();
+  return (
+    roleUpper === "SUPERADMINSAAS" ||
+    roleUpper === "SUPERADMIN" ||
+    roleUpper === "ADMIN" ||
+    roleUpper === "ADMIN_EMPRESA" ||
+    roleUpper === "ADMINISTRADOR" ||
+    erpRoleUpper === "SUPERADMINSAAS" ||
+    erpRoleUpper === "SUPERADMIN" ||
+    erpRoleUpper === "ADMIN_EMPRESA" ||
+    erpRoleUpper === "ADMIN" ||
+    erpRoleUpper === "ADMINISTRADOR"
+  );
+}
+
+/**
  * Valida si un cajero/usuario cuenta con el permiso requerido.
  * Refleja exactamente la lógica Zero-Trust:
- * 1. Solo SUPERADMINSAAS (Soporte Técnico) posee pase maestro irrestricto (*).
- * 2. ADMIN_EMPRESA y STAFF se evalúan estrictamente contra su matriz de permisos granulares.
- * 3. Fallbacks seguros por rol si la matriz aún no ha sido sincronizada.
+ * 1. SUPERADMINSAAS posee pase maestro irrestricto (*).
+ * 2. Administradores (ADMIN / ADMIN_EMPRESA) siempre tienen acceso a la configuración del POS (F7).
+ * 3. Permisos granulares evaluados contra la matriz sincronizada.
  */
 export function hasPermission(user: CashierUser | null, permission: PosPermission): boolean {
   if (!user || !user.active) return false;
@@ -49,12 +70,31 @@ export function hasPermission(user: CashierUser | null, permission: PosPermissio
     return true;
   }
 
-  // 2. ADMIN_EMPRESA y STAFF: Verificación estricta de permisos granulares
+  // 2. Administradores de Empresa: Acceso garantizado a Configuración (F7) y funciones clave
+  if (isAdminUser(user)) {
+    if (
+      permission === "pos:configuracion" ||
+      permission === "pos:operar" ||
+      permission === "pos:vender" ||
+      permission === "inventario:ver" ||
+      permission === "inventario:ajustar" ||
+      permission === "inventario:costos" ||
+      permission === "clientes:ver" ||
+      permission === "caja:cuadre"
+    ) {
+      return true;
+    }
+  }
+
+  // 3. Verificación estricta de permisos granulares
   if (Array.isArray(user.permissions) && user.permissions.length > 0) {
     if (user.permissions.includes("*") || user.permissions.includes(permission)) {
       return true;
     }
-    // Si la matriz de permisos está explícitamente poblada y no contiene el permiso, queda denegado
+    // Si es administrador, permitir pos:configuracion
+    if (isAdminUser(user) && permission === "pos:configuracion") {
+      return true;
+    }
     return false;
   }
 

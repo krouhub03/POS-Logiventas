@@ -4,6 +4,7 @@ import { ModalHeader } from "./ui/modal/ModalHeader";
 import { ModalBody } from "./ui/modal/ModalBody";
 import { ModalFooter } from "./ui/modal/ModalFooter";
 import { api } from "../services/api";
+import { hasPermission } from "../lib/permissions";
 import type { CashierUser } from "../types";
 
 interface UserProfileSettingsModalProps {
@@ -11,6 +12,7 @@ interface UserProfileSettingsModalProps {
   onClose: () => void;
   activeCashier: CashierUser;
   onLockTerminal?: () => void;
+  onNavigateToSettings?: () => void;
   showProductImages?: boolean;
   onToggleProductImages?: () => void;
   onPinChanged?: () => void;
@@ -23,6 +25,7 @@ export function UserProfileSettingsModal({
   onClose,
   activeCashier,
   onLockTerminal,
+  onNavigateToSettings,
   showProductImages = true,
   onToggleProductImages,
   onPinChanged,
@@ -528,6 +531,35 @@ export function UserProfileSettingsModal({
                 </button>
               )}
             </div>
+
+            {/* Acceso a Configuración para Administradores */}
+            {onNavigateToSettings && hasPermission(activeCashier, "pos:configuracion") && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onNavigateToSettings();
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-xl bg-emerald-50/70 hover:bg-emerald-100/80 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/60 border border-emerald-300/80 dark:border-emerald-700/60 text-slate-900 dark:text-emerald-100 transition-all cursor-pointer group shadow-2xs"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-base">
+                    ⚙️
+                  </div>
+                  <div className="text-left">
+                    <div className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                      Abrir Configuración del Sistema
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Impresoras, hardware, periféricos y enlace ERP
+                    </div>
+                  </div>
+                </div>
+                <span className="text-xs bg-emerald-200/80 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-300 font-mono px-2 py-0.5 rounded-md font-bold">
+                  F7
+                </span>
+              </button>
+            )}
 
             {/* Lista de Permisos Efectivos */}
             <div>
