@@ -1,7 +1,7 @@
 {
   "name": "pos-logiventa",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "release:prep": "node scripts/release-version.mjs",
+    "release:patch": "node scripts/release-version.mjs --type patch --commit",
+    "release:minor": "node scripts/release-version.mjs --type minor --commit"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

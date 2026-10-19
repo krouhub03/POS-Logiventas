@@ -8,7 +8,7 @@ use crate::models::sale::{
     SaleReturnDto, SaleReturnItemDto, SaleSummaryItem, TodaySalesSummary,
 };
 
-fn format_payment_method_label(method: &str, custom_name: Option<String>) -> String {
+pub fn format_payment_method_label(method: &str, custom_name: Option<String>) -> String {
     if let Some(name) = custom_name {
         if !name.trim().is_empty() {
             return name;

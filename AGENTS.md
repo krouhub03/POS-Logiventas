@@ -158,3 +158,22 @@ Antes de dar por completada cualquier modificación o nueva funcionalidad en el 
    - Verificar que no se hayan introducido cálculos en coma flotante para monedas.
    - Verificar que los nuevos comandos estén registrados en `tauri::generate_handler![]` dentro de `src-tauri/src/lib.rs` y expuestos a través de `src/services/api.ts`.
    - Verificar que las transacciones en BD contemplen rollback automático ante errores.
+
+---
+
+## 📦 7. Versionado Semántico, Changelog y Actualizaciones Continuas
+
+1. **Sincronización Triple Obligatoria**:
+   - Toda nueva versión debe reflejarse simultáneamente con el mismo identificador SemVer en:
+     - `package.json` (`"version"`)
+     - `src-tauri/tauri.conf.json` (`"version"`)
+     - `src-tauri/Cargo.toml` (`version = "..."`)
+   - Usar el comando automatizado `npm run release:patch` o `npm run release:minor`.
+
+2. **Documentación en `CHANGELOG.md`**:
+   - Cada entrega debe documentarse obligatoriamente bajo el estándar **Keep a Changelog** (`Agregado`, `Cambiado`, `Corregido`, `Seguridad`).
+   - El workflow de CI/CD (`.github/workflows/release.yml`) extrae automáticamente el texto de `CHANGELOG.md` para el cuerpo de la release en GitHub, el cual se muestra directamente al cajero en la tarjeta de actualización (`UpdateNotificationBanner.tsx`).
+
+3. **Instalación Silenciosa**:
+   - `tauri.conf.json` debe mantener `"installMode": "quiet"` (variante oficial de Tauri 2 para instalación desatendida) para garantizar que las actualizaciones se instalen en segundo plano sin interrumpir con cuadros de diálogo nativos de Windows Installer.
+

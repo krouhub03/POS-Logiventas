@@ -29,4 +29,7 @@ dist-ssr
 *.db-shm
 *.sqlite
 
+# Release artifacts
+.release-notes.md
+
  

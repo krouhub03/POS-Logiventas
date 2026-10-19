@@ -355,6 +355,261 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     Ok(format!("Ticket de prueba enviado con éxito a '{}' ({}){}", printer_target, paper_width, drawer_msg))
 }
 
+/// Formatea dinero en centavos a texto para ticket ($5,000.00)
+fn format_money(cents: i64) -> String {
+    let negative = cents < 0;
+    let abs_cents = cents.abs();
+    let units = abs_cents / 100;
+    let decimals = abs_cents % 100;
+
+    let units_str = units.to_string();
+    let mut formatted_units = String::new();
+    let len = units_str.len();
+    for (i, ch) in units_str.chars().enumerate() {
+        if i > 0 && (len - i) % 3 == 0 {
+            formatted_units.push(',');
+        }
+        formatted_units.push(ch);
+    }
+
+    let sign = if negative { "-" } else { "" };
+    format!("{}${}.{:02}", sign, formatted_units, decimals)
+}
+
+/// Alinea dos columnas justificando a la izquierda y derecha para ancho térmico
+fn pad_cols(left: &str, right: &str, width: usize) -> String {
+    let left_clean = left.trim();
+    let right_clean = right.trim();
+    let left_len = left_clean.chars().count();
+    let right_len = right_clean.chars().count();
+
+    if left_len + right_len >= width {
+        if right_len >= width {
+            return format!("{}\n{}", left_clean, right_clean);
+        }
+        let max_left = width.saturating_sub(right_len + 1);
+        let truncated_left: String = left_clean.chars().take(max_left).collect();
+        let spaces = width.saturating_sub(truncated_left.chars().count() + right_len);
+        format!("{}{}{}", truncated_left, " ".repeat(spaces), right_clean)
+    } else {
+        let spaces = width - left_len - right_len;
+        format!("{}{}{}", left_clean, " ".repeat(spaces), right_clean)
+    }
+}
+
+/// Imprime un comprobante de venta real directamente en la impresora térmica configurada (ESC/POS)
+#[tauri::command]
+pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
+    let conn = db.conn()?;
+
+    let receipt = crate::commands::sales::build_sale_receipt(&conn, sale_id)?;
+
+    let printer_enabled = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_enabled'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    if !printer_enabled {
+        return Err(crate::error::AppError::Validation("La impresión de tickets está deshabilitada en la configuración del POS.".into()));
+    }
+
+    let printer_target: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_target'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "POS-58".into());
+
+    let paper_width: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_paper_width'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "58mm".into());
+
+    let auto_cut = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_auto_cut'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let drawer_on_print = conn
+        .query_row("SELECT value FROM settings WHERE key = 'drawer_open_on_print'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    let drawer_enabled = conn
+        .query_row("SELECT value FROM settings WHERE key = 'drawer_enabled'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let header_text: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_header_text'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "".into());
+
+    let footer_text: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_footer_text'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "¡Gracias por su compra!\nConserve este ticket para devoluciones o garantías.".into());
+
+    let empresa_nombre: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nombre'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "CIGARRERÍA MEGALIDER".into());
+
+    let empresa_nit: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nit'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "".into());
+
+    let caja_codigo: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "CAJA-01".into());
+
+    let col_width = if paper_width.contains("80") { 48 } else { 32 };
+    let separator = "-".repeat(col_width);
+
+    let mut payload = Vec::new();
+
+    // 1. Inicializar impresora (ESC @)
+    payload.extend_from_slice(b"\x1B\x40");
+
+    // 2. Pulso de cajón monedero (si está activo al imprimir)
+    if drawer_enabled && drawer_on_print {
+        payload.extend_from_slice(b"\x1B\x70\x00\x19\xFA");
+        payload.extend_from_slice(b"\x1B\x70\x01\x19\xFA");
+    }
+
+    // 3. Encabezado centrado
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
+    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
+    payload.extend_from_slice(empresa_nombre.trim().as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+
+    if !empresa_nit.trim().is_empty() {
+        payload.extend_from_slice(format!("NIT: {}\n", empresa_nit.trim()).as_bytes());
+    }
+
+    if !header_text.trim().is_empty() {
+        for line in header_text.split('\n') {
+            let clean = line.trim();
+            if !clean.is_empty() {
+                payload.extend_from_slice(clean.as_bytes());
+                payload.push(b'\n');
+            }
+        }
+    }
+
+    payload.extend_from_slice(format!("Terminal: {}\n", caja_codigo).as_bytes());
+    payload.extend_from_slice(format!("Fecha: {}\n", receipt.created_at).as_bytes());
+    payload.extend_from_slice(format!("TICKET: {}\n", receipt.folio).as_bytes());
+
+    if let Some(ref cashier) = receipt.cashier_name {
+        payload.extend_from_slice(format!("Cajero: {}\n", cashier).as_bytes());
+    }
+
+    // Si es reimpresión / copia
+    if receipt.reprint_count > 0 {
+        payload.extend_from_slice(b"\n");
+        payload.extend_from_slice(format!("*** COPIA DE TICKET #{} ***\n", receipt.reprint_count).as_bytes());
+        payload.extend_from_slice(b"REIMPRESION SIN VALOR FISCAL ADICIONAL\n\n");
+    }
+
+    // Cliente
+    payload.extend_from_slice(b"\x1B\x61\x00"); // Alinear a la izquierda
+    let cliente_str = receipt.customer_name.as_deref().unwrap_or("Consumidor Final");
+    payload.extend_from_slice(format!("Cliente: {}\n", cliente_str).as_bytes());
+    if let Some(ref nit) = receipt.customer_tax_id {
+        payload.extend_from_slice(format!("Doc/NIT: {}\n", nit).as_bytes());
+    }
+
+    // 4. Tabla de ítems
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(pad_cols("CANT. DESCRIPCION", "TOTAL", col_width).as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    for item in &receipt.items {
+        let qty_str = if item.quantity.fract() == 0.0 {
+            format!("{:.0}", item.quantity)
+        } else {
+            format!("{:.2}", item.quantity)
+        };
+        let line_item_header = format!("{} x {}", qty_str, item.description);
+        payload.extend_from_slice(line_item_header.as_bytes());
+        payload.push(b'\n');
+
+        let price_str = format!("  Precio: {}", format_money(item.unit_price_cents));
+        let total_str = format_money(item.total_cents);
+        payload.extend_from_slice(pad_cols(&price_str, &total_str, col_width).as_bytes());
+        payload.push(b'\n');
+    }
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 5. Totales
+    payload.extend_from_slice(pad_cols("Subtotal:", &format_money(receipt.subtotal_cents), col_width).as_bytes());
+    payload.push(b'\n');
+
+    if receipt.discount_cents > 0 {
+        payload.extend_from_slice(pad_cols("Descuento:", &format!("-{}", format_money(receipt.discount_cents)), col_width).as_bytes());
+        payload.push(b'\n');
+    }
+
+    if receipt.tax_cents > 0 {
+        payload.extend_from_slice(pad_cols("Impuestos:", &format_money(receipt.tax_cents), col_width).as_bytes());
+        payload.push(b'\n');
+    }
+
+    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
+    payload.extend_from_slice(pad_cols("TOTAL:", &format_money(receipt.total_cents), col_width).as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 6. Formas de pago
+    payload.extend_from_slice(b"FORMAS DE PAGO:\n");
+    let mut total_paid = 0i64;
+    for payment in &receipt.payments {
+        total_paid += payment.amount_cents;
+        let method_label = crate::commands::sales::format_payment_method_label(&payment.method, Some(payment.method_name.clone()));
+        payload.extend_from_slice(pad_cols(&format!("  {}", method_label), &format_money(payment.amount_cents), col_width).as_bytes());
+        payload.push(b'\n');
+    }
+
+    payload.extend_from_slice(pad_cols("Total Pagado:", &format_money(total_paid), col_width).as_bytes());
+    payload.push(b'\n');
+
+    if receipt.change_cents > 0 {
+        payload.extend_from_slice(pad_cols("Cambio / Vueltas:", &format_money(receipt.change_cents), col_width).as_bytes());
+        payload.push(b'\n');
+    }
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 7. Pie de página centrado
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
+    for line in footer_text.split('\n') {
+        let clean = line.trim();
+        if !clean.is_empty() {
+            payload.extend_from_slice(clean.as_bytes());
+            payload.push(b'\n');
+        }
+    }
+    payload.extend_from_slice(b"\x1B\x61\x00"); // Izquierda
+
+    // 8. Feed líneas y corte de papel
+    payload.extend_from_slice(b"\n\n\n\n\n");
+    if auto_cut {
+        payload.extend_from_slice(b"\x1D\x56\x41\x00");
+    }
+
+    #[cfg(windows)]
+    {
+        send_raw_to_printer_spooler(&printer_target, &payload, &format!("Ticket {}", receipt.folio))
+            .map_err(|e| crate::error::AppError::Validation(e))?;
+    }
+
+    Ok(format!("Ticket {} enviado con éxito a '{}'", receipt.folio, printer_target))
+}
+
 /// Envía el pulso directo de apertura de gaveta (RJ11 ESC/POS) a la impresora configurada
 #[tauri::command]
 pub fn test_open_drawer(db: State<'_, Db>) -> AppResult<String> {
@@ -377,7 +632,6 @@ pub fn test_open_drawer(db: State<'_, Db>) -> AppResult<String> {
 }
 
 fn chrono_or_fallback_time() -> String {
-    // Si no está chrono, generamos fecha en formato ISO legible básico
     use std::time::SystemTime;
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => {
@@ -387,3 +641,4 @@ fn chrono_or_fallback_time() -> String {
         Err(_) => "Hora del sistema".into(),
     }
 }
+

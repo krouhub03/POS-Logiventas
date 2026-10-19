@@ -213,6 +213,17 @@ export function SalesStationPage({
   const [barcodeInput, setBarcodeInput] = useState("");
   const [selectedLineIndex, setSelectedLineIndex] = useState<number>(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const tableRowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+
+  // Desplazar automáticamente la fila seleccionada a la vista visible
+  useEffect(() => {
+    if (selectedLineIndex >= 0 && tableRowRefs.current[selectedLineIndex]) {
+      tableRowRefs.current[selectedLineIndex]?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [selectedLineIndex]);
 
   // Edición de nombre de ticket por doble clic
   const [editingTicketId, setEditingTicketId] = useState<number | null>(null);
@@ -403,6 +414,16 @@ export function SalesStationPage({
     } catch (err) {
       console.error("Error al obtener última venta:", err);
       showFeedback("Error al consultar última venta", "error");
+    }
+  };
+
+  const handleManualOpenDrawer = async () => {
+    try {
+      await api.settings.testOpenDrawer();
+      showFeedback("💵 Pulso enviado al cajón monedero", "success");
+    } catch (err) {
+      console.error("Error abriendo cajón monedero:", err);
+      showFeedback("Error abriendo cajón monedero: " + String(err), "error");
     }
   };
 
@@ -1163,6 +1184,16 @@ export function SalesStationPage({
       setIsCobroOpen(false);
       refreshCatalogMap();
       focusInput();
+
+      // Impresión automática silenciosa en impresora térmica si está habilitada
+      api.settings.getAll().then((sets) => {
+        if (sets.printer_enabled !== "false" && sets.printer_auto_print === "true") {
+          api.printers.printSaleTicket(receipt.id).catch((err) => {
+            console.warn("[Auto-Print] No se pudo imprimir ticket automáticamente:", err);
+          });
+        }
+      }).catch(() => {});
+
       // Notificar al outbox dispatcher de inmediato para subida rápida
       api.sync.dispatchOutbox().catch(console.warn);
     } catch (err: unknown) {
@@ -1353,6 +1384,9 @@ export function SalesStationPage({
       } else if (e.key === "F7") {
         e.preventDefault();
         onNavigateToSettings?.();
+      } else if (e.key === "F8") {
+        e.preventDefault();
+        handleManualOpenDrawer();
       } else if (e.key === "F11") {
         e.preventDefault();
         api.system.toggleFullscreen().catch(console.error);
@@ -1392,14 +1426,20 @@ export function SalesStationPage({
           handleCancelOrDeleteTicket();
         }
       } else if (e.key === "ArrowDown") {
-        if (document.activeElement !== barcodeInputRef.current) {
+        if (cartLines.length > 0) {
           e.preventDefault();
-          setSelectedLineIndex((prev) => Math.min(cartLines.length - 1, prev + 1));
+          setSelectedLineIndex((prev) => {
+            if (prev < 0) return 0;
+            return Math.min(cartLines.length - 1, prev + 1);
+          });
         }
       } else if (e.key === "ArrowUp") {
-        if (document.activeElement !== barcodeInputRef.current) {
+        if (cartLines.length > 0) {
           e.preventDefault();
-          setSelectedLineIndex((prev) => Math.max(0, prev - 1));
+          setSelectedLineIndex((prev) => {
+            if (prev < 0) return cartLines.length - 1;
+            return Math.max(0, prev - 1);
+          });
         }
       } else if (
         document.activeElement !== barcodeInputRef.current &&
@@ -1640,23 +1680,23 @@ export function SalesStationPage({
       </header>
 
       {/* 2. FILA DE NAVEGACIÓN DE MÓDULOS (F1 - F7) */}
-      <nav className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2 flex items-center justify-between shadow-xs transition-colors duration-150">
-        <div className="flex items-center gap-2">
+      <nav className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between shadow-xs transition-colors duration-150 overflow-x-auto custom-scrollbar">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* F1 Ventas (Activo) */}
-          <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer">
+          <button className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer">
             <span className="bg-emerald-900/60 px-1.5 py-0.5 rounded text-[10px] font-mono text-white">F1</span>
             <BagIcon />
-            <span>Ventas</span>
+            <span className="hidden sm:inline">Ventas</span>
           </button>
 
           {/* F3 Productos */}
           <button
             onClick={onNavigateToProducts}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
           >
             <span className="text-slate-400 font-mono text-[10px]">F3</span>
             <PackageIcon />
-            <span>Productos</span>
+            <span className="hidden md:inline">Productos</span>
           </button>
 
           {/* F2 Clientes */}
@@ -1664,7 +1704,7 @@ export function SalesStationPage({
             <button
               type="button"
               onClick={() => setIsCustomerModalOpen(true)}
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold transition-colors cursor-pointer ${
                 currentTicket?.customer
                   ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200"
                   : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
@@ -1673,7 +1713,7 @@ export function SalesStationPage({
             >
               <span className="text-slate-400 font-mono text-[10px]">F2</span>
               <UsersIcon />
-              <span className="truncate max-w-[120px]">
+              <span className="truncate max-w-[90px] lg:max-w-[120px] hidden md:inline">
                 {currentTicket?.customer ? currentTicket.customer.name : "Clientes"}
               </span>
             </button>
@@ -1686,7 +1726,7 @@ export function SalesStationPage({
                   updateCurrentTicketCustomer(null);
                   showFeedback("👤 Cliente desvinculado del ticket", "info");
                 }}
-                className="px-2 py-2 bg-emerald-100 hover:bg-rose-500 hover:text-white text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 dark:hover:bg-rose-600 dark:hover:text-white text-xs font-bold transition-colors cursor-pointer border-l border-emerald-200 dark:border-emerald-800"
+                className="px-2 py-1.5 sm:py-2 bg-emerald-100 hover:bg-rose-500 hover:text-white text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 dark:hover:bg-rose-600 dark:hover:text-white text-xs font-bold transition-colors cursor-pointer border-l border-emerald-200 dark:border-emerald-800"
                 title="Desvincular cliente con 1 clic (Shift+F2)"
               >
                 ✕
@@ -1698,12 +1738,12 @@ export function SalesStationPage({
           {(hasPermission(cashier, "inventario:ajustar") || hasPermission(cashier, "inventario:ver")) && (
             <button
               onClick={onNavigateToInventory || onNavigateToProducts}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
               title="Control de existencias y ajustes de inventario (F4)"
             >
               <span className="text-slate-400 font-mono text-[10px]">F4</span>
               <StoreIcon />
-              <span>Inventario</span>
+              <span className="hidden lg:inline">Inventario</span>
             </button>
           )}
 
@@ -1711,38 +1751,49 @@ export function SalesStationPage({
           <button
             type="button"
             onClick={() => setIsRecentSalesOpen(true)}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
             title="Consultar historial de ventas y procesar devoluciones (F5)"
           >
             <span className="text-slate-400 font-mono text-[10px]">F5</span>
             <span>🕒</span>
-            <span>Historial</span>
+            <span className="hidden md:inline">Historial</span>
           </button>
 
           {/* F7 Configuración */}
           {hasPermission(cashier, "pos:configuracion") && (
             <button
               onClick={onNavigateToSettings}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
               title="Configuración de periféricos y hardware (F7)"
             >
               <span className="text-slate-400 font-mono text-[10px]">F7</span>
               <SettingsIcon />
-              <span>Configuración</span>
+              <span className="hidden lg:inline">Configuración</span>
             </button>
           )}
         </div>
 
         {/* Acciones de Impresión y Ayuda a la Derecha */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={handleManualOpenDrawer}
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            title="Abrir cajón monedero manualmente vía pulso de la impresora (F8)"
+          >
+            <span>💵</span>
+            <span className="hidden xl:inline">Abrir Cajón</span>
+            <span className="text-[10px] bg-amber-200/70 dark:bg-amber-900 px-1 py-0.2 rounded font-mono">F8</span>
+          </button>
+
           <button
             type="button"
             onClick={handleReprintLastSale}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             title="Reimprimir el último ticket cobrado (Alt+R)"
           >
             <span>🖨️</span>
-            <span>Último Ticket</span>
+            <span className="hidden xl:inline">Último Ticket</span>
             <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1 py-0.2 rounded font-mono">Alt+R</span>
           </button>
         </div>
@@ -1890,6 +1941,10 @@ export function SalesStationPage({
             <input
               ref={barcodeInputRef}
               type="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               onKeyDown={(e) => {
@@ -1934,39 +1989,39 @@ export function SalesStationPage({
         </form>
 
         {/* Botones de Acción de Entrada Rápida */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             onClick={() => setIsVariosOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-[#fef3c7] hover:bg-[#fde68a] dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-[#92400e] dark:text-amber-200 border border-[#fcd34d] dark:border-amber-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            className="px-2.5 sm:px-3.5 py-2 rounded-xl bg-[#fef3c7] hover:bg-[#fde68a] dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-[#92400e] dark:text-amber-200 border border-[#fcd34d] dark:border-amber-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Vender artículo sin código (Insert)"
           >
             <span className="bg-[#fde68a] dark:bg-amber-900/60 text-[#78350f] dark:text-amber-300 border border-[#f59e0b]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               INS
             </span>
-            <span>Varios</span>
+            <span className="hidden sm:inline">Varios</span>
           </button>
 
           <button
             onClick={() => setIsSearchOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-[#e0f2fe] hover:bg-[#bae6fd] dark:bg-sky-950/40 dark:hover:bg-sky-900/50 text-[#0369a1] dark:text-sky-200 border border-[#7dd3fc] dark:border-sky-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            className="px-2.5 sm:px-3.5 py-2 rounded-xl bg-[#e0f2fe] hover:bg-[#bae6fd] dark:bg-sky-950/40 dark:hover:bg-sky-900/50 text-[#0369a1] dark:text-sky-200 border border-[#7dd3fc] dark:border-sky-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Buscar Producto por Nombre o SKU (F10)"
           >
             <span className="bg-[#bae6fd] dark:bg-sky-900/60 text-[#075985] dark:text-sky-300 border border-[#0ea5e9]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               F10
             </span>
-            <span>Buscar</span>
+            <span className="hidden sm:inline">Buscar</span>
           </button>
 
           <button
             onClick={removeSelectedLine}
             disabled={selectedLineIndex < 0 || cartLines.length === 0}
-            className="px-3.5 py-2 rounded-xl bg-[#ffe4e6] hover:bg-[#fecdd3] dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-[#9f1239] dark:text-rose-200 border border-[#fda4af] dark:border-rose-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none"
+            className="px-2.5 sm:px-3.5 py-2 rounded-xl bg-[#ffe4e6] hover:bg-[#fecdd3] dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-[#9f1239] dark:text-rose-200 border border-[#fda4af] dark:border-rose-700/60 font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs disabled:opacity-40 disabled:pointer-events-none"
             title="Eliminar producto seleccionado (Del)"
           >
             <span className="bg-[#fecdd3] dark:bg-rose-900/60 text-[#881337] dark:text-rose-300 border border-[#f43f5e]/30 px-1 py-0.2 rounded text-[10px] font-mono font-bold">
               DEL
             </span>
-            <span>Borrar</span>
+            <span className="hidden sm:inline">Borrar</span>
           </button>
 
           <button
@@ -2024,23 +2079,23 @@ export function SalesStationPage({
           <table className="w-full text-left border-collapse">
             <thead className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10">
               <tr>
-                <th className="py-2.5 px-3 w-12 text-center">#</th>
+                <th className="py-2 px-2.5 w-10 text-center">#</th>
                 {showProductImages && (
-                  <th className="py-2.5 px-2 w-20 text-center">Foto</th>
+                  <th className="py-2 px-1 w-14 sm:w-16 xl:w-20 text-center">Foto</th>
                 )}
-                <th className="py-2.5 px-3 w-36">Código de Barras</th>
-                <th className="py-2.5 px-3">Descripción del Producto</th>
-                <th className="py-2.5 px-3 w-28 text-right">Precio Venta</th>
-                <th className="py-2.5 px-3 w-24 text-center">IVA</th>
-                <th className="py-2.5 px-3 w-28 text-center">Cantidad</th>
-                <th className="py-2.5 px-3 w-32 text-right">Importe</th>
-                <th className="py-2.5 px-3 w-24 text-center">Existencia</th>
+                <th className="py-2 px-2.5 w-28 sm:w-36 hidden md:table-cell">Código</th>
+                <th className="py-2 px-2.5">Descripción del Producto</th>
+                <th className="py-2 px-2.5 w-24 sm:w-28 text-right">Precio</th>
+                <th className="py-2 px-2.5 w-20 text-center hidden xl:table-cell">IVA</th>
+                <th className="py-2 px-2.5 w-24 sm:w-28 text-center">Cantidad</th>
+                <th className="py-2 px-2.5 w-28 sm:w-32 text-right">Importe</th>
+                <th className="py-2 px-2.5 w-20 text-center hidden lg:table-cell">Existencia</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={showProductImages ? 9 : 8} className="py-24 text-center font-sans">
+                  <td colSpan={10} className="py-24 text-center font-sans">
                     <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center mx-auto mb-3 text-slate-300 dark:text-slate-600 shadow-2xs">
                       <EmptyCartIcon />
                     </div>
@@ -2066,6 +2121,9 @@ export function SalesStationPage({
                   return (
                     <tr
                       key={line.id}
+                      ref={(el) => {
+                        tableRowRefs.current[index] = el;
+                      }}
                       onClick={() => setSelectedLineIndex(index)}
                       className={`cursor-pointer transition-colors align-middle ${
                         isSelected
@@ -2073,7 +2131,7 @@ export function SalesStationPage({
                           : "hover:bg-slate-50 dark:hover:bg-slate-800/40 text-slate-800 dark:text-slate-200"
                       }`}
                     >
-                      <td className="py-2.5 px-3 text-center text-slate-400 dark:text-slate-500 font-sans text-xs align-middle">
+                      <td className="py-2 px-2.5 text-center text-slate-400 dark:text-slate-500 font-sans text-xs align-middle">
                         {index + 1}
                       </td>
                       {showProductImages && (() => {
@@ -2096,7 +2154,7 @@ export function SalesStationPage({
                         const imgSrc = resolveProductImageSrc(localPath, remoteUrl, kind);
 
                         return (
-                          <td className="py-2 px-2 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                          <td className="py-1.5 px-1.5 text-center align-middle" onClick={(e) => e.stopPropagation()}>
                             <img
                               src={imgSrc}
                               alt={line.description}
@@ -2110,7 +2168,7 @@ export function SalesStationPage({
                                 );
                               }}
                               title="Doble clic para maximizar imagen"
-                              className="w-16 h-16 object-cover rounded-xl border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
+                              className="w-10 h-10 sm:w-12 sm:h-12 xl:w-16 xl:h-16 object-cover rounded-xl border border-slate-200 dark:border-slate-700 mx-auto shadow-xs bg-white dark:bg-slate-900 cursor-zoom-in hover:scale-105 transition-transform"
                               onError={async (e) => {
                                 // Fallback automático por Base64 desde el backend si el WebView no resuelve la URL personalizada
                                 if (line.productId && customSrc) {
@@ -2130,16 +2188,42 @@ export function SalesStationPage({
                           </td>
                         );
                       })()}
-                      <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300 align-middle">
+                      <td className="py-2 px-2.5 font-semibold text-slate-700 dark:text-slate-300 align-middle hidden md:table-cell">
                         {line.barcode}
                       </td>
-                      <td className="py-2.5 px-3 font-sans font-medium text-slate-900 dark:text-white align-middle">
-                        {line.description}
+                      <td className="py-2 px-2.5 font-sans font-medium text-slate-900 dark:text-white align-middle">
+                        <div className="font-semibold text-xs sm:text-sm leading-snug">{line.description}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {/* Micro código de barras en pantallas pequeñas */}
+                          <span className="text-[10px] text-slate-400 font-mono md:hidden">
+                            {line.barcode}
+                          </span>
+                          {/* Micro IVA en pantallas menores a XL */}
+                          {line.taxRateBp > 0 && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono xl:hidden bg-slate-100 dark:bg-slate-800 px-1 py-0.2 rounded">
+                              IVA {Number((line.taxRateBp / 100).toFixed(0))}%
+                            </span>
+                          )}
+                          {/* Micro Stock en pantallas menores a LG */}
+                          {line.currentStock !== undefined && (
+                            <span
+                              className={`text-[10px] font-mono lg:hidden px-1 py-0.2 rounded font-semibold ${
+                                line.currentStock <= 0
+                                  ? "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
+                                  : line.currentStock <= 5
+                                  ? "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300"
+                                  : "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50"
+                              }`}
+                            >
+                              Stock: {line.currentStock}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-2.5 px-3 text-right font-semibold text-slate-700 dark:text-slate-300 align-middle">
+                      <td className="py-2 px-2.5 text-right font-semibold text-slate-700 dark:text-slate-300 align-middle">
                         {formatCents(line.unitPriceCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center align-middle">
+                      <td className="py-2 px-2.5 text-center align-middle hidden xl:table-cell">
                         {line.taxRateBp > 0 || (line.taxFixedCents && line.taxFixedCents > 0) ? (
                           <div className="flex flex-col items-center leading-tight">
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
@@ -2160,7 +2244,7 @@ export function SalesStationPage({
                         )}
                       </td>
                       <td
-                        className="py-2.5 px-3 text-center align-middle"
+                        className="py-2 px-2.5 text-center align-middle"
                         onDoubleClick={(e) => {
                           e.stopPropagation();
                           handleStartEditQty(line);
@@ -2204,10 +2288,10 @@ export function SalesStationPage({
                           </span>
                         )}
                       </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm align-middle">
+                      <td className="py-2 px-2.5 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm align-middle">
                         {formatCents(line.totalCents)}
                       </td>
-                      <td className="py-2.5 px-3 text-center align-middle">
+                      <td className="py-2 px-2.5 text-center align-middle hidden lg:table-cell">
                         {line.currentStock !== undefined ? (
                           (() => {
                             const enEsperaOtros = tickets
@@ -2256,51 +2340,51 @@ export function SalesStationPage({
       </main>
 
       {/* 4. FOOTER RESUMEN CON VISOR GIGANTE */}
-      <footer className="bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-5 py-3.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-xs transition-colors duration-150">
+      <footer className="bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-3 sm:px-5 py-2 sm:py-3.5 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xs transition-colors duration-150">
         {/* Atajos Inferiores & Resumen de Piezas */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="bg-white dark:bg-slate-800/90 px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-4 shadow-2xs">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div className="bg-white dark:bg-slate-800/90 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-3 sm:gap-4 shadow-2xs">
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Artículos</div>
-              <div className="text-base font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
+              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Artículos</div>
+              <div className="text-sm sm:text-base font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
             </div>
-            <div className="w-px h-6 bg-slate-200 dark:bg-slate-700" />
+            <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-700" />
             <div>
-              <div className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Piezas</div>
-              <div className="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
+              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Piezas</div>
+              <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={handleHoldTicket}
-              className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-2 transition-colors cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 sm:gap-2 transition-colors cursor-pointer shadow-2xs"
               title="Poner ticket en espera y abrir uno nuevo (F6)"
             >
               <span>⏸</span>
-              <span>Pendiente</span>
+              <span className="hidden sm:inline">Pendiente</span>
             </button>
             <button
               onClick={() => handleCancelOrDeleteTicket()}
-              className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               title={tickets.length > 1 ? `Eliminar ${currentTicket.name}` : `Vaciar ${currentTicket.name}`}
             >
               <span>✕</span>
-              <span>Cancelar Ticket</span>
+              <span className="hidden sm:inline">Cancelar Ticket</span>
             </button>
           </div>
         </div>
 
         {/* VISOR GIGANTE DEL TOTAL Y BOTÓN COBRAR (F12) */}
-        <div className="flex items-center gap-6 w-full md:w-auto justify-end">
+        <div className="flex items-center gap-4 sm:gap-6 w-full md:w-auto justify-end">
           <div className="text-right">
-            <div className="text-xs text-slate-400 dark:text-slate-500 font-mono">
+            <div className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}
             </div>
-            <div className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
               TOTAL A PAGAR
             </div>
-            <div className="text-4xl md:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
+            <div className="text-3xl sm:text-4xl xl:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
               {formatCents(totalCents)}
             </div>
           </div>
@@ -2308,9 +2392,9 @@ export function SalesStationPage({
           <button
             onClick={handleOpenCobro}
             disabled={cartLines.length === 0}
-            className="px-8 py-3.5 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-lg uppercase tracking-wider flex items-center gap-2.5 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+            className="px-5 sm:px-8 py-2.5 sm:py-3.5 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-base sm:text-lg uppercase tracking-wider flex items-center gap-2 sm:gap-2.5 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
           >
-            <span className="bg-white/25 dark:bg-emerald-700/60 px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
+            <span className="bg-white/25 dark:bg-emerald-700/60 px-1.5 sm:px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
               F12
             </span>
             <span>Cobrar</span>

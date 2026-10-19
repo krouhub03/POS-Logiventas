@@ -369,6 +369,10 @@ export function SearchProductModal({
             <input
               ref={inputRef}
               type="text"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               className="w-full bg-white dark:bg-slate-950 border-2 border-sky-400 dark:border-sky-500/80 rounded-2xl pl-11 pr-24 py-2.5 text-slate-900 dark:text-white font-medium text-sm focus:outline-none focus:ring-4 focus:ring-sky-500/20 shadow-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 transition-all"
               placeholder="Escribe nombre, SKU, código de barras o #etiqueta... (Usa ↑ ↓ para navegar)"
               value={search}

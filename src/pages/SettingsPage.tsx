@@ -18,7 +18,7 @@ export function SettingsPage({
   onBackToSales,
   onUnpaired,
 }: SettingsPageProps) {
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, fontSizePx, setFontSizePx } = useTheme();
   const { confirm, alert: modalAlert } = useModals();
   const updater = useUpdater();
   const [activeTab, setActiveTab] = useState<SettingsTab>("printer");
@@ -169,6 +169,7 @@ export function SettingsPage({
 
   const handleTestPrint = async () => {
     try {
+      await api.settings.update(settings);
       const res = await api.settings.testPrintTicket();
       setTestResult(res);
       showMsg("🖨️ " + res);
@@ -179,6 +180,7 @@ export function SettingsPage({
 
   const handleTestDrawer = async () => {
     try {
+      await api.settings.update(settings);
       const res = await api.settings.testOpenDrawer();
       setTestResult(res);
       showMsg("💵 " + res);
@@ -1048,6 +1050,100 @@ export function SettingsPage({
                     >
                       {theme === "dark" ? "☀️ Cambiar a Claro" : "🌙 Cambiar a Oscuro"}
                     </button>
+                  </div>
+
+                  {/* TAMAÑO DE FUENTE DEL SISTEMA EN PIXELES */}
+                  <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <span>🔤 Tamaño de Fuente del Sistema</span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold">
+                            {fontSizePx}px
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          Personaliza libremente el tamaño de letra en píxeles (entre 10px y 24px) según tu resolución y distancia visual.
+                        </div>
+                      </div>
+
+                      {/* Input numérico directo con controles manuales */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setFontSizePx(Math.max(10, fontSizePx - 0.5))}
+                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm flex items-center justify-center transition-colors cursor-pointer border border-slate-300 dark:border-slate-700 shadow-2xs"
+                          title="Reducir 0.5px"
+                        >
+                          —
+                        </button>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min={10}
+                            max={24}
+                            step={0.5}
+                            value={fontSizePx}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val)) setFontSizePx(val);
+                            }}
+                            className="w-20 px-2 py-1.5 text-center font-mono font-black text-sm rounded-lg bg-white dark:bg-slate-950 border-2 border-emerald-500 text-slate-900 dark:text-white focus:outline-none"
+                          />
+                          <span className="absolute right-2 top-1.5 text-[10px] text-slate-400 font-mono pointer-events-none">
+                            px
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFontSizePx(Math.min(24, fontSizePx + 0.5))}
+                          className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm flex items-center justify-center transition-colors cursor-pointer border border-slate-300 dark:border-slate-700 shadow-2xs"
+                          title="Aumentar 0.5px"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Botones de accesos rápidos en píxeles */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1">
+                      {[12, 13, 14, 15.5, 17].map((px) => (
+                        <button
+                          key={px}
+                          type="button"
+                          onClick={() => setFontSizePx(px)}
+                          className={`px-3 py-2 rounded-xl border text-center transition-all cursor-pointer ${
+                            fontSizePx === px
+                              ? "bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400 font-bold ring-2 ring-emerald-500/20"
+                              : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          }`}
+                        >
+                          <div className="text-xs font-mono font-bold">{px}px</div>
+                          <div className="text-[10px] text-slate-400">
+                            {px === 12
+                              ? "Compacto"
+                              : px === 13
+                              ? "Ligero"
+                              : px === 14
+                              ? "Estándar"
+                              : px === 15.5
+                              ? "Medio Alto"
+                              : "Grande"}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* VISTA PREVIA EN VIVO */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200/80 dark:border-slate-800 flex items-center justify-between">
+                      <div className="text-slate-700 dark:text-slate-300 text-xs">
+                        <span className="font-semibold">Vista previa en tiempo real: </span>
+                        <span>1 × Coca Cola 1.5L — $6.500 (IVA 19%)</span>
+                      </div>
+                      <span className="text-emerald-600 dark:text-emerald-400 font-black font-mono text-sm">
+                        $6.500
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">

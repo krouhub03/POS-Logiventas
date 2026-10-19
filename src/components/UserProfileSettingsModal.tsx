@@ -5,6 +5,7 @@ import { ModalBody } from "./ui/modal/ModalBody";
 import { ModalFooter } from "./ui/modal/ModalFooter";
 import { api } from "../services/api";
 import { hasPermission } from "../lib/permissions";
+import { useTheme } from "../contexts/ThemeContext";
 import type { CashierUser } from "../types";
 
 interface UserProfileSettingsModalProps {
@@ -49,9 +50,7 @@ export function UserProfileSettingsModal({
     const val = localStorage.getItem("pos_auto_lock_minutes");
     return val ? Number(val) : 0; // 0 = desactivado
   });
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    return document.documentElement.classList.contains("dark");
-  });
+  const { theme, toggleTheme, fontSizePx, setFontSizePx } = useTheme();
 
   const currentPinRef = useRef<HTMLInputElement>(null);
 
@@ -142,19 +141,6 @@ export function UserProfileSettingsModal({
     else if (activePinField === "confirm") setConfirmPin("");
   };
 
-  // Alternar tema claro / oscuro
-  const toggleTheme = () => {
-    const isDark = document.documentElement.classList.contains("dark");
-    if (isDark) {
-      document.documentElement.classList.remove("dark");
-      localStorage.setItem("pos_theme", "light");
-      setIsDarkMode(false);
-    } else {
-      document.documentElement.classList.add("dark");
-      localStorage.setItem("pos_theme", "dark");
-      setIsDarkMode(true);
-    }
-  };
 
   // Guardar preferencia de sonido
   const handleToggleSound = () => {
@@ -407,9 +393,57 @@ export function UserProfileSettingsModal({
                   onClick={toggleTheme}
                   className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer flex items-center gap-1.5"
                 >
-                  <span>{isDarkMode ? "🌙 Oscuro" : "☀️ Claro"}</span>
+                  <span>{theme === "dark" ? "🌙 Oscuro" : "☀️ Claro"}</span>
                   <span className="text-slate-400 text-[10px]">(Cambiar)</span>
                 </button>
+              </div>
+
+              {/* Tamaño de Fuente del Sistema en Píxeles */}
+              <div className="p-4 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>Tamaño de Letra ({fontSizePx}px)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Modifica manualmente el tamaño en píxeles (entre 10px y 24px).
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setFontSizePx(Math.max(10, fontSizePx - 0.5))}
+                    className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center transition-colors cursor-pointer border border-slate-300 dark:border-slate-700 shadow-2xs"
+                    title="Reducir 0.5px"
+                  >
+                    —
+                  </button>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={10}
+                      max={24}
+                      step={0.5}
+                      value={fontSizePx}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (!isNaN(val)) setFontSizePx(val);
+                      }}
+                      className="w-16 px-1.5 py-1 text-center font-mono font-bold text-xs rounded-lg bg-white dark:bg-slate-950 border border-emerald-500 text-slate-900 dark:text-white focus:outline-none"
+                    />
+                    <span className="absolute right-1.5 top-1 text-[9px] text-slate-400 font-mono pointer-events-none">
+                      px
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFontSizePx(Math.min(24, fontSizePx + 0.5))}
+                    className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center transition-colors cursor-pointer border border-slate-300 dark:border-slate-700 shadow-2xs"
+                    title="Aumentar 0.5px"
+                  >
+                    +
+                  </button>
+                </div>
               </div>
 
               {/* Mostrar Fotos en Ticket de Ventas */}

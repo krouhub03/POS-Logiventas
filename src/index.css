@@ -30,6 +30,32 @@
     color: #f8fafc;
   }
 
+  /* Tamaños de fuente configurables del sistema */
+  :root,
+  :root[data-font-size="normal"] {
+    font-size: 14px;
+  }
+
+  :root[data-font-size="small"] {
+    font-size: 12.5px;
+  }
+
+  :root[data-font-size="large"] {
+    font-size: 15.5px;
+  }
+
+  :root[data-font-size="xlarge"] {
+    font-size: 17px;
+  }
+
+  /* Contenedor estricto sin scroll exterior */
+  #root {
+    width: 100%;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+  }
+
   /* Barra de desplazamiento nativa estilizada adaptada al tema */
   * {
     scrollbar-width: thin;
