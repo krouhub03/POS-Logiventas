@@ -5,6 +5,19 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.4] - 2026-10-19
+
+### Agregado
+- **Matriz Directa de Cobro Mixto (Split Ledger — Cero Pasos Extra):** Rediseño en 2 columnas que permite ingresar directamente montos por medio de pago (Efectivo, Tarjetas, Nequi, Daviplata, etc.) sin botón intermedio de "+ Añadir", con botón inteligente `+ Asignar Resto` y panel de balance en tiempo real con cálculo automático de vuelto.
+- **Navegación y Selección de Productos con Flechas de Teclado (`↑` / `↓`):** Desplazamiento intuitivo por la tabla de ventas directamente desde el campo de lectura de código de barras o la estación, con auto-scroll suave para mantener visible el ítem enfocado.
+- **Control Manual de Tamaño de Fuente en Píxeles (`px`):** Ajuste fino del tamaño de letra mediante botones de paso (`—` y `+` de 0.5px), input numérico directo (10px a 24px) y botones rápidos de píxeles (`12px`, `13px`, `14px`, `15.5px`, `17px`) con vista previa en vivo.
+- **Pantalla de Bloqueo en Modo Claro (Eleventa Modern):** Rediseño estético con fondo claro suave (`#f8fafc`), tarjeta blanca con bordes nítidos y botón para alternar instantáneamente entre Modo Claro y Modo Oscuro.
+
+### Cambiado
+- **Supresión de Zoom/Escalado Global Forzado:** Eliminación del bloque de escalado de interfaz para garantizar renderizado nativo 100% nítido en cualquier monitor sin distorsión de tipografías ni desalineación de elementos.
+
+---
+
 ## [0.1.3] - 2026-10-18
 
 ### Agregado

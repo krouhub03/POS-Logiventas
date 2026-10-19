@@ -1,6 +1,6 @@
 [package]
 name = "pos-logiventa"
-version = "0.1.3"
+version = "0.1.4"
 description = "Metahabi POS - Sistema de punto de venta de escritorio desarrollado por Krouhub"
 authors = ["Krouhub <krouhub@gmail.com>", "Brian Krou"]
 edition = "2024"
