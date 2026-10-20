@@ -5,6 +5,14 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.5] - 2026-10-20
+### Agregado
+- Actualización y optimizaciones del sistema.
+
+### Cambios recientes
+- fix(license): fix Send trait and import paths for license validation and UI
+- Add license validation, UI banner, migrations, and tests
+---
 ## [0.1.4] - 2026-10-19
 
 ### Agregado
