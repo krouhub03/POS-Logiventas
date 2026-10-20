@@ -11,6 +11,11 @@ interface ReceiptModalProps {
   onRequestReturn?: (receipt: SaleReceipt) => void;
   businessName?: string;
   businessNit?: string;
+  businessAddress?: string;
+  businessPhone?: string;
+  businessCity?: string;
+  businessRegimen?: string;
+  businessLogo?: string;
   terminalCode?: string;
 }
 
@@ -21,6 +26,11 @@ export function ReceiptModal({
   onRequestReturn,
   businessName = "LOGIVENTA POS",
   businessNit,
+  businessAddress,
+  businessPhone,
+  businessCity,
+  businessRegimen,
+  businessLogo,
   terminalCode = "CAJA-01",
 }: ReceiptModalProps) {
   const [currentReceipt, setCurrentReceipt] = useState<SaleReceipt | null>(initialReceipt);
@@ -158,6 +168,7 @@ export function ReceiptModal({
             .text-xs { font-size: 12px !important; }
             .text-sm { font-size: 13px !important; }
             .text-base { font-size: 14px !important; }
+            img { max-height: 55px !important; max-width: 170px !important; object-fit: contain !important; margin: 0 auto 6px auto !important; display: block !important; }
           </style>
         </head>
         <body>
@@ -285,9 +296,22 @@ export function ReceiptModal({
             >
               {/* ENCABEZADO FISCAL */}
               <div className="text-center pb-3 border-b border-dashed border-slate-400">
+                {businessLogo && (
+                  <div className="flex justify-center mb-2">
+                    <img
+                      src={businessLogo}
+                      alt="Logo Empresa"
+                      className="max-h-12 max-w-[160px] object-contain filter grayscale contrast-125"
+                    />
+                  </div>
+                )}
                 <div className="text-sm font-black uppercase tracking-wider">{businessName}</div>
-                {businessNit && <div className="text-[10px]">NIT: {businessNit}</div>}
-                <div className="text-[10px] text-slate-600">Terminal: {terminalCode}</div>
+                {businessNit && <div className="text-[10px]">NIT/RUT: {businessNit}</div>}
+                {businessRegimen && <div className="text-[10px] text-slate-700">{businessRegimen}</div>}
+                {businessAddress && <div className="text-[10px] text-slate-700">{businessAddress}</div>}
+                {businessPhone && <div className="text-[10px] text-slate-700">Tel: {businessPhone}</div>}
+                {businessCity && <div className="text-[10px] text-slate-700">{businessCity}</div>}
+                <div className="text-[10px] text-slate-600 mt-1">Terminal: {terminalCode}</div>
                 <div className="text-[10px] text-slate-600">
                   Fecha: {new Date(currentReceipt.createdAt).toLocaleString()}
                 </div>

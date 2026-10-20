@@ -141,6 +141,8 @@ pub fn run() {
             commands::images::save_product_image_local,
             commands::images::delete_product_image_local,
             commands::images::get_product_image_base64,
+        commands::license::get_plan_info,
+        commands::license::validate_license,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

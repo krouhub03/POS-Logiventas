@@ -267,9 +267,33 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
         .map(|v| v == "true")
         .unwrap_or(true);
 
+    let empresa_nombre: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nombre'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "MI NEGOCIO POS".into());
+
+    let empresa_nit: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nit'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_regimen: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_regimen'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_direccion: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_direccion'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_telefono: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_telefono'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_ciudad: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_ciudad'", [], |r| r.get(0))
+        .unwrap_or_default();
+
     let header_text: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'printer_header_text'", [], |r| r.get(0))
-        .unwrap_or_else(|_| "CIGARRERÍA MEGALIDER\nNIT: 901.234.567-1".into());
+        .unwrap_or_default();
 
     let footer_text: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'printer_footer_text'", [], |r| r.get(0))
@@ -295,7 +319,26 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
     payload.extend_from_slice(b"\x1B\x21\x10"); // Doble altura
     payload.extend_from_slice(b"*** TICKET DE PRUEBA ***\n");
+    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
+    payload.extend_from_slice(empresa_nombre.trim().as_bytes());
+    payload.push(b'\n');
     payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+
+    if !empresa_nit.trim().is_empty() {
+        payload.extend_from_slice(format!("NIT/RUT: {}\n", empresa_nit.trim()).as_bytes());
+    }
+    if !empresa_regimen.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_regimen.trim()).as_bytes());
+    }
+    if !empresa_direccion.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_direccion.trim()).as_bytes());
+    }
+    if !empresa_telefono.trim().is_empty() {
+        payload.extend_from_slice(format!("Tel: {}\n", empresa_telefono.trim()).as_bytes());
+    }
+    if !empresa_ciudad.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_ciudad.trim()).as_bytes());
+    }
 
     for line in header_text.split('\n') {
         let clean = line.trim();
@@ -446,11 +489,27 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
 
     let empresa_nombre: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'empresa_nombre'", [], |r| r.get(0))
-        .unwrap_or_else(|_| "CIGARRERÍA MEGALIDER".into());
+        .unwrap_or_else(|_| "MI NEGOCIO POS".into());
 
     let empresa_nit: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'empresa_nit'", [], |r| r.get(0))
-        .unwrap_or_else(|_| "".into());
+        .unwrap_or_default();
+
+    let empresa_regimen: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_regimen'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_direccion: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_direccion'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_telefono: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_telefono'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_ciudad: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_ciudad'", [], |r| r.get(0))
+        .unwrap_or_default();
 
     let caja_codigo: String = conn
         .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
@@ -478,7 +537,19 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
     payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
 
     if !empresa_nit.trim().is_empty() {
-        payload.extend_from_slice(format!("NIT: {}\n", empresa_nit.trim()).as_bytes());
+        payload.extend_from_slice(format!("NIT/RUT: {}\n", empresa_nit.trim()).as_bytes());
+    }
+    if !empresa_regimen.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_regimen.trim()).as_bytes());
+    }
+    if !empresa_direccion.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_direccion.trim()).as_bytes());
+    }
+    if !empresa_telefono.trim().is_empty() {
+        payload.extend_from_slice(format!("Tel: {}\n", empresa_telefono.trim()).as_bytes());
+    }
+    if !empresa_ciudad.trim().is_empty() {
+        payload.extend_from_slice(format!("{}\n", empresa_ciudad.trim()).as_bytes());
     }
 
     if !header_text.trim().is_empty() {

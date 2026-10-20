@@ -13,6 +13,12 @@ pub struct TerminalStatus {
     pub empresa_id: Option<String>,
     pub empresa_nombre: Option<String>,
     pub empresa_nit: Option<String>,
+    pub empresa_direccion: Option<String>,
+    pub empresa_telefono: Option<String>,
+    pub empresa_ciudad: Option<String>,
+    pub empresa_regimen: Option<String>,
+    pub empresa_logo_base64: Option<String>,
+    pub plan_codigo: Option<String>,
     pub active_cashier: Option<CashierUser>,
     #[serde(default)]
     pub active_cashier_revoked: Option<bool>,

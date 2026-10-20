@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "../services/api";
 import { TerminalStatus, PaymentMethod, SystemPrinter } from "../types";
 import { useTheme } from "../contexts/ThemeContext";
@@ -9,14 +9,16 @@ interface SettingsPageProps {
   terminalStatus: TerminalStatus;
   onBackToSales: () => void;
   onUnpaired: () => void;
+  onStatusUpdated?: (status: TerminalStatus) => void;
 }
 
-type SettingsTab = "printer" | "drawer" | "scanner" | "terminal" | "payments" | "general";
+type SettingsTab = "printer" | "drawer" | "scanner" | "company" | "terminal" | "payments" | "general";
 
 export function SettingsPage({
   terminalStatus,
   onBackToSales,
   onUnpaired,
+  onStatusUpdated,
 }: SettingsPageProps) {
   const { theme, toggleTheme, fontSizePx, setFontSizePx } = useTheme();
   const { confirm, alert: modalAlert } = useModals();
@@ -38,14 +40,107 @@ export function SettingsPage({
   const [loadingMethods, setLoadingMethods] = useState(false);
   const [syncingMethods, setSyncingMethods] = useState(false);
 
-  // Cargar ajustes desde SQLite
+  // Cargar ajustes desde SQLite y asegurar defaults de la empresa
   useEffect(() => {
     api.settings
       .getAll()
-      .then((map) => setSettings(map))
+      .then((map) => {
+        const initial = { ...map };
+        if (!initial.empresa_nombre && terminalStatus.empresaNombre) {
+          initial.empresa_nombre = terminalStatus.empresaNombre;
+        }
+        if (!initial.empresa_nit && terminalStatus.empresaNit) {
+          initial.empresa_nit = terminalStatus.empresaNit;
+        }
+        if (!initial.empresa_direccion && terminalStatus.empresaDireccion) {
+          initial.empresa_direccion = terminalStatus.empresaDireccion;
+        }
+        if (!initial.empresa_telefono && terminalStatus.empresaTelefono) {
+          initial.empresa_telefono = terminalStatus.empresaTelefono;
+        }
+        if (!initial.empresa_ciudad && terminalStatus.empresaCiudad) {
+          initial.empresa_ciudad = terminalStatus.empresaCiudad;
+        }
+        if (!initial.empresa_regimen && terminalStatus.empresaRegimen) {
+          initial.empresa_regimen = terminalStatus.empresaRegimen;
+        }
+        if (!initial.empresa_logo_base64 && terminalStatus.empresaLogoBase64) {
+          initial.empresa_logo_base64 = terminalStatus.empresaLogoBase64;
+        }
+        if (!initial.caja_nombre && terminalStatus.cajaNombre) {
+          initial.caja_nombre = terminalStatus.cajaNombre;
+        }
+        setSettings(initial);
+      })
       .catch((err) => console.error("Error cargando ajustes:", err))
       .finally(() => setLoading(false));
-  }, []);
+  }, [terminalStatus]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      modalAlert({
+        title: "Archivo inválido",
+        message: "Por favor selecciona un archivo de imagen válido (PNG, JPG, WebP o SVG).",
+        variant: "warning",
+      });
+      return;
+    }
+
+    if (file.size > 3 * 1024 * 1024) {
+      modalAlert({
+        title: "Imagen demasiado pesada",
+        message: "El archivo no debe superar los 3MB.",
+        variant: "warning",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (!dataUrl) return;
+
+      // Optimizar en canvas a máx 400x200 para mantener la base de datos local ligera y rápida
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 400;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const optimizedDataUrl = canvas.toDataURL("image/webp", 0.9);
+          updateField("empresa_logo_base64", optimizedDataUrl);
+          showMsg("📸 Logo cargado. Haz clic en 'Guardar Configuraciones' para confirmar.");
+        } else {
+          updateField("empresa_logo_base64", dataUrl);
+          showMsg("📸 Logo cargado.");
+        }
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
 
   // Atajo global para volver con Esc o F1
   useEffect(() => {
@@ -154,6 +249,8 @@ export function SettingsPage({
     setSaving(true);
     try {
       await api.settings.update(settings);
+      const updatedStatus = await api.auth.getTerminalStatus();
+      onStatusUpdated?.(updatedStatus);
       showMsg("✅ Configuraciones guardadas correctamente");
     } catch (err) {
       console.error("Error guardando ajustes:", err);
@@ -296,6 +393,21 @@ export function SettingsPage({
             <div>
               <div className="font-bold">Lector y Báscula</div>
               <div className="text-[10px] opacity-75 font-normal">Códigos de barra y peso</div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("company")}
+            className={`w-full text-left px-4 py-3 rounded-xl font-semibold text-xs transition-colors flex items-center gap-3 ${
+              activeTab === "company"
+                ? "bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-400 shadow-sm border border-slate-200 dark:border-emerald-500/30"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">🏪</span>
+            <div>
+              <div className="font-bold">Datos de la Empresa</div>
+              <div className="text-[10px] opacity-75 font-normal">Plan Free / Negocio local</div>
             </div>
           </button>
 
@@ -720,6 +832,303 @@ export function SettingsPage({
               </div>
             )}
 
+            {/* TAB: DATOS DE LA EMPRESA (PLAN FREE / LOCAL) */}
+            {activeTab === "company" && (
+              <div className="space-y-6">
+                <div className="border-b border-slate-200 dark:border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                        Datos de la Empresa y Facturación POS
+                      </h2>
+                      <span className="text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700/50">
+                        {terminalStatus.planCodigo === "POS_FREE" || !terminalStatus.isPaired ? "Plan Free Standalone" : terminalStatus.planCodigo || "Plan Free"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Personaliza los datos legales y comerciales de tu establecimiento para tirillas térmicas y comprobantes de venta.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-2xl flex items-start gap-3">
+                  <span className="text-xl shrink-0">🏪</span>
+                  <div className="text-xs text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                    <strong>Configuración de Negocio Local (Plan Free):</strong> Los datos guardados en esta sección se imprimen automáticamente en el encabezado de todas las tirillas de venta física (58mm / 80mm ESC/POS) y comprobantes PDF sin depender de conexión a internet.
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* FORMULARIO DE DATOS */}
+                  <div className="lg:col-span-7 space-y-4">
+                    {/* CARGA DE LOGO DE LA EMPRESA */}
+                    <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                          <span>🖼️ Logo de la Empresa (Impresión en Tirilla)</span>
+                        </label>
+                        {settings.empresa_logo_base64 && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-semibold">
+                            Logo activo
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-center gap-4">
+                        <div className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 flex items-center justify-center bg-white dark:bg-slate-950/60 overflow-hidden shrink-0 shadow-inner">
+                          {settings.empresa_logo_base64 ? (
+                            <img
+                              src={settings.empresa_logo_base64}
+                              alt="Logo"
+                              className="max-h-full max-w-full object-contain filter grayscale contrast-125 p-1.5"
+                            />
+                          ) : (
+                            <div className="text-center p-2">
+                              <span className="text-2xl block opacity-40">🏢</span>
+                              <span className="text-[9px] text-slate-400 block mt-1">Sin logo</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex-1 space-y-2 text-center sm:text-left">
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                            Sube el isotipo o logotipo de tu negocio. Se adaptará automáticamente para imprimir en el encabezado de las tirillas y comprobantes de venta.
+                          </p>
+
+                          <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start">
+                            <input
+                              type="file"
+                              ref={fileInputRef}
+                              onChange={handleLogoFileChange}
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              className="hidden"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => fileInputRef.current?.click()}
+                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                            >
+                              <span>📁</span>
+                              <span>{settings.empresa_logo_base64 ? "Cambiar Logo" : "Seleccionar Logo"}</span>
+                            </button>
+
+                            {settings.empresa_logo_base64 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateField("empresa_logo_base64", "");
+                                  showMsg("🗑️ Logo retirado de la configuración.");
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                Eliminar Logo
+                              </button>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 block font-mono">
+                            Formatos: PNG, JPG, WebP o SVG (máx. 3 MB)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Nombre del Negocio / Razón Social *
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.empresa_nombre || ""}
+                        onChange={(e) => updateField("empresa_nombre", e.target.value)}
+                        placeholder="Ej. Minimarket La Esquina, Cigarrería Central"
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm"
+                      />
+                      <span className="text-[10px] text-slate-400 mt-1 block">
+                        Nombre comercial principal impreso en doble tamaño en el ticket.
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          NIT / RUT / Documento Fiscal
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.empresa_nit || ""}
+                          onChange={(e) => updateField("empresa_nit", e.target.value)}
+                          placeholder="Ej. 900.123.456-7"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Régimen / Responsabilidad Fiscal
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.empresa_regimen || ""}
+                          onChange={(e) => updateField("empresa_regimen", e.target.value)}
+                          placeholder="Ej. No Responsable de IVA"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      <span className="text-[10px] text-slate-400 mr-1 self-center">Opciones rápidas de régimen:</span>
+                      {["No Responsable de IVA", "Responsable de IVA", "Régimen Simple (RST)", "Persona Natural"].map((reg) => (
+                        <button
+                          key={reg}
+                          type="button"
+                          onClick={() => updateField("empresa_regimen", reg)}
+                          className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+                        >
+                          {reg}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Dirección Comercial
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.empresa_direccion || ""}
+                          onChange={(e) => updateField("empresa_direccion", e.target.value)}
+                          placeholder="Ej. Calle 45 # 12-34 Barrio Centro"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Teléfono / WhatsApp
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.empresa_telefono || ""}
+                          onChange={(e) => updateField("empresa_telefono", e.target.value)}
+                          placeholder="Ej. +57 310 123 4567"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Ciudad y Departamento / País
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.empresa_ciudad || ""}
+                          onChange={(e) => updateField("empresa_ciudad", e.target.value)}
+                          placeholder="Ej. Bogotá D.C. - Colombia"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          Nombre de esta Caja / Terminal
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.caja_nombre || ""}
+                          onChange={(e) => updateField("caja_nombre", e.target.value)}
+                          placeholder="Ej. Caja Mostrador Principal"
+                          className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-none focus:border-emerald-500 shadow-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Lema o Saludo de Encabezado (Opcional)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={settings.printer_header_text || ""}
+                        onChange={(e) => updateField("printer_header_text", e.target.value)}
+                        placeholder="Ej. ¡Bienvenidos! Calidad y servicio a su disposición."
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl p-3 text-xs font-mono focus:outline-none focus:border-emerald-500 shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* VISTA PREVIA EN VIVO DE TICKET */}
+                  <div className="lg:col-span-5 flex flex-col justify-start">
+                    <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                          <span>🧾</span> Vista Previa del Encabezado
+                        </span>
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {settings.printer_paper_width || "58mm"}
+                        </span>
+                      </div>
+
+                      <div className="bg-white text-slate-900 p-4 rounded-xl border border-slate-300 shadow-sm font-mono text-[11px] leading-tight text-center select-none">
+                        {settings.empresa_logo_base64 && (
+                          <div className="flex justify-center mb-2">
+                            <img
+                              src={settings.empresa_logo_base64}
+                              alt="Logo Empresa"
+                              className="max-h-12 max-w-[140px] object-contain filter grayscale contrast-125"
+                            />
+                          </div>
+                        )}
+                        <div className="text-sm font-black uppercase tracking-wider text-slate-900">
+                          {settings.empresa_nombre || "MI NEGOCIO POS"}
+                        </div>
+                        {settings.empresa_nit ? (
+                          <div className="text-[10px] text-slate-700 mt-0.5">NIT/RUT: {settings.empresa_nit}</div>
+                        ) : (
+                          <div className="text-[10px] text-slate-400 italic mt-0.5">(Sin NIT configurado)</div>
+                        )}
+                        {settings.empresa_regimen && (
+                          <div className="text-[10px] text-slate-600">{settings.empresa_regimen}</div>
+                        )}
+                        {settings.empresa_direccion && (
+                          <div className="text-[10px] text-slate-600">{settings.empresa_direccion}</div>
+                        )}
+                        {settings.empresa_telefono && (
+                          <div className="text-[10px] text-slate-600">Tel: {settings.empresa_telefono}</div>
+                        )}
+                        {settings.empresa_ciudad && (
+                          <div className="text-[10px] text-slate-600">{settings.empresa_ciudad}</div>
+                        )}
+                        {settings.printer_header_text && (
+                          <div className="text-[10px] italic text-slate-500 mt-1 border-t border-dashed border-slate-300 pt-1">
+                            {settings.printer_header_text}
+                          </div>
+                        )}
+
+                        <div className="border-t border-dashed border-slate-400 mt-2.5 pt-2 text-[10px] text-slate-500 space-y-0.5 text-left">
+                          <div>Terminal: {terminalStatus.cajaCodigo || "CAJA-01"} ({settings.caja_nombre || "Caja Principal"})</div>
+                          <div>Fecha: {new Date().toLocaleDateString()} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                          <div className="font-bold text-slate-700">TICKET: VTA-0001</div>
+                          <div>Cajero: Administrador</div>
+                        </div>
+
+                        <div className="border-t border-dashed border-slate-300 mt-2 pt-2 text-[9px] text-slate-400 uppercase tracking-widest">
+                          -----------------------------
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center">
+                        Los cambios se aplicarán inmediatamente tras hacer clic en <strong>Guardar Configuraciones</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* TAB: TERMINAL Y ERP */}
             {activeTab === "terminal" && (
               <div className="space-y-6">
@@ -728,7 +1137,7 @@ export function SettingsPage({
                     Terminal POS y Conexión ERP
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Detalles de enlace M2M, bodega asignada y desconexión de la caja con Megalider ERP
+                    Detalles de enlace M2M, bodega asignada y desvinculación de la caja con Megalider ERP
                   </p>
                 </div>
 
@@ -802,66 +1211,20 @@ export function SettingsPage({
                     </button>
                   </div>
 
-                  {/* SECCIÓN DE DESCONEXIÓN / RECONEXIÓN DE CAJA */}
-                  <div className="space-y-3">
-                    {/* Opción 1: Desconectar Temporalmente (Permite Reconectar en 1 clic) */}
-                    <div className="p-5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="space-y-1">
-                        <div className="text-sm font-bold text-amber-800 dark:text-amber-200 flex items-center gap-2">
-                          <span>🔌 Desconectar Caja del ERP</span>
-                          <span className="text-[10px] bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full font-mono">
-                            Reconectable en 1 Clic
-                          </span>
-                        </div>
-                        <p className="text-xs text-amber-700/80 dark:text-amber-300/80 max-w-xl">
-                          Pausa la conexión con el ERP y marca la terminal como desconectada. Podrás volver a reconectar esta misma caja de inmediato con un solo clic.
-                        </p>
+                  {/* SECCIÓN DE DESVINCULACIÓN DE TERMINAL */}
+                  <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="space-y-0.5">
+                      <div className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center gap-2">
+                        <span>⚠️ Desvincular Terminal (Restablecer)</span>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const ok = await confirm({
-                            title: "Desconectar Caja POS",
-                            message:
-                              "¿Desea desconectar temporalmente esta caja del ERP? Se cerrará la sesión actual pero podrá reconectarla en cualquier momento con un solo clic.",
-                            variant: "warning",
-                            confirmText: "Sí, Desconectar",
-                            cancelText: "Cancelar",
-                          });
-                          if (ok) {
-                            try {
-                              await api.auth.disconnectTemporarily();
-                              onUnpaired();
-                            } catch (e) {
-                              modalAlert({
-                                title: "Error al Desconectar",
-                                message: "Error al desconectar la terminal: " + String(e),
-                                variant: "error",
-                              });
-                            }
-                          }
-                        }}
-                        className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-md shadow-amber-700/20"
-                      >
-                        🔌 Desconectar Caja
-                      </button>
+                      <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80 max-w-xl">
+                        Elimina la credencial vinculada para trasladar el software a otra sucursal o asignar una nueva caja.
+                      </p>
                     </div>
 
-                    {/* Opción 2: Desvincular Permanentemente */}
-                    <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="space-y-0.5">
-                        <div className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center gap-2">
-                          <span>⚠️ Desvincular Terminal (Restablecer)</span>
-                        </div>
-                        <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80 max-w-xl">
-                          Elimina la credencial vinculada para trasladar el software a otra sucursal o asignar una nueva caja.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={async () => {
+                    <button
+                      type="button"
+                      onClick={async () => {
                           const ok = await confirm({
                             title: "Desvincular Permanentemente",
                             message:
@@ -890,7 +1253,6 @@ export function SettingsPage({
                     </div>
                   </div>
                 </div>
-              </div>
             )}
 
             {/* TAB: MEDIOS DE PAGO */}

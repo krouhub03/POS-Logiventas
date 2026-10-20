@@ -37,6 +37,7 @@ import type {
   UpdateCustomerCreditInput,
   UpdateProductInput,
   VerifyStockResult,
+  PlanInfo,
 } from "../types";
 
 /**
@@ -147,6 +148,11 @@ export const api = {
       invoke<void>("update_settings", { settings }),
     testPrintTicket: () => invoke<string>("test_print_ticket"),
     testOpenDrawer: () => invoke<string>("test_open_drawer"),
+  },
+
+  licensing: {
+    getPlanInfo: () => invoke<PlanInfo>('get_plan_info'),
+    validateLicense: () => invoke<boolean>('validate_license'),
   },
 
   printers: {

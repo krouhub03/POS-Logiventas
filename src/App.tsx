@@ -8,7 +8,8 @@ import { CashierLockScreen } from "./components/CashierLockScreen";
 import { OpenShiftModal } from "./components/OpenShiftModal";
 import { CloseShiftModal } from "./components/CloseShiftModal";
 import { UpdateNotificationBanner } from "./components/UpdateNotificationBanner";
-import { useModals } from "./contexts/ModalContext";
+import { LicenseBanner } from "./components/LicenseBanner";
+
 import { hasPermission } from "./lib/permissions";
 import type { CashierUser, CashShift, TerminalStatus } from "./types";
 import "./App.css";
@@ -301,6 +302,7 @@ function App() {
   // 4. Estación de Ventas principal (siempre viva para preservar tickets y foco) + Pantallas superpuestas
   return (
     <div className="w-screen h-screen overflow-hidden relative">
+        <LicenseBanner />
       {/* VISTA DE VENTAS (F1): Siempre viva en DOM para no perder productos escaneados ni tickets */}
       <div className={currentView === "sales" ? "w-full h-full" : "hidden"}>
         <SalesStationPage
@@ -347,6 +349,7 @@ function App() {
           <SettingsPage
             terminalStatus={terminalStatus}
             onBackToSales={() => setCurrentView("sales")}
+            onStatusUpdated={(status) => setTerminalStatus(status)}
             onUnpaired={() => {
               setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
               handleSetCashier(null);

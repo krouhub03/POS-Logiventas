@@ -8,12 +8,70 @@ interface CloseShiftModalProps {
   onCancel: () => void;
 }
 
+// Íconos vectoriales de alta precisión para medios de pago en la auditoría de caja
+function CreditFiadoIcon({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="3" />
+      <path d="M2 10h20" />
+      <path d="m14 14 2 2 4-4" />
+    </svg>
+  );
+}
+
+function ContactlessCardIcon({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="12" r="2.5" fill="currentColor" />
+      <path d="M12.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M16 6a8.5 8.5 0 0 1 0 12" />
+    </svg>
+  );
+}
+
+function QrScanIcon({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+      <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+      <rect x="7" y="7" width="3" height="3" />
+      <rect x="14" y="7" width="3" height="3" />
+      <rect x="7" y="14" width="3" height="3" />
+      <path d="M14 14h3v3h-3z" />
+    </svg>
+  );
+}
+
+function BankIcon({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m3 9 9-7 9 7v1H3z" />
+      <path d="M5 10v7" />
+      <path d="M10 10v7" />
+      <path d="M14 10v7" />
+      <path d="M19 10v7" />
+      <path d="M2 21h20v-2H2z" />
+    </svg>
+  );
+}
+
+function GenericDigitalIcon({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
 interface PaymentTheme {
-  icon: string;
-  border: string;
-  glow: string;
-  titleColor: string;
-  amountColor: string;
+  icon: React.ReactNode;
+  iconBoxClass: string;
+  displayTitle: string;
+  subtitle: string;
+  voucherText: (count: number) => string;
   badgeStyle: string;
   note: string;
 }
@@ -30,12 +88,12 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
     code.includes("cartera")
   ) {
     return {
-      icon: "🤝",
-      border: "border-amber-400/40 dark:border-amber-500/30 hover:border-amber-500 dark:hover:border-amber-500/60",
-      glow: "bg-amber-500/5",
-      titleColor: "text-amber-700 dark:text-amber-200",
-      amountColor: "text-amber-600 dark:text-amber-300",
-      badgeStyle: "bg-amber-100 dark:bg-amber-950/70 border border-amber-300 dark:border-amber-600/40 text-amber-800 dark:text-amber-300",
+      icon: <CreditFiadoIcon className="w-5 h-5 text-amber-600 dark:text-amber-400" />,
+      iconBoxClass: "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-500/30 text-amber-600 dark:text-amber-400",
+      displayTitle: method.name || "Crédito / Fiado",
+      subtitle: "Cartera clientes",
+      voucherText: (count) => (count === 1 ? "1 venta / pagaré" : `${count} ventas / pagarés`),
+      badgeStyle: "bg-amber-50/90 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-600/40 text-amber-800 dark:text-amber-300",
       note: "Cartera • Pendiente por cobrar a clientes",
     };
   }
@@ -48,13 +106,13 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
     code.includes("datafono")
   ) {
     return {
-      icon: "💳",
-      border: "border-sky-400/40 dark:border-sky-500/30 hover:border-sky-500 dark:hover:border-sky-500/60",
-      glow: "bg-sky-500/5",
-      titleColor: "text-sky-700 dark:text-sky-200",
-      amountColor: "text-sky-600 dark:text-sky-300",
-      badgeStyle: "bg-sky-100 dark:bg-sky-950/70 border border-sky-300 dark:border-sky-600/40 text-sky-800 dark:text-sky-300",
-      note: "Débito / Crédito • Verificar comprobantes impresos",
+      icon: <ContactlessCardIcon className="w-5 h-5 text-sky-600 dark:text-sky-400" />,
+      iconBoxClass: "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-500/30 text-sky-600 dark:text-sky-400",
+      displayTitle: method.name.toLowerCase().includes("datafono") ? method.name : "Tarjetas / Datáfono",
+      subtitle: "Débito y Crédito",
+      voucherText: (count) => (count === 1 ? "1 voucher" : `${count} vouchers`),
+      badgeStyle: "bg-sky-50/90 dark:bg-sky-950/60 border border-sky-300 dark:border-sky-600/40 text-sky-800 dark:text-sky-300",
+      note: "Verificar comprobantes impresos de datáfono en caja",
     };
   }
 
@@ -66,13 +124,13 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
     code.includes("dale")
   ) {
     return {
-      icon: "📱",
-      border: "border-purple-400/40 dark:border-purple-500/30 hover:border-purple-500 dark:hover:border-purple-500/60",
-      glow: "bg-purple-500/5",
-      titleColor: "text-purple-700 dark:text-purple-200",
-      amountColor: "text-purple-600 dark:text-purple-300",
-      badgeStyle: "bg-purple-100 dark:bg-purple-950/70 border border-purple-300 dark:border-purple-600/40 text-purple-800 dark:text-purple-300",
-      note: "Transferencias móviles confirmadas en app",
+      icon: <QrScanIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />,
+      iconBoxClass: "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-500/30 text-purple-600 dark:text-purple-400",
+      displayTitle: method.name.toLowerCase().includes("nequi") || method.name.toLowerCase().includes("qr") ? method.name : "Nequi / Daviplata / QR",
+      subtitle: "Bancolombia & Apps",
+      voucherText: (count) => (count === 1 ? "1 pago" : `${count} pagos`),
+      badgeStyle: "bg-purple-50/90 dark:bg-purple-950/60 border border-purple-300 dark:border-purple-600/40 text-purple-800 dark:text-purple-300",
+      note: "Transferencias confirmadas en app o comprobante digital",
     };
   }
 
@@ -84,23 +142,23 @@ function getPaymentTheme(method: ShiftPaymentBreakdown): PaymentTheme {
     code.includes("bancolombia")
   ) {
     return {
-      icon: "🏦",
-      border: "border-teal-400/40 dark:border-teal-500/30 hover:border-teal-500 dark:hover:border-teal-500/60",
-      glow: "bg-teal-500/5",
-      titleColor: "text-teal-700 dark:text-teal-200",
-      amountColor: "text-teal-600 dark:text-teal-300",
-      badgeStyle: "bg-teal-100 dark:bg-teal-950/70 border border-teal-300 dark:border-teal-600/40 text-teal-800 dark:text-teal-300",
+      icon: <BankIcon className="w-5 h-5 text-teal-600 dark:text-teal-400" />,
+      iconBoxClass: "bg-teal-50 dark:bg-teal-950/40 border-teal-200 dark:border-teal-500/30 text-teal-600 dark:text-teal-400",
+      displayTitle: method.name || "Transferencia Bancaria",
+      subtitle: "Cuentas bancarias",
+      voucherText: (count) => (count === 1 ? "1 transferencia" : `${count} transferencias`),
+      badgeStyle: "bg-teal-50/90 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-600/40 text-teal-800 dark:text-teal-300",
       note: "Comprobante electrónico verificado en cuenta",
     };
   }
 
   return {
-    icon: "⚡",
-    border: "border-indigo-400/40 dark:border-indigo-500/30 hover:border-indigo-500 dark:hover:border-indigo-500/60",
-    glow: "bg-indigo-500/5",
-    titleColor: "text-indigo-700 dark:text-indigo-200",
-    amountColor: "text-indigo-600 dark:text-indigo-300",
-    badgeStyle: "bg-indigo-100 dark:bg-indigo-950/70 border border-indigo-300 dark:border-indigo-600/40 text-indigo-800 dark:text-indigo-300",
+    icon: <GenericDigitalIcon className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />,
+    iconBoxClass: "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-500/30 text-indigo-600 dark:text-indigo-400",
+    displayTitle: method.name || "Otro Medio Digital",
+    subtitle: "Medio digital",
+    voucherText: (count) => (count === 1 ? "1 operación" : `${count} operaciones`),
+    badgeStyle: "bg-indigo-50/90 dark:bg-indigo-950/60 border border-indigo-300 dark:border-indigo-600/40 text-indigo-800 dark:text-indigo-300",
     note: "Registrado digitalmente en el sistema",
   };
 }
@@ -109,6 +167,7 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   const [summary, setSummary] = useState<ShiftSummary | null>(null);
   const [declaredPesos, setDeclaredPesos] = useState<string>("");
   const [notes, setNotes] = useState<string>("");
+  const [printReceipt, setPrintReceipt] = useState<boolean>(true);
   const [loading, setLoading] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -263,8 +322,12 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
       // Garantizar que no quede ningún ticket abierto en memoria ni en localStorage
       handlePurgeTickets();
 
-      // Imprimir comprobante de cierre si hay impresora configurada
-      api.settings.testPrintTicket().catch(() => {});
+      // Imprimir comprobante de cierre si el cajero eligió la opción
+      if (printReceipt) {
+        api.settings.testPrintTicket().catch((printErr) => {
+          console.warn("No se pudo imprimir el comprobante de cierre:", printErr);
+        });
+      }
 
       onShiftClosed(closedShift);
     } catch (err: unknown) {
@@ -476,50 +539,86 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 </div>
               </div>
 
-              {/* Grid Responsivo de Tarjetas de Medios de Pago Dinámicos */}
+              {/* Tabla de Medios de Pago con estilo ejecutivo y compacto */}
               {nonCashMethods.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {nonCashMethods.map((method) => {
-                    const theme = getPaymentTheme(method);
-                    return (
-                      <div
-                        key={method.code}
-                        className={`bg-white dark:bg-[#121622]/90 border ${theme.border} rounded-xl p-3.5 transition-all duration-200 group flex flex-col justify-between relative overflow-hidden shadow-xs dark:shadow-none`}
-                      >
-                        <div
-                          className={`absolute top-0 right-0 w-16 h-16 ${theme.glow} rounded-bl-full pointer-events-none`}
-                        />
-                        <div>
-                          <div className="flex items-start justify-between gap-1.5 mb-2">
-                            <div className="flex items-center gap-1.5 min-w-0 pr-1">
-                              <span className="text-base shrink-0">{theme.icon}</span>
-                              <span
-                                className={`text-xs font-bold ${theme.titleColor} line-clamp-1`}
-                                title={method.name}
-                              >
-                                {method.name}
-                              </span>
-                            </div>
-                            <span
-                              className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${theme.badgeStyle} font-semibold shrink-0 whitespace-nowrap`}
+                <div className="border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden bg-white dark:bg-[#0f1422] shadow-xs">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse min-w-[620px]">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-white/10 bg-slate-50/70 dark:bg-[#0a0e18]/80 text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider font-mono">
+                          <th scope="col" className="py-2.5 px-4 w-[32%]">
+                            Medio de Pago
+                          </th>
+                          <th scope="col" className="py-2.5 px-4 text-center w-[22%]">
+                            Comprobantes / Transacciones
+                          </th>
+                          <th scope="col" className="py-2.5 px-4 w-[28%]">
+                            Nota / Detalle
+                          </th>
+                          <th scope="col" className="py-2.5 px-4 text-right w-[18%]">
+                            Total Registrado
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                        {nonCashMethods.map((method) => {
+                          const theme = getPaymentTheme(method);
+                          return (
+                            <tr
+                              key={method.code}
+                              className="hover:bg-slate-50/80 dark:hover:bg-white/[0.02] transition-colors"
                             >
-                              {method.txCount}{" "}
-                              {method.txCount === 1 ? "operación" : "operaciones"}
-                            </span>
-                          </div>
-                          <div
-                            className={`font-mono text-base sm:text-lg font-bold ${theme.amountColor} tracking-tight`}
-                          >
-                            {formatCents(method.amountCents)}{" "}
-                            <span className="text-[10px] font-normal opacity-70">COP</span>
-                          </div>
-                        </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2.5 pt-2 border-t border-slate-100 dark:border-white/10 leading-tight">
-                          {theme.note}
-                        </p>
-                      </div>
-                    );
-                  })}
+                              {/* MEDIO DE PAGO */}
+                              <td className="py-3 px-4">
+                                <div className="flex items-center gap-3">
+                                  <div
+                                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${theme.iconBoxClass}`}
+                                  >
+                                    {theme.icon}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                                      {theme.displayTitle}
+                                    </div>
+                                    <div className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-medium">
+                                      {theme.subtitle}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* COMPROBANTES / TRANSACCIONES */}
+                              <td className="py-3 px-4 text-center">
+                                <span
+                                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${theme.badgeStyle}`}
+                                >
+                                  {theme.voucherText(method.txCount)}
+                                </span>
+                              </td>
+
+                              {/* NOTA / DETALLE */}
+                              <td className="py-3 px-4 text-xs text-slate-600 dark:text-slate-400">
+                                {theme.note}
+                              </td>
+
+                              {/* TOTAL REGISTRADO */}
+                              <td className="py-3 px-4 text-right">
+                                <div className="font-mono text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight flex items-baseline justify-end gap-1">
+                                  <span>$</span>
+                                  <span>
+                                    {formatCents(method.amountCents).replace("$", "").trim()}
+                                  </span>
+                                  <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 font-normal ml-0.5">
+                                    COP
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               ) : (
                 <div className="p-4 bg-slate-50 dark:bg-[#0a0e18] border border-slate-200 dark:border-white/10 rounded-xl text-center text-xs text-slate-500 dark:text-slate-400">
@@ -746,11 +845,21 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 <span>Volver a la Caja</span>
               </button>
 
-              <div className="w-full sm:w-auto flex items-center gap-3">
-                <span className="hidden md:inline-flex items-center gap-1.5 font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  Listo para sellar turno
-                </span>
+              <div className="w-full sm:w-auto flex flex-wrap items-center justify-end gap-3">
+                {/* Checkbox para elegir si se imprime el cierre o no (por defecto activo) */}
+                <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-white/10 px-3 py-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={printReceipt}
+                    onChange={(e) => setPrintReceipt(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-emerald-600 focus:ring-emerald-500 bg-white dark:bg-slate-900 cursor-pointer accent-emerald-600"
+                  />
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span>🖨️</span>
+                    <span>Imprimir comprobante Z</span>
+                  </span>
+                </label>
+
                 <button
                   type="submit"
                   disabled={loading || declaredPesos === ""}

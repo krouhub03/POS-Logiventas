@@ -145,6 +145,12 @@ export interface TerminalStatus {
   empresaId: string | null;
   empresaNombre: string | null;
   empresaNit: string | null;
+  empresaDireccion?: string | null;
+  empresaTelefono?: string | null;
+  empresaCiudad?: string | null;
+  empresaRegimen?: string | null;
+  empresaLogoBase64?: string | null;
+  planCodigo?: string | null;
   activeCashier: CashierUser | null;
   activeCashierRevoked?: boolean;
   lastCajaId?: string | null;
@@ -543,4 +549,11 @@ export interface SaveProductComponentItem {
   childProductId: number;
   quantity: number;
   orderIndex?: number;
+}
+
+// ---------- Licencia ----------
+export interface PlanInfo {
+  plan_type: string; // "free" | "pro" | "enterprise"
+  plan_expiration?: string; // ISO‑8601 date string
+  plan_code?: string; // legacy code
 }

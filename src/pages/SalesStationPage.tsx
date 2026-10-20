@@ -2488,6 +2488,11 @@ export function SalesStationPage({
         }}
         businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
         businessNit={terminalStatus.empresaNit || undefined}
+        businessAddress={terminalStatus.empresaDireccion || undefined}
+        businessPhone={terminalStatus.empresaTelefono || undefined}
+        businessCity={terminalStatus.empresaCiudad || undefined}
+        businessRegimen={terminalStatus.empresaRegimen || undefined}
+        businessLogo={terminalStatus.empresaLogoBase64 || undefined}
         terminalCode={terminalStatus.cajaCodigo || "CAJA-01"}
       />
 
@@ -2498,6 +2503,11 @@ export function SalesStationPage({
         terminalCode={terminalStatus.cajaCodigo || "CAJA-01"}
         businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
         businessNit={terminalStatus.empresaNit || undefined}
+        businessAddress={terminalStatus.empresaDireccion || undefined}
+        businessPhone={terminalStatus.empresaTelefono || undefined}
+        businessCity={terminalStatus.empresaCiudad || undefined}
+        businessRegimen={terminalStatus.empresaRegimen || undefined}
+        businessLogo={terminalStatus.empresaLogoBase64 || undefined}
         onClose={() => {
           setIsRecentSalesOpen(false);
           focusInput();

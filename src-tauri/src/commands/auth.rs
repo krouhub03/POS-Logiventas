@@ -32,6 +32,7 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
     let is_paired = pairing_status == "linked";
     let erp_url = get_setting(conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
     let is_disconnected = get_setting(conn, "is_disconnected").as_deref() == Some("1");
+    let plan_codigo = get_setting(conn, "plan_codigo").unwrap_or_else(|| "POS_FREE".into());
 
     TerminalStatus {
         is_paired,
@@ -44,6 +45,12 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
         empresa_id: get_setting(conn, "empresa_id"),
         empresa_nombre: get_setting(conn, "empresa_nombre"),
         empresa_nit: get_setting(conn, "empresa_nit"),
+        empresa_direccion: get_setting(conn, "empresa_direccion"),
+        empresa_telefono: get_setting(conn, "empresa_telefono"),
+        empresa_ciudad: get_setting(conn, "empresa_ciudad"),
+        empresa_regimen: get_setting(conn, "empresa_regimen"),
+        empresa_logo_base64: get_setting(conn, "empresa_logo_base64"),
+        plan_codigo: Some(plan_codigo),
         active_cashier: None,
         active_cashier_revoked: None,
         last_caja_id: get_setting(conn, "last_caja_id"),

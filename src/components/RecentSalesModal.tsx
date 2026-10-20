@@ -11,6 +11,11 @@ interface RecentSalesModalProps {
   terminalCode?: string;
   businessName?: string;
   businessNit?: string;
+  businessAddress?: string;
+  businessPhone?: string;
+  businessCity?: string;
+  businessRegimen?: string;
+  businessLogo?: string;
   onClose: () => void;
   onSaleReturned?: (ret: SaleReturnDto) => void;
 }
@@ -21,6 +26,11 @@ export function RecentSalesModal({
   terminalCode,
   businessName,
   businessNit,
+  businessAddress,
+  businessPhone,
+  businessCity,
+  businessRegimen,
+  businessLogo,
   onClose,
   onSaleReturned,
 }: RecentSalesModalProps) {
@@ -339,6 +349,11 @@ export function RecentSalesModal({
         onRequestReturn={(r) => handleOpenReturn(r.id)}
         businessName={businessName}
         businessNit={businessNit}
+        businessAddress={businessAddress}
+        businessPhone={businessPhone}
+        businessCity={businessCity}
+        businessRegimen={businessRegimen}
+        businessLogo={businessLogo}
         terminalCode={terminalCode}
       />
 
