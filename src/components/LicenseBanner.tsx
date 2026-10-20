@@ -3,66 +3,93 @@ import { api } from '../services/api';
 import type { PlanInfo } from '../types';
 
 /**
- * Banner que muestra el estado de la licencia/plan del POS.
- * - Consulta la información del plan almacenada localmente.
- * - Valida contra el endpoint del ERP para detectar revocaciones o expiraciones.
- * - Si la licencia es inválida muestra un mensaje de alerta y un botón de "Actualizar plan".
- *
- * Se respeta el sistema de tokens de UI del proyecto (bg‑bg‑surface, text‑text‑main, etc.)
+ * Banner que muestra el estado de la licencia/plan y la versión actual del POS.
+ * - Muestra la versión actual de la aplicación (ej. v0.1.5).
+ * - Consulta la información del plan sincronizada con el ERP.
+ * - Valida contra el endpoint `/api/pos/v1/license/validate` del ERP.
+ * - Respeta los tokens de diseño (Dark theme / modern UI).
  */
 export const LicenseBanner: React.FC = () => {
   const [plan, setPlan] = useState<PlanInfo | null>(null);
   const [valid, setValid] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Cargar información del plan al montar el componente
   useEffect(() => {
-    const load = async () => {
+    let isMounted = true;
+
+    const loadPlan = async () => {
       try {
         const info = await api.licensing.getPlanInfo();
-        setPlan(info);
+        if (isMounted) setPlan(info);
+
         const isValid = await api.licensing.validateLicense();
-        setValid(isValid);
+        if (isMounted) setValid(isValid);
       } catch (e) {
-        console.error('[LicenseBanner] error loading plan info', e);
-        // Si falla la validación, consideramos la licencia como no válida
-        setValid(false);
+        console.error('[LicenseBanner] error cargando licencia:', e);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
-    load();
+
+    loadPlan();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   if (loading) {
-    return null; // No mostrar nada mientras se carga
-  }
-
-  // Si la licencia es válida y el plan es "free", podemos omitir el banner (opcional)
-  if (valid && plan?.plan_type === 'free') {
     return null;
   }
 
+  const appVersion = plan?.version ? `v${plan.version}` : 'v0.1.5';
+  const planName = (plan?.plan_type || 'free').toUpperCase();
   const expiration = plan?.plan_expiration ? new Date(plan.plan_expiration).toLocaleDateString() : undefined;
 
   return (
-    <div className="flex items-center justify-between p-2 bg-bg-surface border-b border-border-subtle">
-      <div className="text-text-main">
+    <div className={`flex items-center justify-between px-4 py-1.5 text-xs border-b select-none transition-colors duration-200 z-50 ${
+      !valid 
+        ? 'bg-rose-950/80 border-rose-800/80 text-rose-200' 
+        : plan?.plan_type === 'free'
+        ? 'bg-slate-900/90 border-slate-800 text-slate-300'
+        : 'bg-emerald-950/60 border-emerald-800/60 text-emerald-200'
+    }`}>
+      <div className="flex items-center gap-2.5">
+        <span className="font-mono px-1.5 py-0.5 rounded bg-black/40 text-[11px] font-semibold text-slate-200 border border-white/5">
+          {appVersion}
+        </span>
+
         {valid ? (
-          <>Plan: <strong>{plan?.plan_type ?? 'desconocido'}</strong>{expiration && ` – expira el ${expiration}`}</>
+          <div className="flex items-center gap-1.5">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>
+              Plan: <strong className="text-white tracking-wide font-medium">{planName}</strong>
+              {expiration && <span className="opacity-75"> (Vence: {expiration})</span>}
+            </span>
+          </div>
         ) : (
-          <>Licencia <strong>inválida</strong>. Contacta al administrador.</>
+          <div className="flex items-center gap-1.5 text-rose-300">
+            <span className="inline-block w-2 h-2 rounded-full bg-rose-500" />
+            <span>
+              Licencia <strong>inválida o revocada</strong> en el ERP. Comunícate con soporte.
+            </span>
+          </div>
         )}
       </div>
-      <button
-        className="px-3 py-1 bg-brand-primary text-white rounded hover:bg-brand-primary/80 transition"
-        onClick={() => {
-          // Placeholder: abrir flujo de upgrade o página de gestión de licencias
-          alert('Abrir gestión de licencias/plan');
-        }}
-      >
-        {valid ? 'Ver detalle' : 'Actualizar plan'}
-      </button>
+
+      <div className="flex items-center gap-2">
+        {(!valid || plan?.plan_type === 'free') && (
+          <button
+            type="button"
+            className="px-2.5 py-1 text-[11px] font-medium rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 border border-amber-500/30 transition-all cursor-pointer"
+            onClick={() => {
+              window.open('https://metahabi.com', '_blank');
+            }}
+          >
+            {valid ? 'Mejorar a Pro' : 'Reactivar Licencia'}
+          </button>
+        )}
+      </div>
     </div>
   );
 };

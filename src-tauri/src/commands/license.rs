@@ -8,6 +8,7 @@ pub struct PlanInfo {
     pub plan_type: String,          // "free" | "pro" | "enterprise"
     pub plan_expiration: Option<String>, // ISO‑8601 date string
     pub plan_code: Option<String>,   // legacy code (e.g., "POS_FREE")
+    pub version: String,
 }
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
@@ -20,6 +21,14 @@ fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
+fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+        rusqlite::params![key, value],
+    )?;
+    Ok(())
+}
+
 /// Obtiene la información de licencia/plan almacenada en `settings`.
 #[tauri::command]
 pub fn get_plan_info(db: State<'_, Db>) -> AppResult<PlanInfo> {
@@ -27,10 +36,13 @@ pub fn get_plan_info(db: State<'_, Db>) -> AppResult<PlanInfo> {
     let plan_type = get_setting(&conn, "plan_type").unwrap_or_else(|| "free".to_string());
     let plan_expiration = get_setting(&conn, "plan_expiration");
     let plan_code = get_setting(&conn, "plan_codigo");
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
     Ok(PlanInfo {
         plan_type,
         plan_expiration,
         plan_code,
+        version,
     })
 }
 
@@ -66,33 +78,53 @@ pub async fn validate_license(db: State<'_, Db>) -> AppResult<bool> {
         .send()
         .await;
 
-    // Si la llamada remota funciona y devuelve 2xx, la licencia es válida
+    // Si la llamada remota responde
     if let Ok(resp) = remote_res {
-        if resp.status().is_success() {
+        let status = resp.status();
+        if status.is_success() {
+            // Actualizar configuraciones con lo retornado por el ERP si viene el plan
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Some(plan_obj) = body.get("data").and_then(|d| d.get("plan")) {
+                    if let Ok(conn) = db.conn() {
+                        if let Some(tipo) = plan_obj.get("tipo").and_then(|t| t.as_str()) {
+                            let _ = set_setting(&conn, "plan_type", tipo);
+                        }
+                        if let Some(codigo) = plan_obj.get("codigo").and_then(|c| c.as_str()) {
+                            let _ = set_setting(&conn, "plan_codigo", codigo);
+                        }
+                        if let Some(exp) = plan_obj.get("expiracion").and_then(|e| e.as_str()) {
+                            let _ = set_setting(&conn, "plan_expiration", exp);
+                        }
+                    }
+                }
+            }
             return Ok(true);
+        }
+
+        // Si responde 401 o 403 explícito, la terminal o la licencia fueron suspendidas/revocadas
+        if status.as_u16() == 401 || status.as_u16() == 403 {
+            return Ok(false);
         }
     }
 
     // ---- Fallback offline ------------------------------------------------
-    // Si el plan no es "free", se asume que es una suscripción válida
-    if plan_type != "free" {
-        return Ok(true);
-    }
-
-    // Para plan "free" verificamos si tiene fecha de expiración mediante SQLite
+    // Si la red no está disponible o el ERP da error 5xx, aplicamos política Offline-First:
+    // El plan "free" es perpetuo a menos que tenga una fecha de expiración explícita configurada.
     if let Some(exp_str) = plan_expiration {
-        let conn = db.conn()?;
-        let is_valid: bool = conn.query_row(
-            "SELECT datetime(?1) > datetime('now')",
-            rusqlite::params![exp_str],
-            |r| r.get(0),
-        ).unwrap_or(false);
+        if !exp_str.is_empty() {
+            let conn = db.conn()?;
+            let is_valid: bool = conn.query_row(
+                "SELECT datetime(?1) > datetime('now')",
+                rusqlite::params![exp_str],
+                |r| r.get(0),
+            ).unwrap_or(false);
 
-        if is_valid {
-            return Ok(true);
+            return Ok(is_valid);
         }
     }
 
-    // En cualquier otro caso o expirado, la licencia se considera inválida
-    Ok(false)
+    // Si es plan free sin fecha de caducidad o planes pro/enterprise en offline:
+    // Permitir operar localmente bajo el principio Offline-First
+    let _ = plan_type;
+    Ok(true)
 }
