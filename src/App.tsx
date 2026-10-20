@@ -9,6 +9,7 @@ import { OpenShiftModal } from "./components/OpenShiftModal";
 import { CloseShiftModal } from "./components/CloseShiftModal";
 import { UpdateNotificationBanner } from "./components/UpdateNotificationBanner";
 import { LicenseBanner } from "./components/LicenseBanner";
+import { useModals } from "./contexts/ModalContext";
 
 import { hasPermission } from "./lib/permissions";
 import type { CashierUser, CashShift, TerminalStatus } from "./types";

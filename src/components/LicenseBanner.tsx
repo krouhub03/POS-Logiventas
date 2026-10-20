@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { api } from '@/services/api';
-import type { PlanInfo } from '@/types';
+import { api } from '../services/api';
+import type { PlanInfo } from '../types';
 
 /**
  * Banner que muestra el estado de la licencia/plan del POS.
