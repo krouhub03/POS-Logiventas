@@ -149,9 +149,13 @@ Al terminar tu turno o al cierre del local:
    - Total de ventas en efectivo, tarjetas y medios digitales.
    - **Efectivo esperado en cajón** (`Base Inicial + Ventas en Efectivo`).
 3. **Declaración de Efectivo Físico**: Cuenta los billetes y monedas reales del cajón e ingresa el monto total en **"Efectivo Contado / Declarado"**.
-4. El sistema mostrará en tiempo real si el arqueo está **Cuadrado (`$0`)**, o si existe algún **Sobrante** o **Faltante**, permitiéndote añadir observaciones antes de confirmar el cierre definitivo del turno.
-5. Presiona **`Enter`** para confirmar el cierre (o **`Escape`** para cancelar).
-6. **Copia de Seguridad Preventiva Automática**: Al confirmar el cierre Z, el sistema genera automáticamente un respaldo inmutable de la base de datos SQLite (`backup_turno_{FOLIO}.db`) en la terminal local para máxima protección contra pérdidas de datos.
+4. El sistema mostrará en tiempo real si el arqueo está **Cuadrado (`$0`)**, o si existe algún **Sobrante** o **Faltante**, incluyendo el desglose de base inicial, ventas en efectivo, abonos de cartera y devoluciones en efectivo, permitiéndote añadir observaciones antes de confirmar el cierre definitivo del turno.
+5. **Impresión Térmica del Comprobante Z (`print_shift_ticket`)**: Con la casilla **"🖨️ Imprimir comprobante Z"** activa (por defecto), al cerrar el turno la impresora térmica emite automáticamente la tirilla oficial **CIERRE DE CAJA (Z)** con:
+   - Datos de la empresa, terminal, folio del turno, cajero responsable y fechas de apertura/cierre en hora local.
+   - **Arqueo de Efectivo en Caja**: `(+) Base Inicial`, `(+) Ventas Efectivo`, `(+) Abonos Efectivo`, `(-) Devol. Efectivo`, `= Efectivo Esperado`, `CONTADO FISICO` y `Diferencia (EXACTO / FALTANTE / SOBRANTE)`.
+   - **Resumen de Ventas del Turno**: Tickets emitidos, devoluciones, desglose por cada medio de pago (`Efectivo`, `Transferencia`, `Tarjeta`, `Crédito/Fiado`), impuestos, `TOTAL VENTAS`, observaciones y espacios de firma (`Entrega` y `Recibe / Supervisor`).
+6. Presiona **`Enter`** para confirmar el cierre (o **`Escape`** para cancelar).
+7. **Copia de Seguridad Preventiva Automática**: Al confirmar el cierre Z, el sistema genera automáticamente un respaldo inmutable de la base de datos SQLite (`backup_turno_{FOLIO}.db`) en la terminal local para máxima protección contra pérdidas de datos.
 
 ---
 

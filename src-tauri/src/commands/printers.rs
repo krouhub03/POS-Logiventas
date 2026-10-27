@@ -736,6 +736,241 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
     Ok(format!("Ticket {} enviado con éxito a '{}'", receipt.folio, printer_target))
 }
 
+/// Construye el payload binario ESC/POS para el Comprobante Z de Cierre de Caja
+pub fn build_shift_escpos_payload(
+    conn: &rusqlite::Connection,
+    shift_id: i64,
+    col_width: usize,
+    auto_cut: bool,
+    open_drawer: bool,
+) -> AppResult<(String, Vec<u8>)> {
+    let z = crate::commands::shifts::build_shift_z_report(conn, shift_id)?;
+    let shift = &z.shift;
+    let summary = &z.summary;
+
+    let empresa_nombre: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nombre'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "MI NEGOCIO POS".into());
+
+    let empresa_nit: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_nit'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_direccion: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_direccion'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let empresa_telefono: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'empresa_telefono'", [], |r| r.get(0))
+        .unwrap_or_default();
+
+    let caja_codigo: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "CAJA-01".into());
+
+    let separator = "-".repeat(col_width);
+    let double_sep = "=".repeat(col_width);
+
+    let mut payload = Vec::new();
+
+    // 1. Inicializar impresora (ESC @), desactivar modo multibyte chino (FS .) y seleccionar tabla CP850/CP437 (ESC t 2)
+    payload.extend_from_slice(b"\x1B\x40\x1C\x2E\x1B\x74\x02");
+
+    if open_drawer {
+        payload.extend_from_slice(b"\x1B\x70\x00\x19\xFA");
+        payload.extend_from_slice(b"\x1B\x70\x01\x19\xFA");
+    }
+
+    // 2. Encabezado centrado
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita
+    payload.extend_from_slice(&encode_escpos_text(empresa_nombre.trim()));
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+
+    if !empresa_nit.trim().is_empty() {
+        payload.extend_from_slice(&encode_escpos_text(&format!("NIT/RUT: {}\n", empresa_nit.trim())));
+    }
+    if !empresa_direccion.trim().is_empty() {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_direccion.trim())));
+    }
+    if !empresa_telefono.trim().is_empty() {
+        payload.extend_from_slice(&encode_escpos_text(&format!("Tel: {}\n", empresa_telefono.trim())));
+    }
+
+    payload.extend_from_slice(double_sep.as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita
+    payload.extend_from_slice(&encode_escpos_text("CIERRE DE CAJA (Z)\n"));
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+    payload.extend_from_slice(double_sep.as_bytes());
+    payload.push(b'\n');
+
+    // 3. Datos generales del turno (Alineado a la izquierda)
+    payload.extend_from_slice(b"\x1B\x61\x00"); // Izquierda
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Terminal:", &caja_codigo, col_width))));
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Folio:", &shift.folio, col_width))));
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Cajero:", &summary.user_name, col_width))));
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Apertura:", &shift.opened_at, col_width))));
+    let closed_str = shift.closed_at.as_deref().unwrap_or("En curso");
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Cierre:", closed_str, col_width))));
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 4. Arqueo de Efectivo en Gaveta
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text("ARQUEO DE EFECTIVO EN CAJA\n"));
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("(+) Base Inicial:", &format_money(summary.opening_cents), col_width))));
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("(+) Ventas Efectivo:", &format_money(summary.cash_sales_cents), col_width))));
+
+    if summary.customer_payments_cash_cents > 0 {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("(+) Abonos Efectivo:", &format_money(summary.customer_payments_cash_cents), col_width))));
+    }
+
+    if summary.cash_returns_cents > 0 {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("(-) Devol. Efectivo:", &format!("-{}", format_money(summary.cash_returns_cents)), col_width))));
+    }
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    let expected = shift.expected_cents.unwrap_or(summary.expected_cash_cents);
+    let declared = shift.declared_cents.unwrap_or(expected);
+    let diff = shift.difference_cents.unwrap_or(declared - expected);
+
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("= Efectivo Esperado:", &format_money(expected), col_width))));
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("CONTADO FISICO:", &format_money(declared), col_width))));
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+
+    let diff_label = if diff == 0 {
+        "Diferencia (EXACTO):"
+    } else if diff < 0 {
+        "FALTANTE DE CAJA:"
+    } else {
+        "SOBRANTE DE CAJA:"
+    };
+    let diff_val = if diff > 0 {
+        format!("+{}", format_money(diff))
+    } else {
+        format_money(diff)
+    };
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols(diff_label, &diff_val, col_width))));
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 5. Desglose de Ventas por Medio de Pago
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text("RESUMEN DE VENTAS DEL TURNO\n"));
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Tickets emitidos:", &summary.sales_count.to_string(), col_width))));
+    if summary.returns_count > 0 {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Devoluciones:", &summary.returns_count.to_string(), col_width))));
+    }
+
+    for m in &summary.payment_breakdown {
+        if m.amount_cents > 0 || m.tx_count > 0 {
+            let label = format!("{} ({})", m.name, m.tx_count);
+            payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols(&label, &format_money(m.amount_cents), col_width))));
+        }
+    }
+
+    if summary.total_tax_cents > 0 {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Impuestos incluidos:", &format_money(summary.total_tax_cents), col_width))));
+    }
+
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("TOTAL VENTAS:", &format_money(summary.total_sales_cents), col_width))));
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // 6. Observaciones y Firmas de Entrega
+    if let Some(ref notes) = shift.notes {
+        let clean = notes.trim();
+        if !clean.is_empty() {
+            payload.extend_from_slice(b"\x1B\x45\x01");
+            payload.extend_from_slice(&encode_escpos_text("Observaciones:\n"));
+            payload.extend_from_slice(b"\x1B\x45\x00");
+            payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", clean)));
+            payload.extend_from_slice(separator.as_bytes());
+            payload.push(b'\n');
+        }
+    }
+
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado para firmas
+    payload.extend_from_slice(b"\n\n");
+    payload.extend_from_slice(&encode_escpos_text("________________________\n"));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Entrega: {}\n\n\n", summary.user_name)));
+    payload.extend_from_slice(&encode_escpos_text("________________________\n"));
+    payload.extend_from_slice(&encode_escpos_text("Recibe / Supervisor\n"));
+    payload.extend_from_slice(b"\x1B\x61\x00"); // Restaurar izquierda
+
+    // 7. Avance de papel y corte
+    payload.extend_from_slice(b"\n\n\n\n\n");
+    if auto_cut {
+        payload.extend_from_slice(b"\x1D\x56\x41\x00");
+    }
+
+    Ok((shift.folio.clone(), payload))
+}
+
+/// Imprime el Comprobante Z de Cierre de Caja en la impresora térmica configurada (ESC/POS)
+#[tauri::command]
+pub fn print_shift_ticket(db: State<'_, Db>, shift_id: i64) -> AppResult<String> {
+    let conn = db.conn()?;
+
+    let printer_enabled = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_enabled'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    if !printer_enabled {
+        return Err(crate::error::AppError::Validation(
+            "La impresión de tickets está deshabilitada en la configuración del POS.".into(),
+        ));
+    }
+
+    let printer_target: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_target'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "POS-58".into());
+
+    let paper_width: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_paper_width'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "58mm".into());
+
+    let auto_cut = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_auto_cut'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let drawer_enabled = conn
+        .query_row("SELECT value FROM settings WHERE key = 'drawer_enabled'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let col_width = if paper_width.contains("80") { 48 } else { 32 };
+    let (folio, payload) = build_shift_escpos_payload(&conn, shift_id, col_width, auto_cut, drawer_enabled)?;
+
+    #[cfg(windows)]
+    {
+        send_raw_to_printer_spooler(&printer_target, &payload, &format!("Cierre Z {}", folio))
+            .map_err(|e| crate::error::AppError::Validation(e))?;
+    }
+
+    Ok(format!("Comprobante Z ({}) enviado con éxito a '{}'", folio, printer_target))
+}
+
 /// Envía el pulso directo de apertura de gaveta (RJ11 ESC/POS) a la impresora configurada
 #[tauri::command]
 pub fn test_open_drawer(db: State<'_, Db>) -> AppResult<String> {
@@ -786,6 +1021,78 @@ mod tests {
         assert_eq!(line.chars().count(), 32);
         assert!(line.starts_with("TOTAL:"));
         assert!(line.ends_with("$4,500.00"));
+    }
+
+    #[test]
+    fn test_build_shift_escpos_payload_includes_full_z_report() {
+        use crate::commands::sales::create_sale_in_conn;
+        use crate::commands::shifts::{close_shift_in_conn, open_shift_in_conn};
+        use crate::models::sale::{CartItemInput, CreateSaleInput, PaymentInput};
+        use crate::models::shift::{CloseShiftInput, OpenShiftInput};
+
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Brian Krou', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+
+        let opened = open_shift_in_conn(
+            &conn,
+            1,
+            &OpenShiftInput {
+                opening_cents: 5000000, // $50,000.00
+                notes: Some("Base inicial".into()),
+            },
+        )
+        .unwrap();
+
+        create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: None,
+                    sku: None,
+                    barcode: Some("VAR".into()),
+                    description: "Producto Prueba Z".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 1500000, // $15,000.00
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 1500000,
+                    reference: None,
+                }],
+            },
+        )
+        .unwrap();
+
+        let closed = close_shift_in_conn(
+            &conn,
+            &CloseShiftInput {
+                declared_cents: 6500000, // $65,000.00 exacto
+                notes: Some("Turno entregado sin novedad".into()),
+            },
+        )
+        .unwrap();
+
+        let (folio, payload) = build_shift_escpos_payload(&conn, closed.id, 32, true, false).unwrap();
+        assert_eq!(folio, opened.folio);
+        let text = String::from_utf8_lossy(&payload);
+        assert!(text.contains("CIERRE DE CAJA (Z)"));
+        assert!(text.contains("ARQUEO DE EFECTIVO EN CAJA"));
+        assert!(text.contains("CONTADO FISICO:"));
+        assert!(text.contains("$65,000.00"));
+        assert!(text.contains("TOTAL VENTAS:"));
+        assert!(text.contains("$15,000.00"));
+        assert!(text.contains("Turno entregado sin novedad"));
     }
 }
 

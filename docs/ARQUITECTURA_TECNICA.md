@@ -53,8 +53,10 @@ Todas las llamadas están centralizadas y tipadas en `src/services/api.ts`:
 | **`products.rs`** | `api.products` / `api.categories` / `api.tags` | `list_products`, `find_product_by_barcode`, `get_product`, `create_product`, `update_product`, `delete_product`, `adjust_stock`, `list_inventory_movements`, `list_product_tags`, `create_product_tag`, `update_product_tag`, `delete_product_tag`, `list_categories` | Búsqueda instantánea por código/SKU/nombre, CRUD de productos físicos y servicios, catálogo de etiquetas con color (`product_tags`), ajuste de stock y Kardex. |
 | **`sales.rs`** | `api.sales` | `create_sale`, `get_last_sale`, `get_today_summary` | Registro atómico de ventas: cálculo de impuestos, inserción de cabecera/ítems (con `unit_cost_cents`) y pagos, descuento de stock local, encolado en `sync_queue` e impresión ESC/POS. |
 | **`customers.rs`** | `api.customers` | `get_customers`, `search_customers`, `create_customer` | Directorio local de clientes (`F2`), búsqueda rápida por nombre/NIT/teléfono y alta en mostrador. |
-| **`settings.rs`** | `api.settings` | `get_all_settings`, `update_settings`, `test_print_ticket`, `test_open_drawer` | Lectura/escritura de ajustes clave-valor (`settings`) y diagnóstico de impresora térmica y cajón RJ11. |
-| **`sync.rs`** | `api.sync` | `verify_and_reserve_stock`, `release_stock_reservation`, `sync_catalog_from_erp`, `dispatch_sync_outbox`, `pull_inventory_deltas`, `get_sync_status`, `sync_payment_methods`, `get_payment_methods`, `toggle_payment_method_terminal_status` | Demonio asíncrono de sincronización, reserva temporal de stock crítico, despacho de Outbox, descarga de catálogo/deltas y gestión local de medios de pago. |
+| **`settings.rs`** | `api.settings` | `get_all_settings`, `update_settings` | Lectura/escritura de ajustes clave-valor (`settings`). |
+| **`printers.rs`** | `api.printers` / `api.settings` | `list_system_printers`, `test_print_ticket`, `test_open_drawer`, `print_sale_ticket`, `print_shift_ticket` | Motor de impresión térmica directa ESC/POS (`CP437`/`CP850` vía `encode_escpos_text`) para tickets de venta, Comprobantes Z de Cierre de Caja y pulso RJ11 de gaveta. |
+| **`excel_io.rs`** | `api.products` | `preview_products_xlsx`, `execute_products_xlsx_import`, `export_products_xlsx` | Motor nativo de importación y exportación masiva de inventario `.xlsx` compatible con formato Eleventa. |
+| **`sync.rs`** | `api.sync` | `verify_and_reserve_stock`, `release_stock_reservation`, `sync_catalog_from_erp`, `dispatch_sync_outbox`, `pull_inventory_deltas`, `get_sync_status`, `sync_payment_methods`, `get_payment_methods`, `toggle_payment_method_terminal_status` | Demonio asíncrono de sincronización (ventas, abonos, devoluciones, PINs y cierres de turno `cash_session` con Dead-Letter automático), reserva temporal de stock crítico y descarga de catálogo/deltas. |
 | **`images.rs`** | `api.images` | `save_product_image_local`, `delete_product_image_local`, `get_product_image_base64` | Almacenamiento local de imágenes de productos en `%APPDATA%\com.briankrou.pos-logiventa\images\`, cálculo de hash SHA-256, sincronización de estados y lectura Base64. |
 
 ---
@@ -292,6 +294,13 @@ El runner aplica secuencialmente las 22 migraciones dentro de transacciones indi
 20. `0020_sync_queue_customer_payments.sql`: Extensión de la cola outbox (`sync_queue`) para eventos de abonos de cartera de clientes.
 21. `0021_product_images.sql`: Columnas `image_path`, `image_hash` y `image_sync_status` en `products` para gestión de fotografía local y sincronización.
 22. `0022_strict_no_negative_stock.sql`: Forzado de política estricta de inventario en BD (`allow_negative_stock = 0` y `controls_stock = 1` para artículos físicos y combos).
+23. `0023_sale_returns.sql`: Tablas `sale_returns` y `sale_return_items` para devoluciones de mercancía (`restock` vs `merma`) y reembolsos en efectivo o cruce de cartera.
+24. `0024_sale_reprint_count.sql`: Contador auditable `reprint_count` en `sales` para controlar copias de tickets impresos.
+25. `0025_terminal_license.sql`: Columnas de control de plan y vigencia de licencia de la terminal.
+26. `0026_user_permission_audit.sql`: Tabla `user_permission_audit` para bitácora local de cambios de permisos RBAC.
+27. `0027_eleventa_fields.sql`: Columnas `wholesale_price_cents` (precio mayoreo) y `max_stock` (inventario máximo) en `products`.
+28. `0028_sales_paid_and_change_cents.sql`: Columnas `paid_cents` y `change_cents` en `sales` para separar el monto entregado por el cliente del efectivo neto retenido en `payments`.
+29. `0029_fix_user_permission_audit_trigger.sql`: Reparación de la columna `last_modified_by` en `users` y trigger `trg_user_permissions_audit` junto con saneamiento idempotente `ensure_critical_schema` en cada arranque.
 
 ---
 

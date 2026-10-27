@@ -175,6 +175,8 @@ export const api = {
     list: () => invoke<SystemPrinter[]>("list_system_printers"),
     printSaleTicket: (saleId: number) =>
       invoke<string>("print_sale_ticket", { saleId }),
+    printShiftTicket: (shiftId: number) =>
+      invoke<string>("print_shift_ticket", { shiftId }),
   },
 
   sync: {

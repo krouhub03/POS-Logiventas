@@ -5,6 +5,22 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.8] - 2026-10-27
+
+### Agregado
+- **Impresión Térmica Nativa del Comprobante Z de Cierre de Caja (`print_shift_ticket` en `printers.rs` y `shifts.rs`):** Generación directa ESC/POS (`CP437`/`CP850`) de la tirilla de cierre y arqueo de turno con datos de empresa, terminal, folio, cajero, apertura/cierre en hora local, arqueo detallado de efectivo en gaveta (`Base Inicial`, `Ventas Efectivo`, `Abonos Efectivo`, `Devoluciones Efectivo`, `Efectivo Esperado`, `Contado Físico` y `Diferencia`), desglose de ventas por medio de pago, observaciones y líneas de firma de entrega/recepción.
+- **Indicador Discreto y Automático de Sincronización (`SalesStationPage.tsx`):** Sustitución del cartel de estado por un punto luminoso minimalista (`🟢` Al día, `🔵` Sincronizando en segundo plano, `🟠` Offline) sin texto fijo, que despliega suavemente su descripción al pasar el cursor (`hover`) y sincroniza bajo demanda con un clic.
+- **Despacho Automático de Cierres de Turno (`cash_session`) y Saneamiento Dead-Letter (`sync.rs`):** Sincronización automática en segundo plano de sesiones de caja cerradas hacia `/api/pos/v1/sync/cierre-turno` y transición automática a estado `failed` tras 10 intentos o errores permanentes de validación para evitar colas estancadas en `Pendiente`.
+
+### Cambiado
+- **Ergonomía de Barra Superior y Pie de Cobro (`SalesStationPage.tsx`):** Apilamiento vertical limpio de `Terminal:` y `Bodega:` (`whitespace-nowrap`) para evitar recortes de nombres largos, y reubicación del botón de reimpresión rápida junto al visor `TOTAL A PAGAR` con etiqueta compacta (`🖨️ Ticket Alt+R`).
+- **Ajuste Responsivo de Ventanas Modales (`CustomerModal.tsx`, `CloseShiftModal.tsx`, `CobroModal.tsx` y `ModalRoot.tsx`):** Estructura flexible (`max-h-[92vh] flex flex-col overflow-hidden`) con cuerpo desplazable (`flex-1 min-h-0 overflow-y-auto`) y barra inferior de botones siempre fija (`shrink-0`) para garantizar visibilidad completa en cualquier resolución de pantalla.
+
+### Corregido
+- **Corrección de Impresión en Cierre de Turno (`CloseShiftModal.tsx`):** Reemplazo de la llamada a `testPrintTicket()` por `api.printers.printShiftTicket(closedShift.id)` al cerrar caja con la opción *"Imprimir comprobante Z"* activa, e inclusión del chip visual `(-) Devoluciones en efectivo` en el arqueo de turno.
+
+---
+
 ## [0.1.7] - 2026-10-26
 
 ### Agregado

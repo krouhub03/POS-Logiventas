@@ -111,6 +111,12 @@ fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
         );
     }
 
+    // Saneamiento automático de registros en sync_queue estancados (>= 10 intentos)
+    let _ = conn.execute(
+        "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 10",
+        [],
+    );
+
     Ok(())
 }
 

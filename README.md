@@ -133,6 +133,8 @@ La interfaz está diseñada para operarse el 100% del tiempo sin necesidad de ut
 | **`F10`** | Ventas | Abrir buscador rápido de productos por nombre o etiqueta |
 | **`F11`** | Global | Alternar Pantalla Completa (Modo Kiosco sin barra de tareas) |
 | **`F12`** o `Ctrl+Espacio` | Ventas | Verificar stock y abrir modal de cobro del ticket actual |
+| **`Alt` + `R`** | Ventas | Reimprimir inmediatamente el ticket de la última venta cobrada (`🖨️ Ticket Alt+R`) |
+| **`Alt` + `U`** | Ventas | Abrir el perfil del operador activo (cambio de PIN, tema y sonido) |
 | **`Insert`** | Ventas | Agregar artículo común o varios sin código |
 | **`Delete`** / `Supr` | Ventas | Eliminar la línea de producto seleccionada del ticket |
 | **`+`** / `NumpadAdd` | Ventas | Incrementar en 1 la cantidad del producto seleccionado |

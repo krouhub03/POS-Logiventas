@@ -322,10 +322,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
       // Garantizar que no quede ningún ticket abierto en memoria ni en localStorage
       handlePurgeTickets();
 
-      // Imprimir comprobante de cierre si el cajero eligió la opción
+      // Imprimir comprobante Z real del turno cerrado si el cajero eligió la opción
       if (printReceipt) {
-        api.settings.testPrintTicket().catch((printErr) => {
-          console.warn("No se pudo imprimir el comprobante de cierre:", printErr);
+        api.printers.printShiftTicket(closedShift.id).catch((printErr) => {
+          console.warn("No se pudo imprimir el comprobante Z de cierre:", printErr);
         });
       }
 
@@ -338,19 +338,19 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/60 dark:bg-[#070a10]/85 backdrop-blur-md z-50 flex items-center justify-center p-3 md:p-6 overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-950/60 dark:bg-[#070a10]/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
       {/* Contenedor Modal de Alto Impacto adaptado al tema activo (Claro / Oscuro) */}
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-headline"
-        className="relative w-full max-w-[940px] bg-white dark:bg-[#111726]/95 border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto shadow-slate-900/10 dark:shadow-[0_0_35px_-5px_rgba(16,185,129,0.22)] animate-in fade-in zoom-in-95 duration-150 transition-colors"
+        className="relative w-full max-w-[940px] max-h-[92vh] bg-white dark:bg-[#111726]/95 border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col my-auto shadow-slate-900/10 dark:shadow-[0_0_35px_-5px_rgba(16,185,129,0.22)] animate-in fade-in zoom-in-95 duration-150 transition-colors"
       >
         {/* Barra superior de acento cibernético esmeralda/cielo */}
-        <div className="h-1 w-full bg-gradient-to-r from-emerald-500/80 via-emerald-400 to-sky-500" />
+        <div className="h-1 w-full shrink-0 bg-gradient-to-r from-emerald-500/80 via-emerald-400 to-sky-500" />
 
         {/* 1. Encabezado del Modal */}
-        <div className="px-6 py-4 bg-slate-50/90 dark:bg-[#0a0e18]/90 border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-4 transition-colors">
+        <div className="px-6 py-3.5 shrink-0 bg-slate-50/90 dark:bg-[#0a0e18]/90 border-b border-slate-200 dark:border-white/10 flex items-center justify-between gap-4 transition-colors">
           <div className="flex items-center gap-3.5">
             {/* Ícono de Terminal / Punto de Venta */}
             <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-600 dark:text-emerald-400 text-2xl shadow-sm shrink-0">
@@ -420,8 +420,9 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
         ) : summary ? (
           <form
             onSubmit={handleSubmit}
-            className="p-6 overflow-y-auto max-h-[calc(90vh-140px)] space-y-5 custom-scrollbar"
+            className="flex-1 min-h-0 flex flex-col overflow-hidden"
           >
+            <div className="flex-1 min-h-0 p-5 sm:p-6 overflow-y-auto space-y-5 custom-scrollbar">
             {/* Aviso amigable si hay ventas sin finalizar */}
             {pendingTicketsCount > 0 && !ticketsPurged && (
               <div className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50/70 dark:bg-amber-950/20 p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -511,6 +512,21 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                         Abonos cartera en efectivo:{" "}
                         <strong className="font-semibold">
                           +{formatCents(summary.customerPaymentsCashCents)}
+                        </strong>
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {(summary.cashReturnsCents ?? 0) > 0 && (
+                  <>
+                    <span className="text-slate-400 dark:text-slate-500 font-bold">−</span>
+                    <div className="flex items-center gap-2 bg-white dark:bg-[#070b14] border border-rose-200 dark:border-rose-900/60 px-3 py-1.5 rounded-lg text-xs font-mono text-rose-700 dark:text-rose-400 shadow-xs">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      <span>
+                        Devoluciones en efectivo:{" "}
+                        <strong className="font-semibold">
+                          -{formatCents(summary.cashReturnsCents ?? 0)}
                         </strong>
                       </span>
                     </div>
@@ -832,9 +848,10 @@ export function CloseShiftModal({ onShiftClosed, onCancel }: CloseShiftModalProp
                 className="w-full bg-slate-50 dark:bg-[#0a0e18] border border-slate-200 dark:border-white/10 rounded-lg px-3.5 py-2.5 text-xs text-slate-900 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-colors"
               />
             </div>
+            </div>
 
-            {/* 7. Barra de Acciones del Pie del Modal */}
-            <div className="pt-3 border-t border-slate-200 dark:border-white/10 flex flex-col-reverse sm:flex-row items-center justify-between gap-3">
+            {/* 7. Barra de Acciones del Pie del Modal (Fija en la parte inferior) */}
+            <div className="px-6 py-3.5 shrink-0 bg-slate-50/90 dark:bg-[#0a0e18]/90 border-t border-slate-200 dark:border-white/10 flex flex-col-reverse sm:flex-row items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={onCancel}

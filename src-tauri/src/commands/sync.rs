@@ -1280,9 +1280,15 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                             );
                             total_synced += 1;
                         } else {
+                            let err_msg = err.unwrap_or_else(|| "Fallo al procesar devolución en ERP".to_string());
+                            let is_permanent = err_msg.contains("NO_EXISTE") || err_msg.contains("inválido") || err_msg.contains("no encontrad");
                             let _ = conn.execute(
-                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                                params![err.unwrap_or_else(|| "Fallo al procesar devolución en ERP".to_string()), id],
+                                "UPDATE sync_queue
+                                 SET attempts = attempts + 1,
+                                     last_error = ?1,
+                                     status = CASE WHEN ?2 OR attempts + 1 >= 10 THEN 'failed' ELSE status END
+                                 WHERE id = ?3",
+                                params![err_msg, is_permanent, id],
                             );
                             total_failed += 1;
                         }
@@ -1290,7 +1296,11 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                 } else {
                     for (id, _) in &pending_returns {
                         let _ = conn.execute(
-                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            "UPDATE sync_queue
+                             SET attempts = attempts + 1,
+                                 last_error = ?1,
+                                 status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE status END
+                             WHERE id = ?2",
                             params![res_text, id],
                         );
                     }
@@ -1362,13 +1372,96 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                     total_synced += 1;
                 } else {
                     let _ = conn.execute(
-                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        "UPDATE sync_queue
+                         SET attempts = attempts + 1,
+                             last_error = ?1,
+                             status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE status END
+                         WHERE id = ?2",
                         params![error_msg.unwrap_or_else(|| "Error al sincronizar PIN".to_string()), id],
                     );
                     total_failed += 1;
                 }
             }
         }
+    }
+
+    // ── 5. Despacho de Cierres de Turno ('cash_session') ────
+    let pending_sessions = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'cash_session' AND status = 'pending' ORDER BY id ASC LIMIT 20"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        list
+    };
+
+    if !pending_sessions.is_empty() {
+        total_dispatched += pending_sessions.len();
+        let url = format!("{}/api/pos/v1/sync/cierre-turno", erp_url.trim_end_matches('/'));
+
+        for (id, payload_str) in pending_sessions {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                let resp = client
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .json(&parsed)
+                    .send()
+                    .await;
+
+                let (is_synced, is_permanent, error_msg) = match resp {
+                    Ok(res) => {
+                        let status_code = res.status().as_u16();
+                        if res.status().is_success() || status_code == 404 || status_code == 409 {
+                            (true, false, None)
+                        } else {
+                            let err_text = res.text().await.unwrap_or_default();
+                            let perm = status_code == 400 || status_code == 422 || err_text.contains("cerrado") || err_text.contains("no encontrad");
+                            (false, perm, Some(err_text))
+                        }
+                    }
+                    Err(e) => (false, false, Some(e.to_string())),
+                };
+
+                let conn = db.conn()?;
+                if is_synced {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                        params![id],
+                    );
+                    total_synced += 1;
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue
+                         SET attempts = attempts + 1,
+                             last_error = ?1,
+                             status = CASE WHEN ?2 OR attempts + 1 >= 10 THEN 'failed' ELSE status END
+                         WHERE id = ?3",
+                        params![error_msg.unwrap_or_else(|| "Error al sincronizar cierre de turno".to_string()), is_permanent, id],
+                    );
+                    total_failed += 1;
+                }
+            } else {
+                let conn = db.conn()?;
+                let _ = conn.execute(
+                    "UPDATE sync_queue SET status = 'failed', last_error = 'Payload JSON inválido' WHERE id = ?1",
+                    params![id],
+                );
+            }
+        }
+    }
+
+    // ── 6. Saneamiento Dead-Letter para registros estancados (>= 10 intentos) ──
+    if let Ok(conn) = db.conn() {
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 10",
+            [],
+        );
     }
 
     Ok(OutboxBatchResult {

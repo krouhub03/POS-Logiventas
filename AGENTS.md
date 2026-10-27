@@ -114,7 +114,7 @@ El POS está diseñado para operar en sucursales con conectividad inestable o si
    - En pruebas unitarias (`cargo test`), se utilizan bases de datos en memoria (`:memory:`).
 
 2. **Inmutabilidad de Migraciones**:
-   - Los scripts SQL residen en `src-tauri/migrations/000N_nombre.sql` (actualmente de `0001_initial.sql` a `0016_product_tags.sql`).
+   - Los scripts SQL residen en `src-tauri/migrations/000N_nombre.sql` (actualmente de `0001_initial.sql` a `0029_fix_user_permission_audit_trigger.sql`).
    - **PROHIBIDO MODIFICAR** un archivo de migración existente que ya haya sido commiteado o ejecutado.
    - Cualquier cambio de esquema requiere crear un nuevo archivo `00(N+1)_descripcion.sql` y registrarlo al final del arreglo `MIGRATIONS` en `src-tauri/src/db/migrations.rs`.
 

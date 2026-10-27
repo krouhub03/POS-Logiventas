@@ -468,6 +468,8 @@ export interface ShiftSummary {
   otherSalesCents: number;
   customerPaymentsCashCents: number;
   customerPaymentsOtherCents: number;
+  cashReturnsCents?: number;
+  returnsCount?: number;
   totalTaxCents: number;
   expectedCashCents: number;
   paymentBreakdown?: ShiftPaymentBreakdown[];

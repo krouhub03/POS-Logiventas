@@ -9,7 +9,7 @@ export interface ModalHeaderProps {
 
 export function ModalHeader({ title, icon, onClose, subtitle }: ModalHeaderProps) {
   return (
-    <div className="px-6 py-4 bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-4">
+    <div className="shrink-0 px-6 py-4 bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-4">
       <div className="flex items-center gap-3">
         {icon && <span className="text-xl flex-shrink-0">{icon}</span>}
         <div>

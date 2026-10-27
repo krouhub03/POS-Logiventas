@@ -48,7 +48,7 @@ export function ModalRoot({
       }}
     >
       <div
-        className={`w-full ${maxWidthClasses} bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 transition-colors`}
+        className={`w-full ${maxWidthClasses} max-h-[92vh] flex flex-col bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150 transition-colors`}
       >
         {children}
       </div>

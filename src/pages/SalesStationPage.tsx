@@ -1532,56 +1532,60 @@ export function SalesStationPage({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium text-xs">Terminal:</span>
-            <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-xs px-2.5 py-1 rounded-md">
-              {terminalStatus.cajaCodigo || "CAJA-01"}
-            </span>
+          <div className="flex flex-col justify-center gap-0.5 leading-tight shrink-0 pr-3 border-r border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-slate-500 dark:text-slate-400 font-medium text-[11px] w-14">Terminal:</span>
+              <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-bold text-[11px] px-2 py-0.5 rounded whitespace-nowrap">
+                {terminalStatus.cajaCodigo || "CAJA-01"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-slate-500 dark:text-slate-400 font-medium text-[11px] w-14">Bodega:</span>
+              <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-[11px] px-2 py-0.5 rounded whitespace-nowrap">
+                {terminalStatus.bodegaNombre || "Principal"}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium text-xs">Bodega:</span>
-            <span className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-mono font-semibold text-xs px-2.5 py-1 rounded-md">
-              {terminalStatus.bodegaNombre || "Principal"}
-            </span>
-          </div>
-
-          {/* Badge de Estado / Sincronización */}
-          <div
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold ${
+          {/* Indicador Discreto de Estado / Sincronización Automática (Solo punto; muestra texto al pasar el cursor) */}
+          <button
+            type="button"
+            disabled={isSyncing}
+            onClick={handleManualSync}
+            title={
+              syncStatus && !syncStatus.isOnline
+                ? "Modo Offline — Las ventas se guardan localmente y se sincronizarán al recuperar conexión"
+                : isSyncing || (syncStatus && syncStatus.pendingCount > 0)
+                ? `Sincronizando en segundo plano (${syncStatus?.pendingCount ?? 0} pendiente${(syncStatus?.pendingCount ?? 0) === 1 ? "" : "s"}) • Clic para sincronizar ahora`
+                : `Sincronización automática al día${syncStatus?.lastSyncAt ? ` (${syncStatus.lastSyncAt})` : ""} • Clic para sincronizar ahora`
+            }
+            className={`group flex items-center justify-center px-2.5 py-1.5 rounded-full border text-xs font-semibold transition-all duration-200 cursor-pointer disabled:opacity-70 ${
               syncStatus && !syncStatus.isOnline
                 ? "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60 text-amber-700 dark:text-amber-400"
-                : syncStatus && syncStatus.pendingCount > 0
+                : isSyncing || (syncStatus && syncStatus.pendingCount > 0)
                 ? "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800/60 text-sky-700 dark:text-sky-400"
                 : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400"
             }`}
           >
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                 syncStatus && !syncStatus.isOnline
-                  ? "bg-amber-500"
-                  : syncStatus && syncStatus.pendingCount > 0
-                  ? "bg-sky-500"
-                  : "bg-emerald-500"
+                  ? "bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.6)]"
+                  : isSyncing || (syncStatus && syncStatus.pendingCount > 0)
+                  ? "bg-sky-500 animate-pulse shadow-[0_0_6px_rgba(14,165,233,0.6)]"
+                  : "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]"
               }`}
             />
-            <span>
+            <span className="max-w-0 opacity-0 group-hover:max-w-[160px] group-hover:opacity-100 group-hover:ml-1.5 overflow-hidden whitespace-nowrap transition-all duration-200 text-[11px]">
               {syncStatus && !syncStatus.isOnline
                 ? "Offline"
+                : isSyncing
+                ? "Sincronizando..."
                 : syncStatus && syncStatus.pendingCount > 0
-                ? `Pendiente (${syncStatus.pendingCount})`
+                ? `Sincronizando (${syncStatus.pendingCount})`
                 : "Al día"}
             </span>
-            <button
-              type="button"
-              disabled={isSyncing}
-              onClick={handleManualSync}
-              className="ml-0.5 text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors disabled:opacity-50 cursor-pointer"
-              title="Forzar sincronización de catálogo y ventas ahora"
-            >
-              <span className={isSyncing ? "animate-spin inline-block text-xs" : "text-xs"}>⟳</span>
-            </button>
-          </div>
+          </button>
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -1773,7 +1777,7 @@ export function SalesStationPage({
           )}
         </div>
 
-        {/* Acciones de Impresión y Ayuda a la Derecha */}
+        {/* Acciones de Cajón a la Derecha */}
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
@@ -1782,19 +1786,8 @@ export function SalesStationPage({
             title="Abrir cajón monedero manualmente vía pulso de la impresora (F8)"
           >
             <span>💵</span>
-            <span className="hidden xl:inline">Abrir Cajón</span>
+            <span className="hidden lg:inline">Cajón</span>
             <span className="text-[10px] bg-amber-200/70 dark:bg-amber-900 px-1 py-0.2 rounded font-mono">F8</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleReprintLastSale}
-            className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
-            title="Reimprimir el último ticket cobrado (Alt+R)"
-          >
-            <span>🖨️</span>
-            <span className="hidden xl:inline">Último Ticket</span>
-            <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1 py-0.2 rounded font-mono">Alt+R</span>
           </button>
         </div>
       </nav>
@@ -2375,8 +2368,21 @@ export function SalesStationPage({
           </div>
         </div>
 
-        {/* VISOR GIGANTE DEL TOTAL Y BOTÓN COBRAR (F12) */}
-        <div className="flex items-center gap-3 sm:gap-5 ml-auto shrink-0">
+        {/* VISOR GIGANTE DEL TOTAL, BOTÓN REIMPRIMIR Y BOTÓN COBRAR (F12) */}
+        <div className="flex items-center gap-3 sm:gap-4 ml-auto shrink-0">
+          <button
+            type="button"
+            onClick={handleReprintLastSale}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+            title="Reimprimir el último ticket cobrado (Alt+R)"
+          >
+            <span>🖨️</span>
+            <span>Ticket</span>
+            <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1.5 py-0.5 rounded font-mono">
+              Alt+R
+            </span>
+          </button>
+
           <div className="text-right">
             <div className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono leading-tight">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}

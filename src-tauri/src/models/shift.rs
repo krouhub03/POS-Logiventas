@@ -59,9 +59,20 @@ pub struct ShiftSummary {
     pub other_sales_cents: i64,
     pub customer_payments_cash_cents: i64,
     pub customer_payments_other_cents: i64,
+    #[serde(default)]
+    pub cash_returns_cents: i64,
+    #[serde(default)]
+    pub returns_count: i64,
     pub total_tax_cents: i64,
     pub expected_cash_cents: i64,
     #[serde(default)]
     pub payment_breakdown: Vec<ShiftPaymentBreakdown>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShiftZReport {
+    pub shift: CashShift,
+    pub summary: ShiftSummary,
 }
 

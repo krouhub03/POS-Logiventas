@@ -121,6 +121,7 @@ pub fn run() {
             commands::printers::test_print_ticket,
             commands::printers::test_open_drawer,
             commands::printers::print_sale_ticket,
+            commands::printers::print_shift_ticket,
             commands::sync::verify_and_reserve_stock,
             commands::sync::release_stock_reservation,
             commands::sync::sync_catalog_from_erp,

@@ -7,7 +7,7 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::shift::{
-    CashShift, CloseShiftInput, OpenShiftInput, ShiftPaymentBreakdown, ShiftSummary,
+    CashShift, CloseShiftInput, OpenShiftInput, ShiftPaymentBreakdown, ShiftSummary, ShiftZReport,
 };
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
@@ -207,7 +207,10 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
 pub fn get_shift_summary_in_conn(conn: &Connection) -> AppResult<ShiftSummary> {
     let shift = internal_get_active_shift(conn)?
         .ok_or_else(|| AppError::Validation("No hay un turno de caja abierto actualmente".into()))?;
+    get_shift_summary_for_shift(conn, &shift)
+}
 
+pub fn get_shift_summary_for_shift(conn: &Connection, shift: &CashShift) -> AppResult<ShiftSummary> {
     // 1. Totales de cabecera de ventas desacoplados del JOIN de pagos para evitar duplicación en pagos mixtos
     let (sales_count, total_sales_cents, total_tax_cents): (i64, i64, i64) = conn.query_row(
         "SELECT 
@@ -273,13 +276,15 @@ pub fn get_shift_summary_in_conn(conn: &Connection) -> AppResult<ShiftSummary> {
         |r| Ok((r.get(0)?, r.get(1)?)),
     ).unwrap_or((0, 0));
 
-    let cash_returns_cents: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(total_cents), 0)
+    let (cash_returns_cents, returns_count): (i64, i64) = conn.query_row(
+        "SELECT 
+            COALESCE(SUM(CASE WHEN refund_method = 'cash' THEN total_cents ELSE 0 END), 0),
+            COUNT(id)
          FROM sale_returns
-         WHERE cash_session_id = ?1 AND refund_method = 'cash'",
+         WHERE cash_session_id = ?1",
         params![shift.id],
-        |r| r.get(0),
-    ).unwrap_or(0);
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0));
 
     let expected_cash_cents = shift.opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
 
@@ -358,9 +363,9 @@ pub fn get_shift_summary_in_conn(conn: &Connection) -> AppResult<ShiftSummary> {
 
     Ok(ShiftSummary {
         shift_id: shift.id,
-        folio: shift.folio,
-        opened_at: shift.opened_at,
-        user_name: shift.user_name.unwrap_or_else(|| "Cajero".into()),
+        folio: shift.folio.clone(),
+        opened_at: shift.opened_at.clone(),
+        user_name: shift.user_name.clone().unwrap_or_else(|| "Cajero".into()),
         opening_cents: shift.opening_cents,
         sales_count,
         total_sales_cents,
@@ -370,10 +375,47 @@ pub fn get_shift_summary_in_conn(conn: &Connection) -> AppResult<ShiftSummary> {
         other_sales_cents,
         customer_payments_cash_cents,
         customer_payments_other_cents,
+        cash_returns_cents,
+        returns_count,
         total_tax_cents,
         expected_cash_cents,
         payment_breakdown,
     })
+}
+
+pub fn build_shift_z_report(conn: &Connection, shift_id: i64) -> AppResult<ShiftZReport> {
+    let shift = conn.query_row(
+        "SELECT cs.id, cs.folio, cs.user_id, u.full_name,
+                COALESCE(datetime(cs.opened_at, 'localtime'), cs.opened_at),
+                CASE WHEN cs.closed_at IS NOT NULL THEN COALESCE(datetime(cs.closed_at, 'localtime'), cs.closed_at) ELSE NULL END,
+                cs.opening_cents, cs.closing_cents, cs.expected_cents, cs.declared_cents,
+                cs.difference_cents, cs.notes, cs.status, cs.erp_turno_id
+         FROM cash_sessions cs
+         LEFT JOIN users u ON u.id = cs.user_id
+         WHERE cs.id = ?1",
+        params![shift_id],
+        |r| {
+            Ok(CashShift {
+                id: r.get(0)?,
+                folio: r.get(1)?,
+                user_id: r.get(2)?,
+                user_name: r.get(3)?,
+                opened_at: r.get(4)?,
+                closed_at: r.get(5)?,
+                opening_cents: r.get(6)?,
+                closing_cents: r.get(7)?,
+                expected_cents: r.get(8)?,
+                declared_cents: r.get(9)?,
+                difference_cents: r.get(10)?,
+                notes: r.get(11)?,
+                status: r.get(12)?,
+                erp_turno_id: r.get(13)?,
+            })
+        },
+    ).map_err(|_| AppError::Validation(format!("Turno de caja #{shift_id} no encontrado")))?;
+
+    let summary = get_shift_summary_for_shift(conn, &shift)?;
+    Ok(ShiftZReport { shift, summary })
 }
 
 pub fn close_shift_in_conn(

@@ -42,7 +42,7 @@ export const LicenseBanner: React.FC = () => {
     return null;
   }
 
-  const appVersion = plan?.version ? `v${plan.version}` : 'v0.1.7';
+  const appVersion = plan?.version ? `v${plan.version}` : 'v0.1.8';
   const planName = (plan?.plan_type || 'free').toUpperCase();
   const expiration = plan?.plan_expiration ? new Date(plan.plan_expiration).toLocaleDateString() : undefined;
 

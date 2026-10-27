@@ -374,9 +374,9 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         if (e.key === "Escape") onClose();
       }}
     >
-      <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-all ${isSplitMode ? "max-w-4xl" : "max-w-2xl"}`}>
+      <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-h-[92vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-all ${isSplitMode ? "max-w-4xl" : "max-w-2xl"}`}>
         {/* HEADER */}
-        <div className="bg-gradient-to-r from-emerald-600 via-teal-700 to-slate-800 px-6 py-4 text-white flex items-center justify-between shadow">
+        <div className="shrink-0 bg-gradient-to-r from-emerald-600 via-teal-700 to-slate-800 px-6 py-3.5 text-white flex items-center justify-between shadow">
           <div className="flex items-center gap-3">
             <span className="bg-black/25 text-xs px-2.5 py-1 rounded font-mono font-bold tracking-wide">
               F12
@@ -430,7 +430,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
           </div>
         )}
 
-        <div className="p-6 space-y-5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
           {/* BARRA DE CLIENTE (OBLIGATORIO PARA VENTA A CRÉDITO) */}
           <div
             className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
@@ -849,32 +849,32 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
               )}
             </>
           )}
+        </div>
 
-          {/* FOOTER DE ACCIONES */}
-          <div className="pt-2 flex gap-3 border-t border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-3 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
-            >
-              [Esc] Cancelar
-            </button>
+        {/* FOOTER DE ACCIONES */}
+        <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 flex gap-3 border-t border-slate-200 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
+          >
+            [Esc] Cancelar
+          </button>
 
-            <button
-              type="button"
-              onClick={() => handleSubmit()}
-              disabled={loading || !isFormValid}
-              className="flex-2 py-3 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
-            >
-              {loading
-                ? "Procesando…"
-                : requiresCustomer && !customer
-                ? "Asignar Cliente para Crédito"
-                : isSplitMode
-                ? "Confirmar Venta Mixta (Enter)"
-                : "Cobrar e Imprimir (Enter)"}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => handleSubmit()}
+            disabled={loading || !isFormValid}
+            className="flex-2 py-2.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+          >
+            {loading
+              ? "Procesando…"
+              : requiresCustomer && !customer
+              ? "Asignar Cliente para Crédito"
+              : isSplitMode
+              ? "Confirmar Venta Mixta (Enter)"
+              : "Cobrar e Imprimir (Enter)"}
+          </button>
         </div>
       </div>
 

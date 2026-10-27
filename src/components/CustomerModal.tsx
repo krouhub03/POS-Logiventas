@@ -349,9 +349,9 @@ export function CustomerModal({
       className="fixed inset-0 z-50 bg-black/60 dark:bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 transition-colors"
       onKeyDown={handleKeyDown}
     >
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[88vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-colors">
         {/* HEADER */}
-        <div className="bg-gradient-to-r from-emerald-600 to-teal-700 px-6 py-4 text-white flex items-center justify-between">
+        <div className="shrink-0 bg-gradient-to-r from-emerald-600 to-teal-700 px-6 py-3.5 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="bg-emerald-900/60 text-emerald-100 text-xs px-2.5 py-1 rounded font-mono font-bold">
               F2
@@ -580,8 +580,9 @@ export function CustomerModal({
           </div>
         ) : mode === "details" && detailCustomer ? (
           /* MODO DETALLES DEL CLIENTE Y ESTADO DE CARTERA */
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {/* CABECERA DE FICHA DEL CLIENTE */}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3.5">
+              {/* CABECERA DE FICHA DEL CLIENTE */}
             <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3.5">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-black text-base uppercase shadow-sm">
@@ -754,9 +755,10 @@ export function CustomerModal({
                 )}
               </div>
             </div>
+            </div>
 
             {/* BOTONES DE ACCIÓN EN EL PIE DE DETALLES */}
-            <div className="flex items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => {
@@ -799,284 +801,290 @@ export function CustomerModal({
           </div>
         ) : mode === "payment" && paymentCustomer ? (
           /* MODO ABONO A CUENTA / CARTERA */
-          <form onSubmit={handleSubmitPayment} className="p-6 space-y-4">
-            <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold block">Cliente Titular</span>
-                <span className="text-sm font-bold text-slate-900 dark:text-white">{paymentCustomer.name}</span>
-                {paymentCustomer.taxId && <span className="text-xs text-slate-500 font-mono ml-2">({paymentCustomer.taxId})</span>}
-              </div>
-              <div className="text-right">
-                <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold block">Saldo Deudor Actual</span>
-                <span className="text-base font-mono font-black text-rose-600 dark:text-rose-400">
-                  {formatCents(paymentCustomer.currentBalanceCents || 0)}
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Monto a Abonar ($ COP) <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-                  <input
-                    ref={paymentAmountInputRef}
-                    type="number"
-                    step="100"
-                    min="100"
-                    required
-                    value={paymentAmountStr}
-                    onChange={(e) => setPaymentAmountStr(e.target.value)}
-                    placeholder="0"
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl pl-8 pr-4 py-2.5 text-base font-mono font-bold text-slate-900 dark:text-white focus:outline-none"
-                  />
+          <form onSubmit={handleSubmitPayment} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3.5">
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div>
+                  <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold block">Cliente Titular</span>
+                  <span className="text-sm font-bold text-slate-900 dark:text-white">{paymentCustomer.name}</span>
+                  {paymentCustomer.taxId && <span className="text-xs text-slate-500 font-mono ml-2">({paymentCustomer.taxId})</span>}
                 </div>
-              </div>
-
-              {/* BOTONES RÁPIDOS DE PAGO */}
-              <div className="flex flex-wrap gap-2">
-                {paymentCustomer.currentBalanceCents > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setPaymentAmountStr((paymentCustomer.currentBalanceCents / 100).toString())}
-                    className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-200 cursor-pointer"
-                  >
-                    Pagar Total ({formatCents(paymentCustomer.currentBalanceCents)})
-                  </button>
-                )}
-                {paymentCustomer.currentBalanceCents > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setPaymentAmountStr((Math.round(paymentCustomer.currentBalanceCents / 2) / 100).toString())}
-                    className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
-                  >
-                    50% ({formatCents(Math.round(paymentCustomer.currentBalanceCents / 2))})
-                  </button>
-                )}
-                {[20000, 50000, 100000].map((quickVal) => (
-                  <button
-                    key={quickVal}
-                    type="button"
-                    onClick={() => setPaymentAmountStr(quickVal.toString())}
-                    className="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 cursor-pointer"
-                  >
-                    ${quickVal.toLocaleString("es-CO")}
-                  </button>
-                ))}
-              </div>
-
-              {/* BOTONERA DINÁMICA DE MEDIOS DE RECAUDO (SINCRONIZADOS CON EL ERP) */}
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Medio de Recaudo (Sincronizado con ERP) <span className="text-rose-500">*</span>
-                  </label>
-                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
-                    {availableMethods.length > 0
-                      ? `${availableMethods.length} medios disponibles`
-                      : "Cargando..."}
+                <div className="text-right">
+                  <span className="text-xs text-slate-400 uppercase tracking-wider font-semibold block">Saldo Deudor Actual</span>
+                  <span className="text-base font-mono font-black text-rose-600 dark:text-rose-400">
+                    {formatCents(paymentCustomer.currentBalanceCents || 0)}
                   </span>
                 </div>
-
-                {availableMethods.length === 0 ? (
-                  <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-500 text-center animate-pulse">
-                    Sincronizando medios de pago desde el ERP...
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {availableMethods.map((pm) => {
-                      const isSelected = selectedMethodId === pm.id;
-                      return (
-                        <button
-                          key={pm.id}
-                          type="button"
-                          onClick={() => setSelectedMethodId(pm.id)}
-                          className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border text-left cursor-pointer ${
-                            isSelected
-                              ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.01]"
-                              : "bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
-                          }`}
-                        >
-                          <span className="text-base">{getMethodIcon(pm.type, pm.code)}</span>
-                          <span className="truncate">{pm.name}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  N° Comprobante / Referencia (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                  placeholder="Ej: M12345 / Aprobación #4829"
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                />
-              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    Monto a Abonar ($ COP) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                    <input
+                      ref={paymentAmountInputRef}
+                      type="number"
+                      step="100"
+                      min="100"
+                      required
+                      value={paymentAmountStr}
+                      onChange={(e) => setPaymentAmountStr(e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl pl-8 pr-4 py-2 text-base font-mono font-bold text-slate-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Notas u Observaciones del Abono
-                </label>
-                <input
-                  type="text"
-                  value={paymentNotes}
-                  onChange={(e) => setPaymentNotes(e.target.value)}
-                  placeholder="Ej: Abono quincenal de factura anterior"
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
-                />
+                {/* BOTONES RÁPIDOS DE PAGO */}
+                <div className="flex flex-wrap gap-2">
+                  {paymentCustomer.currentBalanceCents > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentAmountStr((paymentCustomer.currentBalanceCents / 100).toString())}
+                      className="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-200 cursor-pointer"
+                    >
+                      Pagar Total ({formatCents(paymentCustomer.currentBalanceCents)})
+                    </button>
+                  )}
+                  {paymentCustomer.currentBalanceCents > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPaymentAmountStr((Math.round(paymentCustomer.currentBalanceCents / 2) / 100).toString())}
+                      className="px-3 py-1 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                    >
+                      50% ({formatCents(Math.round(paymentCustomer.currentBalanceCents / 2))})
+                    </button>
+                  )}
+                  {[20000, 50000, 100000].map((quickVal) => (
+                    <button
+                      key={quickVal}
+                      type="button"
+                      onClick={() => setPaymentAmountStr(quickVal.toString())}
+                      className="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 cursor-pointer"
+                    >
+                      ${quickVal.toLocaleString("es-CO")}
+                    </button>
+                  ))}
+                </div>
+
+                {/* BOTONERA DINÁMICA DE MEDIOS DE RECAUDO (SINCRONIZADOS CON EL ERP) */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Medio de Recaudo (Sincronizado con ERP) <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                      {availableMethods.length > 0
+                        ? `${availableMethods.length} medios disponibles`
+                        : "Cargando..."}
+                    </span>
+                  </div>
+
+                  {availableMethods.length === 0 ? (
+                    <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-500 text-center animate-pulse">
+                      Sincronizando medios de pago desde el ERP...
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {availableMethods.map((pm) => {
+                        const isSelected = selectedMethodId === pm.id;
+                        return (
+                          <button
+                            key={pm.id}
+                            type="button"
+                            onClick={() => setSelectedMethodId(pm.id)}
+                            className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border text-left cursor-pointer ${
+                              isSelected
+                                ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.01]"
+                                : "bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                            }`}
+                          >
+                            <span className="text-base">{getMethodIcon(pm.type, pm.code)}</span>
+                            <span className="truncate">{pm.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      N° Comprobante / Referencia (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={paymentRef}
+                      onChange={(e) => setPaymentRef(e.target.value)}
+                      placeholder="Ej: M12345 / Aprobación #4829"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-xs text-slate-900 dark:text-white font-mono focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Notas u Observaciones del Abono
+                    </label>
+                    <input
+                      type="text"
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="Ej: Abono quincenal de factura anterior"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-xs text-slate-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="flex gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
+            <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex gap-3">
               <button
                 type="button"
                 onClick={() => setMode("search")}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
               >
-                Volver a la lista
+                Volver a la lista (Esc)
               </button>
               <button
                 type="submit"
                 disabled={paymentSubmitting || !paymentAmountStr}
-                className="flex-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
               >
-                <span>{paymentSubmitting ? "Registrando Abono…" : "Confirmar Abono e Imprimir Recibo"}</span>
+                <span>{paymentSubmitting ? "Registrando Abono…" : "✓ Confirmar Abono (Enter)"}</span>
               </button>
             </div>
           </form>
         ) : (
           /* MODO FORMULARIO: REGISTRAR NUEVO CLIENTE */
-          <form onSubmit={handleCreateCustomer} className="p-6 space-y-4">
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Nombre Completo o Razón Social <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  ref={newNameInputRef}
-                  type="text"
-                  required
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Ej: Carlos Alberto Restrepo / Tienda La 45"
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <form onSubmit={handleCreateCustomer} className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3.5">
+              <div className="space-y-3">
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Cédula / NIT / Identificación
+                    Nombre Completo o Razón Social <span className="text-rose-500">*</span>
                   </label>
                   <input
+                    ref={newNameInputRef}
                     type="text"
-                    value={newTaxId}
-                    onChange={(e) => setNewTaxId(e.target.value)}
-                    placeholder="Ej: 1020304050"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Teléfono / WhatsApp
-                  </label>
-                  <input
-                    type="tel"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    placeholder="Ej: 3001234567"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Cupo de Crédito Autorizado ($ COP)
-                  </label>
-                  <input
-                    type="number"
-                    step="1000"
-                    min="0"
-                    value={newCreditLimitStr}
-                    onChange={(e) => setNewCreditLimitStr(e.target.value)}
-                    placeholder="0 (Sin cupo)"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Plazo de Pago (Días)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    value={newCreditDays}
-                    onChange={(e) => setNewCreditDays(Number(e.target.value) || 30)}
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Correo Electrónico (Opcional)
-                  </label>
-                  <input
-                    type="email"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    placeholder="cliente@ejemplo.com"
+                    required
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Ej: Carlos Alberto Restrepo / Tienda La 45"
                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
                   />
                 </div>
 
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                    Dirección (Opcional)
-                  </label>
-                  <input
-                    type="text"
-                    value={newAddress}
-                    onChange={(e) => setNewAddress(e.target.value)}
-                    placeholder="Carrera 10 # 20 - 30"
-                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Cédula / NIT / Identificación
+                    </label>
+                    <input
+                      type="text"
+                      value={newTaxId}
+                      onChange={(e) => setNewTaxId(e.target.value)}
+                      placeholder="Ej: 1020304050"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Teléfono / WhatsApp
+                    </label>
+                    <input
+                      type="tel"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      placeholder="Ej: 3001234567"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
+                    />
+                  </div>
                 </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Cupo de Crédito Autorizado ($ COP)
+                    </label>
+                    <input
+                      type="number"
+                      step="1000"
+                      min="0"
+                      value={newCreditLimitStr}
+                      onChange={(e) => setNewCreditLimitStr(e.target.value)}
+                      placeholder="0 (Sin cupo)"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Plazo de Pago (Días)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newCreditDays}
+                      onChange={(e) => setNewCreditDays(Number(e.target.value) || 30)}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Correo Electrónico (Opcional)
+                    </label>
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="cliente@ejemplo.com"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      Dirección (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={newAddress}
+                      onChange={(e) => setNewAddress(e.target.value)}
+                      placeholder="Carrera 10 # 20 - 30"
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+                <span>💡</span>
+                <span>
+                  El cliente se guardará de forma local inmediatamente y se sincronizará con Megalider ERP en segundo plano.
+                </span>
               </div>
             </div>
 
-            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
-              <span>💡</span>
-              <span>
-                El cliente se guardará de forma local inmediatamente y se sincronizará con Megalider ERP en segundo plano.
-              </span>
-            </div>
-
-            <div className="flex gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex gap-3">
               <button
                 type="button"
                 onClick={() => setMode("search")}
                 className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
               >
-                Cancelar
+                Cancelar (Esc)
               </button>
               <button
                 type="submit"
                 disabled={creating || !newName.trim()}
-                className="flex-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50"
+                className="flex-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
               >
                 {creating ? "Guardando…" : "Guardar y Asignar Cliente (Enter)"}
               </button>
