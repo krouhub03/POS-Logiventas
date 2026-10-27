@@ -1521,9 +1521,9 @@ export function SalesStationPage({
     .toUpperCase();
 
   return (
-    <div className="flex flex-col h-screen bg-[#f8fafc] dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
+    <div className="flex flex-col h-full min-h-0 bg-[#f8fafc] dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none overflow-hidden font-sans transition-colors duration-150">
       {/* 1. FILA SUPERIOR: TERMINAL, ESTADO, CAJERO Y CONTROLES DE VENTANA */}
-      <header className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2 flex items-center justify-between text-xs transition-colors duration-150 shadow-xs">
+      <header className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-2 text-xs transition-colors duration-150 shadow-xs overflow-x-auto custom-scrollbar">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 pr-3 border-r border-slate-200 dark:border-slate-800">
             <img src="/metahabi-icon.png" alt="Metahabi" className="w-5 h-5 object-contain" />
@@ -1680,7 +1680,7 @@ export function SalesStationPage({
       </header>
 
       {/* 2. FILA DE NAVEGACIÓN DE MÓDULOS (F1 - F7) */}
-      <nav className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between shadow-xs transition-colors duration-150 overflow-x-auto custom-scrollbar">
+      <nav className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-2 shadow-xs transition-colors duration-150 overflow-x-auto custom-scrollbar">
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* F1 Ventas (Activo) */}
           <button className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer">
@@ -1800,7 +1800,7 @@ export function SalesStationPage({
       </nav>
 
       {/* 3. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (TICKETS + SCANNER + ACCIONES) */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-4 py-2.5 flex flex-wrap items-center gap-3 transition-colors duration-150">
+      <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-2 flex flex-wrap items-center gap-2 sm:gap-3 transition-colors duration-150">
         {/* Pestañas de Tickets (Mínimo 1 ticket siempre) */}
         <div className="flex items-center gap-1.5 mr-2">
           {tickets.map((t) => {
@@ -2042,7 +2042,7 @@ export function SalesStationPage({
       {/* FEEDBACK TOAST MULTI-COLOR CON SONIDO */}
       {feedback && (
         <div
-          className={`px-4 py-2 text-xs font-semibold flex items-center justify-between border-b animate-in fade-in slide-in-from-top-1 transition-colors ${
+          className={`shrink-0 px-4 py-1.5 text-xs font-semibold flex items-center justify-between border-b animate-in fade-in slide-in-from-top-1 transition-colors ${
             feedback.type === "success"
               ? "bg-emerald-50 dark:bg-emerald-950/80 border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-200"
               : feedback.type === "warning"
@@ -2074,8 +2074,8 @@ export function SalesStationPage({
       )}
 
       {/* 3. TABLA PRINCIPAL DE VENTAS ESTILO ELEVENTA */}
-      <main className="flex-1 p-3 overflow-auto">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm flex flex-col h-full transition-colors duration-150">
+      <main className="flex-1 min-h-0 p-2 sm:p-3 flex flex-col overflow-hidden">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex-1 min-h-0 overflow-auto transition-colors duration-150">
           <table className="w-full text-left border-collapse">
             <thead className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10">
               <tr>
@@ -2095,7 +2095,7 @@ export function SalesStationPage({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-xs">
               {cartLines.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-24 text-center font-sans">
+                  <td colSpan={10} className="py-10 sm:py-16 xl:py-24 text-center font-sans">
                     <div className="w-16 h-16 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 flex items-center justify-center mx-auto mb-3 text-slate-300 dark:text-slate-600 shadow-2xs">
                       <EmptyCartIcon />
                     </div>
@@ -2340,25 +2340,25 @@ export function SalesStationPage({
       </main>
 
       {/* 4. FOOTER RESUMEN CON VISOR GIGANTE */}
-      <footer className="bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-3 sm:px-5 py-2 sm:py-3.5 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-xs transition-colors duration-150">
+      <footer className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-3 sm:px-5 py-2 sm:py-2.5 flex flex-wrap items-center justify-between gap-2 sm:gap-4 shadow-xs transition-colors duration-150">
         {/* Atajos Inferiores & Resumen de Piezas */}
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <div className="bg-white dark:bg-slate-800/90 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-3 sm:gap-4 shadow-2xs">
+          <div className="bg-white dark:bg-slate-800/90 px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-3 sm:gap-4 shadow-2xs">
             <div>
-              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Artículos</div>
-              <div className="text-sm sm:text-base font-black text-slate-800 dark:text-white font-mono">{totalItemsCount}</div>
+              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-tight">Artículos</div>
+              <div className="text-sm sm:text-base font-black text-slate-800 dark:text-white font-mono leading-tight">{totalItemsCount}</div>
             </div>
             <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-700" />
             <div>
-              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider">Piezas</div>
-              <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 font-mono">{totalPieces}</div>
+              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-tight">Piezas</div>
+              <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 font-mono leading-tight">{totalPieces}</div>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={handleHoldTicket}
-              className="px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 sm:gap-2 transition-colors cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 sm:gap-2 transition-colors cursor-pointer shadow-2xs"
               title="Poner ticket en espera y abrir uno nuevo (F6)"
             >
               <span>⏸</span>
@@ -2366,7 +2366,7 @@ export function SalesStationPage({
             </button>
             <button
               onClick={() => handleCancelOrDeleteTicket()}
-              className="px-2.5 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               title={tickets.length > 1 ? `Eliminar ${currentTicket.name}` : `Vaciar ${currentTicket.name}`}
             >
               <span>✕</span>
@@ -2376,15 +2376,15 @@ export function SalesStationPage({
         </div>
 
         {/* VISOR GIGANTE DEL TOTAL Y BOTÓN COBRAR (F12) */}
-        <div className="flex items-center gap-4 sm:gap-6 w-full md:w-auto justify-end">
+        <div className="flex items-center gap-3 sm:gap-5 ml-auto shrink-0">
           <div className="text-right">
-            <div className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono">
+            <div className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono leading-tight">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}
             </div>
-            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500 leading-tight">
               TOTAL A PAGAR
             </div>
-            <div className="text-3xl sm:text-4xl xl:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
+            <div className="text-2xl sm:text-3xl xl:text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight leading-none mt-0.5">
               {formatCents(totalCents)}
             </div>
           </div>
@@ -2392,7 +2392,7 @@ export function SalesStationPage({
           <button
             onClick={handleOpenCobro}
             disabled={cartLines.length === 0}
-            className="px-5 sm:px-8 py-2.5 sm:py-3.5 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-base sm:text-lg uppercase tracking-wider flex items-center gap-2 sm:gap-2.5 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+            className="px-4 sm:px-7 py-2 sm:py-3 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-sm sm:text-base uppercase tracking-wider flex items-center gap-2 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
           >
             <span className="bg-white/25 dark:bg-emerald-700/60 px-1.5 sm:px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
               F12

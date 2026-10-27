@@ -28,6 +28,7 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
     let sale_row = conn.query_row(
         "SELECT s.id, s.folio, s.customer_id, c.name, c.tax_id, u.full_name,
                 s.subtotal_cents, s.discount_cents, s.tax_cents, s.total_cents,
+                s.paid_cents, COALESCE(s.change_cents, 0),
                 COALESCE(s.reprint_count, 0), s.last_reprinted_at,
                 COALESCE(s.return_status, 'none'), COALESCE(s.returned_cents, 0),
                 s.created_at
@@ -48,11 +49,13 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
                 r.get::<_, i64>(7)?,
                 r.get::<_, i64>(8)?,
                 r.get::<_, i64>(9)?,
-                r.get::<_, i64>(10)?,
-                r.get::<_, Option<String>>(11)?,
-                r.get::<_, String>(12)?,
-                r.get::<_, i64>(13)?,
+                r.get::<_, Option<i64>>(10)?,
+                r.get::<_, i64>(11)?,
+                r.get::<_, i64>(12)?,
+                r.get::<_, Option<String>>(13)?,
                 r.get::<_, String>(14)?,
+                r.get::<_, i64>(15)?,
+                r.get::<_, String>(16)?,
             ))
         },
     )?;
@@ -68,6 +71,8 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
         discount_cents,
         tax_cents,
         total_cents,
+        stored_paid_cents,
+        stored_change_cents,
         reprint_count,
         last_reprinted_at,
         return_status,
@@ -97,10 +102,18 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let paid_cents: i64 = if payments.is_empty() {
+    let sum_payments_cents: i64 = if payments.is_empty() {
         total_cents
     } else {
         payments.iter().map(|p| p.amount_cents).sum()
+    };
+
+    let (paid_cents, change_cents) = match stored_paid_cents {
+        Some(pc) if pc > 0 => (pc, stored_change_cents.max(0)),
+        _ => (
+            sum_payments_cents,
+            (sum_payments_cents - total_cents).max(0),
+        ),
     };
 
     // Ítems de la venta
@@ -251,7 +264,7 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
         tax_cents,
         total_cents,
         paid_cents,
-        change_cents: (paid_cents - total_cents).max(0),
+        change_cents,
         reprint_count,
         last_reprinted_at,
         return_status,
@@ -266,11 +279,14 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
 
 #[tauri::command]
 pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleReceipt> {
+    let mut conn = db.conn()?;
+    create_sale_in_conn(&mut conn, input)
+}
+
+pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> AppResult<SaleReceipt> {
     if input.items.is_empty() {
         return Err(AppError::Validation("La venta debe contener al menos un producto".into()));
     }
-
-    let mut conn = db.conn()?;
 
     // 1. Obtener prefijo de caja para el folio
     let caja_codigo: String = conn
@@ -300,6 +316,9 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
         let item_subtotal = (it.quantity * it.unit_price_cents as f64).round() as i64;
         let item_discount = it.discount_cents.unwrap_or(0);
+        if item_discount < 0 {
+            return Err(AppError::Validation("El descuento no puede ser negativo".into()));
+        }
         let tax_bp = it.tax_rate_bp.unwrap_or(0);
         let tax_fixed = it.tax_fixed_cents.unwrap_or(0);
         // Redondeo bancario al centavo más cercano: (subtotal * bp + 5000) / 10000 + (tax_fixed * qty)
@@ -310,6 +329,14 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         };
         let fixed_tax = (tax_fixed as f64 * it.quantity).round() as i64;
         let item_tax = percent_tax + fixed_tax;
+        if item_discount > item_subtotal + item_tax {
+            return Err(AppError::Validation(format!(
+                "El descuento de la línea '{}' (${:.2}) no puede superar el valor del producto (${:.2})",
+                it.description,
+                item_discount as f64 / 100.0,
+                (item_subtotal + item_tax) as f64 / 100.0
+            )));
+        }
         let item_total = item_subtotal + item_tax - item_discount;
 
         subtotal_cents += item_subtotal;
@@ -334,13 +361,26 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
 
     // Validación estricta NIIF: el cambio solo puede originarse a partir de pagos en efectivo
     if change_cents > 0 {
-        let cash_paid_cents: i64 = input.payments.iter()
-            .filter(|p| {
-                let m = p.method.to_lowercase();
-                m.contains("cash") || m.contains("efectivo")
-            })
-            .map(|p| p.amount_cents)
-            .sum();
+        let mut cash_paid_cents: i64 = 0;
+        for p in &input.payments {
+            let m = p.method.to_lowercase();
+            let pm_type: Option<String> = conn
+                .query_row(
+                    "SELECT type FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
+                    params![p.method],
+                    |r| r.get(0),
+                )
+                .ok();
+            let is_cash = m.contains("cash")
+                || m.contains("efectivo")
+                || pm_type
+                    .as_deref()
+                    .map(|t| t.eq_ignore_ascii_case("EFECTIVO"))
+                    .unwrap_or(false);
+            if is_cash {
+                cash_paid_cents += p.amount_cents;
+            }
+        }
 
         if cash_paid_cents < change_cents {
             return Err(AppError::Validation(
@@ -361,8 +401,8 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         .ok();
 
     tx.execute(
-        "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'completed')",
+        "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, paid_cents, change_cents, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'completed')",
         params![
             folio,
             input.customer_id,
@@ -371,7 +411,9 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
             subtotal_cents,
             discount_cents,
             tax_cents,
-            total_cents
+            total_cents,
+            paid_cents,
+            change_cents
         ],
     )?;
 
@@ -610,19 +652,56 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         )?;
     }
 
-    // Registrar pagos
+    // Registrar pagos normalizando el efectivo neto retenido en caja (descontando change_cents)
+    let mut remaining_change_to_deduct = change_cents;
+    let mut normalized_payload_payments = Vec::with_capacity(input.payments.len());
+
     for p in &input.payments {
-        let pm_id: Option<String> = tx.query_row(
-            "SELECT id FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
-            params![p.method],
-            |r| r.get(0),
-        ).ok();
+        let (pm_id, pm_type, cuenta_puc_id, puc_code, erp_code): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = tx
+            .query_row(
+                "SELECT id, type, puc_account_id, puc_code, erp_code FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
+                params![p.method],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap_or((None, None, None, None, None));
+
+        let m_lower = p.method.to_lowercase();
+        let is_cash = m_lower.contains("cash")
+            || m_lower.contains("efectivo")
+            || pm_type
+                .as_deref()
+                .map(|t| t.eq_ignore_ascii_case("EFECTIVO"))
+                .unwrap_or(false);
+
+        let net_amount_cents = if is_cash && remaining_change_to_deduct > 0 {
+            let deduct = remaining_change_to_deduct.min(p.amount_cents);
+            remaining_change_to_deduct -= deduct;
+            p.amount_cents - deduct
+        } else {
+            p.amount_cents
+        };
 
         tx.execute(
             "INSERT INTO payments (sale_id, payment_method_id, method, amount_cents, reference)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![sale_id, pm_id, p.method, p.amount_cents, p.reference],
+            params![sale_id, pm_id, p.method, net_amount_cents, p.reference],
         )?;
+
+        normalized_payload_payments.push(serde_json::json!({
+            "method": p.method,
+            "amountCents": net_amount_cents,
+            "tenderedCents": p.amount_cents,
+            "reference": p.reference,
+            "cuentaPucId": cuenta_puc_id,
+            "pucCode": puc_code,
+            "erpCode": erp_code
+        }));
     }
 
     let created_at: String = tx.query_row(
@@ -711,22 +790,7 @@ pub fn create_sale(db: State<'_, Db>, input: CreateSaleInput) -> AppResult<SaleR
         "status": "completed",
         "createdAt": &created_at,
         "items": payload_items,
-        "payments": input.payments.iter().map(|p| {
-            let (cuenta_puc_id, puc_code, erp_code): (Option<String>, Option<String>, Option<String>) = tx.query_row(
-                "SELECT puc_account_id, puc_code, erp_code FROM payment_methods WHERE code = ?1 OR erp_code = ?1 LIMIT 1",
-                params![p.method],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            ).unwrap_or((None, None, None));
-
-            serde_json::json!({
-                "method": p.method,
-                "amountCents": p.amount_cents,
-                "reference": p.reference,
-                "cuentaPucId": cuenta_puc_id,
-                "pucCode": puc_code,
-                "erpCode": erp_code
-            })
-        }).collect::<Vec<_>>()
+        "payments": normalized_payload_payments
     });
 
     tx.execute(
@@ -794,7 +858,7 @@ pub fn list_recent_sales(
                 COALESCE(s.reprint_count, 0), COALESCE(s.return_status, 'none'),
                 COALESCE(s.returned_cents, 0), s.created_at,
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as items_count,
-                COALESCE((SELECT SUM(p.amount_cents) FROM payments p WHERE p.sale_id = s.id), s.total_cents) as paid_cents,
+                COALESCE(s.paid_cents, (SELECT SUM(p.amount_cents) FROM payments p WHERE p.sale_id = s.id), s.total_cents) as paid_cents,
                 COALESCE((SELECT GROUP_CONCAT(DISTINCT p.method) FROM payments p WHERE p.sale_id = s.id), 'cash') as payment_methods_raw
          FROM sales s
          LEFT JOIN customers c ON c.id = s.customer_id
@@ -860,6 +924,14 @@ pub fn create_sale_return(
     db: State<'_, Db>,
     input: CreateSaleReturnInput,
 ) -> AppResult<SaleReturnDto> {
+    let mut conn = db.conn()?;
+    create_sale_return_in_conn(&mut conn, input)
+}
+
+pub fn create_sale_return_in_conn(
+    conn: &mut Connection,
+    input: CreateSaleReturnInput,
+) -> AppResult<SaleReturnDto> {
     if input.items.is_empty() {
         return Err(AppError::Validation(
             "Seleccione al menos un producto y cantidad para procesar la devolución".into(),
@@ -879,7 +951,6 @@ pub fn create_sale_return(
         _ => "other",
     };
 
-    let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
     // 1. Verificar venta original
@@ -1368,7 +1439,10 @@ pub fn create_sale_return(
 #[tauri::command]
 pub fn get_today_summary(db: State<'_, Db>) -> AppResult<TodaySalesSummary> {
     let conn = db.conn()?;
+    get_today_summary_in_conn(&conn)
+}
 
+pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSummary> {
     let (total_sales_count, total_cents): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total_cents - COALESCE(returned_cents, 0)), 0)
          FROM sales
@@ -1381,7 +1455,10 @@ pub fn get_today_summary(db: State<'_, Db>) -> AppResult<TodaySalesSummary> {
         "SELECT COALESCE(SUM(p.amount_cents), 0)
          FROM payments p
          JOIN sales s ON s.id = p.sale_id
-         WHERE s.status = 'completed' AND p.method = 'cash' AND date(s.created_at) = date('now')",
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.status = 'completed'
+           AND (LOWER(p.method) IN ('cash', 'efectivo') OR UPPER(COALESCE(pm.type, '')) = 'EFECTIVO')
+           AND date(s.created_at) = date('now')",
         [],
         |r| r.get(0),
     )?;
@@ -1400,7 +1477,10 @@ pub fn get_today_summary(db: State<'_, Db>) -> AppResult<TodaySalesSummary> {
         "SELECT COALESCE(SUM(p.amount_cents), 0)
          FROM payments p
          JOIN sales s ON s.id = p.sale_id
-         WHERE s.status = 'completed' AND p.method = 'card' AND date(s.created_at) = date('now')",
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.status = 'completed'
+           AND (LOWER(p.method) IN ('card', 'tarjeta') OR UPPER(COALESCE(pm.type, '')) = 'TARJETA')
+           AND date(s.created_at) = date('now')",
         [],
         |r| r.get(0),
     )?;
@@ -1409,7 +1489,10 @@ pub fn get_today_summary(db: State<'_, Db>) -> AppResult<TodaySalesSummary> {
         "SELECT COALESCE(SUM(p.amount_cents), 0)
          FROM payments p
          JOIN sales s ON s.id = p.sale_id
-         WHERE s.status = 'completed' AND p.method = 'transfer' AND date(s.created_at) = date('now')",
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.status = 'completed'
+           AND (LOWER(p.method) IN ('transfer', 'transferencia') OR UPPER(COALESCE(pm.type, '')) = 'TRANSFERENCIA')
+           AND date(s.created_at) = date('now')",
         [],
         |r| r.get(0),
     )?;
@@ -1421,4 +1504,597 @@ pub fn get_today_summary(db: State<'_, Db>) -> AppResult<TodaySalesSummary> {
         card_cents,
         transfer_cents,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::sale::{CartItemInput, CreateSaleReturnItemInput, PaymentInput};
+
+    fn setup_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().expect("No se pudo abrir DB en memoria");
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).expect("Deben aplicar todas las migraciones");
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Cajero Prueba', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cash_sessions (id, folio, user_id, opening_cents, status, opened_at) VALUES (1, 'T-CAJA01-01', 1, 10000000, 'open', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_sale_tax_bp_and_fixed_tax_exact_math() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, tax_rate_bp, tax_fixed_cents, stock, is_service, controls_stock, active)
+             VALUES (10, 'PROD-IVA', '7701001', 'Ron Añejo', 'UND', 5000000, 3500000, 1900, 15000, 20.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Venta de 2 unidades:
+        // Subtotal = 2 * 5,000,000 = 10,000,000 ($100,000.00)
+        // IVA 19% (1900 bp) = 1,900,000 ($19,000.00) + Impoconsumo fijo = 2 * 15,000 = 30,000 ($300.00) -> tax_cents = 1,930,000
+        // Descuento = 50,000 ($500.00)
+        // Total esperado = 10,000,000 + 1,930,000 - 50,000 = 11,880,000 ($118,800.00)
+        let receipt = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(10),
+                    sku: Some("PROD-IVA".into()),
+                    barcode: Some("7701001".into()),
+                    description: "Ron Añejo".into(),
+                    quantity: 2.0,
+                    unit_price_cents: 5000000,
+                    tax_rate_bp: Some(1900),
+                    tax_fixed_cents: Some(15000),
+                    discount_cents: Some(50000),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 11880000,
+                    reference: None,
+                }],
+            },
+        )
+        .expect("Debe registrar la venta con impuestos exactos");
+
+        assert_eq!(receipt.subtotal_cents, 10000000);
+        assert_eq!(receipt.tax_cents, 1930000);
+        assert_eq!(receipt.discount_cents, 50000);
+        assert_eq!(receipt.total_cents, 11880000);
+        assert_eq!(
+            receipt.total_cents,
+            receipt.subtotal_cents + receipt.tax_cents - receipt.discount_cents
+        );
+
+        // Validar que el costo histórico haya quedado preservado en sale_items
+        let saved_cost: i64 = conn
+            .query_row(
+                "SELECT unit_cost_cents FROM sale_items WHERE sale_id = ?1",
+                params![receipt.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved_cost, 3500000);
+    }
+
+    #[test]
+    fn test_sale_cash_change_net_drawer_integrity() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, tax_rate_bp, stock, is_service, controls_stock, active)
+             VALUES (11, 'COCA-350', '7702002', 'Coca-Cola 350ml', 'UND', 310000, 200000, 0, 50.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Cliente compra 1 Coca-Cola de $3.100 (310,000 centavos) y entrega un billete de $50.000 (5,000,000 centavos)
+        let receipt = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(11),
+                    sku: Some("COCA-350".into()),
+                    barcode: Some("7702002".into()),
+                    description: "Coca-Cola 350ml".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 310000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 5000000,
+                    reference: None,
+                }],
+            },
+        )
+        .expect("Venta con vuelto debe procesarse");
+
+        // 1. La tirilla debe reflejar: Total $3.100, Recibido $50.000 y Cambio $46.900
+        assert_eq!(receipt.total_cents, 310000);
+        assert_eq!(receipt.paid_cents, 5000000);
+        assert_eq!(receipt.change_cents, 4690000);
+
+        // 2. En la tabla `payments` debe quedar registrado únicamente el efectivo NETO que permaneció en el cajón ($3.100)
+        let net_payment_in_db: i64 = conn
+            .query_row(
+                "SELECT SUM(amount_cents) FROM payments WHERE sale_id = ?1",
+                params![receipt.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(net_payment_in_db, 310000);
+
+        // 3. El resumen del día debe reportar $3.100 en efectivo y nunca $50.000
+        let today = get_today_summary_in_conn(&conn).unwrap();
+        assert_eq!(today.total_cents, 310000);
+        assert_eq!(today.cash_cents, 310000);
+    }
+
+    #[test]
+    fn test_sale_physical_stock_deduction_and_negative_stock_block() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (12, 'PAPA-LIM', '7703003', 'Papas Limón', 'UND', 250000, 150000, 5.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Vender 3 unidades (quedan 2)
+        create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(12),
+                    sku: None,
+                    barcode: None,
+                    description: "Papas Limón".into(),
+                    quantity: 3.0,
+                    unit_price_cents: 250000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 750000,
+                    reference: None,
+                }],
+            },
+        )
+        .expect("Venta de 3 unidades con stock 5 debe pasar");
+
+        let remaining_stock: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 12", [], |r| r.get(0))
+            .unwrap();
+        assert!((remaining_stock - 2.0).abs() < 1e-6);
+
+        // Intentar vender 3 unidades cuando solo quedan 2 debe fallar y hacer rollback
+        let err = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(12),
+                    sku: None,
+                    barcode: None,
+                    description: "Papas Limón".into(),
+                    quantity: 3.0,
+                    unit_price_cents: 250000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 750000,
+                    reference: None,
+                }],
+            },
+        );
+        assert!(err.is_err(), "Debe bloquear venta que dejaría el stock en negativo");
+
+        let stock_after_failed: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 12", [], |r| r.get(0))
+            .unwrap();
+        assert!((stock_after_failed - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sale_bundle_kit_shared_stock_and_kardex() {
+        let mut conn = setup_test_db();
+        // Insumo hijo: Cerveza lata con stock = 10 unidades, costo $2.000
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, is_bundle, controls_stock, active)
+             VALUES (20, 'CERV-UND', '7704001', 'Cerveza Lata 330ml', 'UND', 350000, 200000, 10.0, 0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        // Producto Padre Combo: Sixpack Cerveza (6 unidades del hijo 20), precio $18.000
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, is_bundle, controls_stock, active)
+             VALUES (21, 'SIX-CERV', '7704006', 'Sixpack Cerveza', 'UND', 1800000, 1200000, 0.0, 0, 1, 0, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO product_components (parent_product_id, child_product_id, quantity) VALUES (21, 20, 6.0)",
+            [],
+        )
+        .unwrap();
+
+        // Caso A: Intentar vender 1 Sixpack (6 und) + 5 Cervezas sueltas (5 und) = 11 > 10 disponibles -> Debe rechazar
+        let over_attempt = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![
+                    CartItemInput {
+                        product_id: Some(21),
+                        sku: None,
+                        barcode: None,
+                        description: "Sixpack Cerveza".into(),
+                        quantity: 1.0,
+                        unit_price_cents: 1800000,
+                        tax_rate_bp: Some(0),
+                        tax_fixed_cents: Some(0),
+                        discount_cents: Some(0),
+                    },
+                    CartItemInput {
+                        product_id: Some(20),
+                        sku: None,
+                        barcode: None,
+                        description: "Cerveza Lata 330ml".into(),
+                        quantity: 5.0,
+                        unit_price_cents: 350000,
+                        tax_rate_bp: Some(0),
+                        tax_fixed_cents: Some(0),
+                        discount_cents: Some(0),
+                    },
+                ],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 3550000,
+                    reference: None,
+                }],
+            },
+        );
+        assert!(
+            over_attempt.is_err(),
+            "Debe bloquear cuando la suma de combo + unidades sueltas supera el stock físico del componente"
+        );
+
+        // Caso B: Vender 1 Sixpack (6 und) + 2 Cervezas sueltas (2 und) = 8 <= 10 -> Debe pasar y dejar stock en 2
+        create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![
+                    CartItemInput {
+                        product_id: Some(21),
+                        sku: None,
+                        barcode: None,
+                        description: "Sixpack Cerveza".into(),
+                        quantity: 1.0,
+                        unit_price_cents: 1800000,
+                        tax_rate_bp: Some(0),
+                        tax_fixed_cents: Some(0),
+                        discount_cents: Some(0),
+                    },
+                    CartItemInput {
+                        product_id: Some(20),
+                        sku: None,
+                        barcode: None,
+                        description: "Cerveza Lata 330ml".into(),
+                        quantity: 2.0,
+                        unit_price_cents: 350000,
+                        tax_rate_bp: Some(0),
+                        tax_fixed_cents: Some(0),
+                        discount_cents: Some(0),
+                    },
+                ],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 2500000,
+                    reference: None,
+                }],
+            },
+        )
+        .expect("Venta compartida dentro del stock debe procesarse");
+
+        let child_stock: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 20", [], |r| r.get(0))
+            .unwrap();
+        assert!((child_stock - 2.0).abs() < 1e-6);
+
+        let kardex_sum: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(quantity), 0) FROM inventory_movements WHERE product_id = 20",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((kardex_sum - (-8.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sale_credit_limit_and_blocked_customer_guard() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (30, 'PROD-CRED', 'Arroz 5kg', 'UND', 2000000, 1500000, 30.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        // Cliente con cupo de $50.000 (5,000,000 centavos) y saldo actual de $40.000 (4,000,000 centavos)
+        conn.execute(
+            "INSERT INTO customers (id, name, tax_id, credit_limit_cents, current_balance_cents, is_credit_blocked, active)
+             VALUES (1, 'Cliente Cartera', '900123456', 5000000, 4000000, 0, 1)",
+            [],
+        )
+        .unwrap();
+
+        // 1. Venta a crédito por $20.000 supera el cupo disponible ($10.000) -> Debe bloquearse
+        let over_limit = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: Some(1),
+                items: vec![CartItemInput {
+                    product_id: Some(30),
+                    sku: None,
+                    barcode: None,
+                    description: "Arroz 5kg".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 2000000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "credit".into(),
+                    amount_cents: 2000000,
+                    reference: None,
+                }],
+            },
+        );
+        assert!(over_limit.is_err(), "Debe rechazar venta que excede el cupo de crédito");
+
+        // 2. Venta mixta ($10.000 en efectivo + $10.000 a crédito) cabe exactamente en el cupo ($40.000 + $10.000 = $50.000)
+        create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: Some(1),
+                items: vec![CartItemInput {
+                    product_id: Some(30),
+                    sku: None,
+                    barcode: None,
+                    description: "Arroz 5kg".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 2000000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![
+                    PaymentInput {
+                        method: "cash".into(),
+                        amount_cents: 1000000,
+                        reference: None,
+                    },
+                    PaymentInput {
+                        method: "credit".into(),
+                        amount_cents: 1000000,
+                        reference: None,
+                    },
+                ],
+            },
+        )
+        .expect("Venta mixta dentro del cupo de crédito debe aprobarse");
+
+        let new_balance: i64 = conn
+            .query_row(
+                "SELECT current_balance_cents FROM customers WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_balance, 5000000);
+    }
+
+    #[test]
+    fn test_sale_return_restock_vs_merma_and_double_return_guard() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (40, 'LECHE-1L', 'Leche Entera 1L', 'UND', 400000, 300000, 10.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Vender 4 unidades (stock baja de 10 a 6)
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(40),
+                    sku: None,
+                    barcode: None,
+                    description: "Leche Entera 1L".into(),
+                    quantity: 4.0,
+                    unit_price_cents: 400000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 1600000,
+                    reference: None,
+                }],
+            },
+        )
+        .unwrap();
+
+        let sale_item_id = sale.items[0].id;
+
+        // 1. Devolver 1 unidad con 'restock' -> Stock sube de 6 a 7
+        let ret1 = create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Cliente cambió de opinión".into(),
+                refund_method: "cash".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id,
+                    quantity: 1.0,
+                    inventory_disposition: Some("restock".into()),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(ret1.total_cents, 400000);
+        assert_eq!(ret1.return_type, "partial");
+
+        let stock_after_restock: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 40", [], |r| r.get(0))
+            .unwrap();
+        assert!((stock_after_restock - 7.0).abs() < 1e-6);
+
+        // 2. Devolver 1 unidad dañada con 'merma' -> Reembolsa $4.000 pero el stock vendible permanece en 7
+        let ret2 = create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Empaque roto".into(),
+                refund_method: "cash".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id,
+                    quantity: 1.0,
+                    inventory_disposition: Some("merma".into()),
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(ret2.total_cents, 400000);
+
+        let stock_after_merma: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 40", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            (stock_after_merma - 7.0).abs() < 1e-6,
+            "La devolución por merma no debe inflar el stock vendible"
+        );
+
+        // 3. Intentar devolver 3 unidades cuando solo quedan 2 por devolver (4 - 1 - 1 = 2) -> Debe fallar
+        let over_return = create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Intento excesivo".into(),
+                refund_method: "cash".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id,
+                    quantity: 3.0,
+                    inventory_disposition: Some("restock".into()),
+                }],
+            },
+        );
+        assert!(over_return.is_err(), "No debe permitir devolver más unidades de las compradas");
+    }
+
+    #[test]
+    fn test_sale_return_credit_crosses_customer_balance() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (50, 'ACEITE-1L', 'Aceite Vegetal 1L', 'UND', 900000, 700000, 15.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO customers (id, name, tax_id, credit_limit_cents, current_balance_cents, is_credit_blocked, active)
+             VALUES (2, 'Cliente Crédito Devolución', '800999111', 5000000, 0, 0, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Venta a crédito de 2 aceites ($18.000) -> Deuda del cliente sube a $18.000 (1,800,000 centavos)
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: Some(2),
+                items: vec![CartItemInput {
+                    product_id: Some(50),
+                    sku: None,
+                    barcode: None,
+                    description: "Aceite Vegetal 1L".into(),
+                    quantity: 2.0,
+                    unit_price_cents: 900000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "credit".into(),
+                    amount_cents: 1800000,
+                    reference: None,
+                }],
+            },
+        )
+        .unwrap();
+
+        // Devolver 1 aceite por cruce de cartera (`credit_balance`) -> Deuda baja de $18.000 a $9.000
+        create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Devolución a favor de cartera".into(),
+                refund_method: "credit_balance".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id: sale.items[0].id,
+                    quantity: 1.0,
+                    inventory_disposition: Some("restock".into()),
+                }],
+            },
+        )
+        .unwrap();
+
+        let updated_balance: i64 = conn
+            .query_row("SELECT current_balance_cents FROM customers WHERE id = 2", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(updated_balance, 900000);
+    }
 }

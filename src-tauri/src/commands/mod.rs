@@ -9,3 +9,4 @@ pub mod system;
 pub mod images;
 pub mod printers;
 pub mod license;
+pub mod excel_io;

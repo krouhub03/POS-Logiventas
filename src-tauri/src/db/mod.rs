@@ -1,4 +1,4 @@
-mod migrations;
+pub mod migrations;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};

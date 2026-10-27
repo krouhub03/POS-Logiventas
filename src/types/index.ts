@@ -8,10 +8,12 @@ export interface Product {
   categoryName?: string | null;
   unit: string;
   priceCents: number;
+  wholesalePriceCents?: number;
   costCents: number;
   taxRateBp: number;
   stock: number;
   minStock: number;
+  maxStock?: number;
   isService: boolean;
   controlsStock: boolean;
   allowNegativeStock: boolean;
@@ -51,10 +53,12 @@ export interface NewProduct {
   categoryId?: number | null;
   unit?: string;
   priceCents: number;
+  wholesalePriceCents?: number;
   costCents?: number;
   taxRateBp?: number;
   stock?: number;
   minStock?: number;
+  maxStock?: number;
   isService?: boolean;
   controlsStock?: boolean;
   allowNegativeStock?: boolean;
@@ -75,10 +79,12 @@ export interface UpdateProductInput {
   categoryId?: number | null;
   unit?: string;
   priceCents: number;
+  wholesalePriceCents?: number;
   costCents?: number;
   taxRateBp?: number;
   stock?: number;
   minStock?: number;
+  maxStock?: number;
   isService?: boolean;
   controlsStock?: boolean;
   allowNegativeStock?: boolean;
@@ -557,4 +563,59 @@ export interface PlanInfo {
   plan_expiration?: string; // ISO‑8601 date string
   plan_code?: string; // legacy code
   version: string;
+}
+
+// ---------- Importación / Exportación Excel (Eleventa & Metahabi) ----------
+export interface ParsedImportRow {
+  rowNumber: number;
+  code: string;
+  barcode: string | null;
+  name: string;
+  costCents: number;
+  priceCents: number;
+  wholesalePriceCents: number;
+  stock: number;
+  minStock: number;
+  maxStock: number;
+  department: string;
+  unit: string;
+  taxRateBp: number;
+  status: "new" | "existing" | "new_zero_stock" | "invalid";
+  warnings: string[];
+}
+
+export interface ImportPreviewResult {
+  detectedFormat: string;
+  totalRows: number;
+  validRows: number;
+  newWithStockCount: number;
+  newZeroStockCount: number;
+  existingCount: number;
+  invalidCount: number;
+  costWarningCount: number;
+  newDepartments: string[];
+  sampleRows: ParsedImportRow[];
+}
+
+export interface ImportOptionsInput {
+  updateExisting: boolean;
+  overwriteExistingStock: boolean;
+  zeroStockPolicy: "local_only" | "skip" | "set_one";
+  userId?: number;
+}
+
+export interface ImportExecutionResult {
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  departmentsCreated: number;
+  queuedForErpSync: number;
+  localOnlyZeroStock: number;
+}
+
+export interface ExportFileResult {
+  fileName: string;
+  base64Data: string;
+  savedPath?: string | null;
+  totalExported: number;
 }

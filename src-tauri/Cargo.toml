@@ -1,6 +1,6 @@
 [package]
 name = "pos-logiventa"
-version = "0.1.5"
+version = "0.1.6"
 description = "Metahabi POS - Sistema de punto de venta de escritorio desarrollado por Krouhub"
 authors = ["Krouhub <krouhub@gmail.com>", "Brian Krou"]
 edition = "2024"
@@ -30,6 +30,10 @@ bcrypt = "0.16"
 tokio = { version = "1", features = ["time"] }
 sha2 = "0.10"
 base64 = "0.22"
+quick-xml = "0.42"
+flate2 = "1.1"
+crc32fast = "1"
+zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

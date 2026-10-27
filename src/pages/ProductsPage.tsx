@@ -31,6 +31,7 @@ const PRESET_TAG_COLORS = [
 import { parseTags } from "../lib/tags";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
+import { ProductImportExportModal } from "../components/products/ProductImportExportModal";
 
 export { toAssetUrl };
 
@@ -62,6 +63,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   // Modales
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
+  const [excelModalTab, setExcelModalTab] = useState<"import" | "export">("import");
+  const [categoriesList, setCategoriesList] = useState<string[]>([]);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
 
@@ -87,11 +91,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [formBarcode, setFormBarcode] = useState("");
   const [formName, setFormName] = useState("");
   const [formPriceStr, setFormPriceStr] = useState("");
+  const [formWholesalePriceStr, setFormWholesalePriceStr] = useState("");
   const [formCostStr, setFormCostStr] = useState("");
   const [formTaxRateBp, setFormTaxRateBp] = useState<number>(0);
   const [formUnit, setFormUnit] = useState("pza");
   const [formStock, setFormStock] = useState<number>(0);
   const [formMinStock, setFormMinStock] = useState<number>(5);
+  const [formMaxStock, setFormMaxStock] = useState<number>(0);
   const [formTags, setFormTags] = useState("");
   const [formSubmitting, setFormSubmitting] = useState(false);
 
@@ -352,8 +358,12 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const loadProducts = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await api.products.list(search);
+      const [data, cats] = await Promise.all([
+        api.products.list(search),
+        api.categories.list().catch(() => [] as string[]),
+      ]);
       setProducts(data);
+      setCategoriesList(cats);
       setError(null);
     } catch (e: unknown) {
       setError(String(e));
@@ -502,11 +512,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormBarcode("");
     setFormName("");
     setFormPriceStr("");
+    setFormWholesalePriceStr("");
     setFormCostStr("");
     setFormTaxRateBp(0);
     setFormUnit(asService ? "serv" : "pza");
     setFormStock(asService || asBundle ? 0 : 1);
     setFormMinStock(asService ? 0 : 5);
+    setFormMaxStock(0);
     setFormTags("");
     setFormImagePreview(null);
     setFormImageBase64(null);
@@ -525,11 +537,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormBarcode(p.barcode || "");
     setFormName(p.name);
     setFormPriceStr((p.priceCents / 100).toFixed(2));
+    setFormWholesalePriceStr(((p.wholesalePriceCents ?? 0) / 100).toFixed(2));
     setFormCostStr((p.costCents / 100).toFixed(2));
     setFormTaxRateBp(p.taxRateBp);
     setFormUnit(p.unit);
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
+    setFormMaxStock(p.maxStock ?? 0);
     setFormTags(parseTags(p.tags, dbTags).join(", "));
     const initialPreview = toAssetUrl(p.imageLocalPath) || p.imageUrl || null;
     setFormImagePreview(initialPreview);
@@ -597,6 +611,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
 
     const priceCents = toCents(formPriceStr);
+    const wholesalePriceCents = toCents(formWholesalePriceStr || "0");
     const costCents = formIsBundle ? bundleTotalCostCents : toCents(formCostStr);
 
     if (priceCents < 0) {
@@ -658,11 +673,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           barcode: formBarcode.trim() || null,
           name: formName.trim(),
           priceCents,
+          wholesalePriceCents,
           costCents,
           taxRateBp: formTaxRateBp,
           unit: formUnit.trim() || (formIsService ? "serv" : "pza"),
           stock: formIsService || formIsBundle ? 0 : formStock,
           minStock: formIsService || formIsBundle ? 0 : formMinStock,
+          maxStock: formIsService || formIsBundle ? 0 : formMaxStock,
           isService: formIsService,
           controlsStock: !formIsService,
           allowNegativeStock: false,
@@ -697,11 +714,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           barcode: formBarcode.trim() || null,
           name: formName.trim(),
           priceCents,
+          wholesalePriceCents,
           costCents,
           taxRateBp: formTaxRateBp,
           unit: formUnit.trim() || (formIsService ? "serv" : "pza"),
           stock: formIsService || formIsBundle ? 0 : formStock,
           minStock: formIsService || formIsBundle ? 0 : formMinStock,
+          maxStock: formIsService || formIsBundle ? 0 : formMaxStock,
           isService: formIsService,
           controlsStock: !formIsService,
           allowNegativeStock: false,
@@ -839,7 +858,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   }, [isFormOpen, adjustingProduct, isTagsModalOpen, onBackToSales]);
 
   return (
-    <div className="flex flex-col h-screen w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
+    <div className="flex flex-col h-full min-h-0 w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
       {/* 1. BARRA SUPERIOR DE NAVEGACIÓN */}
       <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shrink-0 shadow-sm">
         <div className="flex items-center gap-3">
@@ -900,6 +919,17 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
         {/* Acciones principales */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setExcelModalTab("import");
+              setIsExcelModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer"
+            title="Importar catálogo de Eleventa (.xlsx) o exportar inventario a Excel"
+          >
+            <span>📗 Excel (Importar / Exportar)</span>
+          </button>
           <button
             type="button"
             disabled={syncingCatalog}
@@ -2032,9 +2062,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                       </div>
                     </div>
 
-                    {/* PRECIO DE VENTA Y COSTO */}
+                    {/* PRECIO DE VENTA, MAYOREO Y COSTO */}
                     <div className="space-y-2">
-                      <div className="grid grid-cols-3 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                         <div>
                           <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
                             Precio Venta ($) *
@@ -2054,6 +2084,21 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                                 ? "border-rose-500 text-rose-600 dark:text-rose-400 focus:ring-rose-500"
                                 : "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 focus:ring-emerald-500"
                             }`}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                            P. Mayoreo ($)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={formWholesalePriceStr}
+                            onChange={(e) => setFormWholesalePriceStr(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                           />
                         </div>
 
@@ -2127,7 +2172,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           <span>📦 Control de Existencias e Inventario</span>
                           <span className="text-[10px] font-normal text-slate-400">Control de stock en bodega</span>
                         </div>
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                           <div>
                             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                               Unidad
@@ -2174,6 +2219,20 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                               min="0"
                               value={formMinStock}
                               onChange={(e) => setFormMinStock(Number(e.target.value))}
+                              className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                              Stock Máximo
+                            </label>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={formMaxStock}
+                              onChange={(e) => setFormMaxStock(Number(e.target.value))}
                               className="w-full px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                           </div>
@@ -2836,6 +2895,18 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         title={lightboxData.title}
         subtitle={lightboxData.subtitle}
         productId={lightboxData.productId}
+      />
+
+      {/* Modal de Importación y Exportación Excel (Eleventa / Metahabi) */}
+      <ProductImportExportModal
+        isOpen={isExcelModalOpen}
+        initialTab={excelModalTab}
+        categories={categoriesList}
+        onClose={() => setIsExcelModalOpen(false)}
+        onImportSuccess={() => {
+          loadProducts();
+          showNotification("✓ Catálogo importado desde Excel y sincronización con ERP iniciada.");
+        }}
       />
 
     </div>

@@ -10,7 +10,7 @@ use crate::models::product::{
 
 const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
      p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, p.is_bundle, p.tags, p.tax_fixed_cents, c.name, \
-     p.image_url, p.image_local_path, p.image_hash, p.image_sync_status";
+     p.image_url, p.image_local_path, p.image_hash, p.image_sync_status, p.wholesale_price_cents, p.max_stock";
 const PRODUCT_FROM: &str = "products p LEFT JOIN categories c ON c.id = p.category_id";
 
 /// Calcula dinámicamente el stock disponible de un combo basado en sus componentes hijos.
@@ -97,6 +97,8 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let image_local_path: Option<String> = r.get(20).ok();
     let image_hash: Option<String> = r.get(21).ok();
     let image_sync_status: Option<String> = r.get(22).ok();
+    let wholesale_price_cents: i64 = r.get(23).unwrap_or(0);
+    let max_stock: f64 = r.get(24).unwrap_or(0.0);
 
     Ok(Product {
         id: r.get(0)?,
@@ -107,10 +109,12 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
         category_name,
         unit: r.get(5)?,
         price_cents: r.get(6)?,
+        wholesale_price_cents,
         cost_cents: r.get(7)?,
         tax_rate_bp: r.get(8)?,
         stock: r.get(9)?,
         min_stock: r.get(10)?,
+        max_stock,
         is_service: is_service_int != 0,
         controls_stock: is_service_int == 0,
         allow_negative_stock: false,
@@ -149,7 +153,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     let sql = format!(
         "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
          WHERE p.active = 1 AND (p.name LIKE ?1 OR p.sku LIKE ?1 OR p.barcode LIKE ?1 OR p.tags LIKE ?1) \
-         ORDER BY p.name LIMIT 300"
+         ORDER BY p.name LIMIT 2000"
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut products = stmt.query_map(params![pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;
@@ -229,6 +233,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         ));
     }
     let min_stock = if is_service || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
+    let max_stock = if is_service || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
+    let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
 
     let controls_stock = !is_service;
     let allow_negative_stock = false;
@@ -252,8 +258,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         "INSERT INTO products (sku, barcode, name, category_id, unit, price_cents, cost_cents, \
          tax_rate_bp, stock, min_stock, is_service, active, needs_erp_upload, \
          controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, \
-         image_url, image_local_path, image_hash, image_sync_status) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+         image_url, image_local_path, image_hash, image_sync_status, wholesale_price_cents, max_stock) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 1, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             input.sku.trim(),
             barcode_clean,
@@ -275,6 +281,8 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
             input.image_local_path,
             input.image_hash,
             image_sync_status,
+            wholesale_price_cents,
+            max_stock,
         ],
     )?;
 
@@ -341,6 +349,8 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
         ));
     }
     let min_stock = if !controls_stock || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
+    let max_stock = if !controls_stock || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
+    let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
     let active_int = if input.active.unwrap_or(true) { 1 } else { 0 };
 
     let mut conn = db.conn()?;
@@ -376,8 +386,9 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
          price_cents = ?6, cost_cents = ?7, tax_rate_bp = ?8, stock = ?9, \
          min_stock = ?10, is_service = ?11, active = ?12, needs_erp_upload = 1, \
          controls_stock = ?13, allow_negative_stock = ?14, is_bundle = ?15, tags = ?16, tax_fixed_cents = ?17, \
+         wholesale_price_cents = ?18, max_stock = ?19, \
          updated_at = datetime('now') \
-         WHERE id = ?18",
+         WHERE id = ?20",
         params![
             input.sku.trim(),
             barcode_clean,
@@ -396,6 +407,8 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
             if is_bundle { 1 } else { 0 },
             tags_val,
             tax_fixed_cents,
+            wholesale_price_cents,
+            max_stock,
             input.id,
         ],
     )?;
@@ -436,6 +449,14 @@ pub fn delete_product(db: State<'_, Db>, id: i64) -> AppResult<()> {
 /// Ajuste manual o corrección de existencias de un producto físico (F4: Inventario).
 #[tauri::command]
 pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult<Product> {
+    let mut conn = db.conn()?;
+    adjust_stock_in_conn(&mut conn, input)
+}
+
+pub fn adjust_stock_in_conn(
+    conn: &mut rusqlite::Connection,
+    input: StockAdjustmentInput,
+) -> AppResult<Product> {
     if input.product_id <= 0 {
         return Err(AppError::Validation("ID de producto inválido".into()));
     }
@@ -443,7 +464,6 @@ pub fn adjust_stock(db: State<'_, Db>, input: StockAdjustmentInput) -> AppResult
         return Err(AppError::Validation("La existencia no puede ser negativa".into()));
     }
 
-    let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
     // Verificar si existe y si es servicio o combo
@@ -741,5 +761,71 @@ pub fn save_product_components(
     tx.commit()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_inventory_manual_adjustment_kardex_and_prevent_negative() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'admin1', 'Admin Inventario', 'admin', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, is_bundle, controls_stock, active)
+             VALUES (100, 'KARDEX-01', '7709991', 'Producto Kardex', 'UND', 500000, 300000, 10.0, 0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // 1. Ajustar stock de 10.0 a 25.0 (+15.0 unidades)
+        let updated = adjust_stock_in_conn(
+            &mut conn,
+            StockAdjustmentInput {
+                product_id: 100,
+                new_stock: 25.0,
+                reason: "Conteo físico inicial".into(),
+                user_id: Some(1),
+            },
+        )
+        .unwrap();
+        assert!((updated.stock - 25.0).abs() < 1e-6);
+
+        // Verificar movimiento en inventory_movements (+15.0) y flag needs_erp_upload = 1
+        let (mov_qty, mov_ref): (f64, String) = conn
+            .query_row(
+                "SELECT quantity, reference FROM inventory_movements WHERE product_id = 100 ORDER BY id DESC LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((mov_qty - 15.0).abs() < 1e-6);
+        assert_eq!(mov_ref, "Conteo físico inicial");
+
+        let needs_upload: i64 = conn
+            .query_row("SELECT needs_erp_upload FROM products WHERE id = 100", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(needs_upload, 1);
+
+        // 2. Intentar ajustar a stock negativo (-5.0) debe ser bloqueado
+        let neg_err = adjust_stock_in_conn(
+            &mut conn,
+            StockAdjustmentInput {
+                product_id: 100,
+                new_stock: -5.0,
+                reason: "Error digitación".into(),
+                user_id: Some(1),
+            },
+        );
+        assert!(neg_err.is_err(), "No debe permitir existencia negativa");
+    }
+}
+
 
 

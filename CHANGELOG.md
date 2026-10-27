@@ -5,6 +5,24 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.6] - 2026-10-26
+
+### Agregado
+- **Importación y Exportación Nativa de Productos Excel (`.xlsx` Compatible con Eleventa):** Motor de procesamiento en Rust (`excel_io.rs`) y asistente interactivo de 3 pasos (`ProductImportExportModal.tsx`) con previsualización inteligente, detección de productos nuevos vs actualizaciones, creación automática de Departamentos/Categorías y exportación completa del inventario.
+- **Soporte de Precio Mayoreo e Inventario Máximo (`0027_eleventa_fields.sql`):** Incorporación de los campos `wholesale_price_cents` y `max_stock` en base de datos local, modelos de dominio y formulario de catálogo.
+- **Sincronización Masiva por Lotes con el ERP:** Subida automática de productos importados en bloques de 50 registros hacia el ERP, preservando los departamentos locales y evitando ciclos innecesarios en productos con existencia `0`.
+- **Batería de 17 Pruebas Automatizadas de Integridad Financiera e Inventario (`cargo test`):** Cobertura integral para ventas con IVA/Impoconsumo, cambio en efectivo, pagos mixtos, combos/kits con stock compartido, límites de crédito, devoluciones (`restock` vs `merma`), arqueos de turno (Corte Z), Kardex y abonos a cartera.
+
+### Cambiado
+- **Ajuste Responsivo Integral de Estación de Ventas (`Zero-Cutoff`):** Reestructuración de contenedores principales (`flex-1 min-h-0` y `shrink-0`) en `App.tsx`, `SalesStationPage.tsx`, `ProductsPage.tsx` y `SettingsPage.tsx` para descontar dinámicamente la altura del banner superior de licencia y garantizar que el pie de página (`TOTAL A PAGAR` y botón `F12 COBRAR`) sea 100% visible en cualquier resolución de pantalla.
+
+### Corregido
+- **Cuadre Exacto de Efectivo Neto y Cambio en Gaveta (`0028_sales_paid_and_change_cents.sql`):** Cuando el cliente paga en efectivo con un billete mayor al total de la venta, `payments` almacena ahora el efectivo neto retenido en el cajón mientras `sales` conserva `paid_cents` y `change_cents` para la tirilla térmica, eliminando faltantes falsos en el arqueo de caja.
+- **Totales Exactos en Ventas con Pago Mixto (`shifts.rs`):** Desacoplamiento de las consultas SQL de cabecera de ventas y desglose de medios de pago para evitar que ventas con 2 o más métodos dupliquen `total_sales_cents` en el cierre de turno.
+- **Resolución de Medios de Pago y Tope de Abonos en Cartera (`customers.rs`):** Resolución automática de `payment_method_id` por código o ID interno (evitando errores `FOREIGN KEY constraint failed`), bloqueo de abonos que superen la deuda actual del cliente y preservación de devoluciones offline pendientes durante la sincronización de catálogo.
+
+---
+
 ## [0.1.5] - 2026-10-20
 ### Agregado
 - Actualización y optimizaciones del sistema.

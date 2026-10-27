@@ -38,6 +38,10 @@ import type {
   UpdateProductInput,
   VerifyStockResult,
   PlanInfo,
+  ImportPreviewResult,
+  ImportOptionsInput,
+  ImportExecutionResult,
+  ExportFileResult,
 } from "../types";
 
 /**
@@ -108,6 +112,18 @@ export const api = {
       invoke<Product>("delete_product_image_local", { productId }),
     getImageBase64: (productId: number) =>
       invoke<string | null>("get_product_image_base64", { productId }),
+    previewImportXlsx: (fileBase64: string) =>
+      invoke<ImportPreviewResult>("preview_products_xlsx", { fileBase64 }),
+    executeImportXlsx: (fileBase64: string, options: ImportOptionsInput) =>
+      invoke<ImportExecutionResult>("execute_products_xlsx_import", {
+        fileBase64,
+        options,
+      }),
+    exportXlsx: (format: "eleventa" | "metahabi" | "template", categoryFilter?: string) =>
+      invoke<ExportFileResult>("export_products_xlsx", {
+        format,
+        categoryFilter,
+      }),
   },
 
   categories: {

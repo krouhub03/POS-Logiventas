@@ -244,11 +244,18 @@ pub async fn record_customer_payment(
     db: State<'_, Db>,
     input: RecordCustomerPaymentInput,
 ) -> Result<CustomerPaymentDto, String> {
+    let mut conn = db.conn().map_err(|e| e.to_string())?;
+    record_customer_payment_in_conn(&mut conn, input)
+}
+
+pub fn record_customer_payment_in_conn(
+    conn: &mut rusqlite::Connection,
+    input: RecordCustomerPaymentInput,
+) -> Result<CustomerPaymentDto, String> {
     if input.amount_cents <= 0 {
         return Err("El monto del abono debe ser mayor a 0".into());
     }
 
-    let mut conn = db.conn().map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // 1. Obtener datos actuales del cliente
@@ -259,6 +266,22 @@ pub async fn record_customer_payment(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .map_err(|_| format!("Cliente con ID {} no encontrado", input.customer_id))?;
+
+    if current_balance <= 0 {
+        return Err(format!(
+            "El cliente '{}' no tiene saldo pendiente por cobrar (Saldo actual: $0.00)",
+            customer_name
+        ));
+    }
+
+    if input.amount_cents > current_balance {
+        return Err(format!(
+            "El abono (${:.2}) no puede superar la deuda actual del cliente '{}' (${:.2})",
+            input.amount_cents as f64 / 100.0,
+            customer_name,
+            current_balance as f64 / 100.0
+        ));
+    }
 
     let previous_balance_cents = current_balance;
     let new_balance_cents = previous_balance_cents - input.amount_cents;
@@ -294,6 +317,21 @@ pub async fn record_customer_payment(
     )
     .map_err(|e| format!("Error actualizando balance de cliente: {}", e))?;
 
+    // Resolver ID real en payment_methods (acepta id, code o erp_code; si no existe en catálogo, usa NULL para no romper FK)
+    let candidate_pm = input
+        .payment_method_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&input.method);
+
+    let resolved_pm_id: Option<String> = tx
+        .query_row(
+            "SELECT id FROM payment_methods WHERE id = ?1 OR LOWER(code) = LOWER(?1) OR LOWER(erp_code) = LOWER(?1) LIMIT 1",
+            params![candidate_pm],
+            |r| r.get(0),
+        )
+        .ok();
+
     // 5. Registrar en customer_payments
     tx.execute(
         "INSERT INTO customer_payments (folio, customer_id, session_id, user_id, payment_method_id, amount_cents, previous_balance_cents, new_balance_cents, reference, notes) \
@@ -303,7 +341,7 @@ pub async fn record_customer_payment(
             input.customer_id,
             active_shift_id,
             input.user_id,
-            input.payment_method_id,
+            resolved_pm_id,
             input.amount_cents,
             previous_balance_cents,
             new_balance_cents,
@@ -428,3 +466,79 @@ pub async fn get_customer_payments(
     }
     Ok(list)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_customer_payment_abono_reduces_balance_and_prevents_overpayment() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Cajero Cartera', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cash_sessions (id, folio, user_id, opening_cents, status, opened_at) VALUES (1, 'T-CAJA01-99', 1, 5000000, 'open', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO customers (id, name, tax_id, credit_limit_cents, current_balance_cents, is_credit_blocked, active)
+             VALUES (10, 'Cliente Deudor', '10203040', 5000000, 2000000, 0, 1)",
+            [],
+        )
+        .unwrap();
+
+        // 1. Abono válido de $12.000 (1,200,000 centavos) sobre deuda de $20.000 (2,000,000 centavos)
+        let payment = record_customer_payment_in_conn(
+            &mut conn,
+            RecordCustomerPaymentInput {
+                customer_id: 10,
+                user_id: 1,
+                payment_method_id: Some("cash".into()),
+                method: "cash".into(),
+                amount_cents: 1200000,
+                reference: Some("REC-01".into()),
+                notes: Some("Abono parcial".into()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(payment.previous_balance_cents, 2000000);
+        assert_eq!(payment.new_balance_cents, 800000);
+        assert_eq!(payment.session_id, Some(1));
+
+        // 2. Intentar abonar $10.000 (1,000,000 centavos) cuando solo debe $8.000 (800,000 centavos) debe fallar
+        let over_abono = record_customer_payment_in_conn(
+            &mut conn,
+            RecordCustomerPaymentInput {
+                customer_id: 10,
+                user_id: 1,
+                payment_method_id: Some("cash".into()),
+                method: "cash".into(),
+                amount_cents: 1000000,
+                reference: None,
+                notes: None,
+            },
+        );
+        assert!(
+            over_abono.is_err(),
+            "Debe impedir abonos que superen la deuda actual del cliente"
+        );
+
+        let final_balance: i64 = conn
+            .query_row(
+                "SELECT current_balance_cents FROM customers WHERE id = 10",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(final_balance, 800000);
+    }
+}
+

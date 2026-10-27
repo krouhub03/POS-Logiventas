@@ -297,20 +297,25 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     };
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(30))
         .build()?;
 
     // 0. Despachar Outbox primero para que el ERP consolide ventas antes de retornarnos el stock
     let _ = dispatch_outbox_internal(db).await;
 
     // 1. Extraer productos creados o modificados localmente en el POS para subir al ERP
+    // Nota: El ERP requiere stock > 0 para dar de alta productos físicos nuevos (sin erp_id).
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle \
-             FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
+            "SELECT p.id, p.sku, p.barcode, p.name, p.unit, p.is_service, p.price_cents, p.cost_cents, \
+                    p.tax_rate_bp, p.stock, p.min_stock, p.tags, p.is_bundle, COALESCE(c.name, 'General') \
+             FROM products p \
+             LEFT JOIN categories c ON c.id = p.category_id \
+             WHERE p.active = 1 AND p.needs_erp_upload = 1 \
+               AND (p.erp_id IS NOT NULL OR p.is_service = 1 OR p.is_bundle = 1 OR p.stock > 0)",
         )?;
-        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64)> = stmt
+        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64, String)> = stmt
             .query_map([], |r| {
                 Ok((
                     r.get(0)?,
@@ -326,13 +331,14 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     r.get(10)?,
                     r.get::<_, Option<String>>(11)?.unwrap_or_default(),
                     r.get::<_, i64>(12).unwrap_or(0),
+                    r.get::<_, String>(13).unwrap_or_else(|_| "General".to_string()),
                 ))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
         let mut list = Vec::new();
-        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle) in rows {
+        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle, category_name) in rows {
             let mut components_json = Vec::new();
             if is_bundle == 1 {
                 if let Ok(mut c_stmt) = conn.prepare(
@@ -353,6 +359,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "sku": sku,
                 "barcode": barcode,
                 "name": name,
+                "category": category_name,
                 "unit": unit,
                 "is_service": is_service,
                 "is_bundle": is_bundle,
@@ -368,7 +375,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         list
     };
 
-    // 2. Subir productos locales modificados o nuevos hacia el ERP
+    // 2. Subir productos locales modificados o nuevos hacia el ERP en lotes seguros de 50
     let mut uploaded_stocks_by_sku: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for item in &unsynced_products {
         if let (Some(s), Some(st)) = (item["sku"].as_str(), item["stock"].as_f64()) {
@@ -378,25 +385,27 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
 
     if !unsynced_products.is_empty() {
         let post_url = format!("{}/api/pos/v1/sync/productos", erp_url.trim_end_matches('/'));
-        if let Ok(res) = client
-            .post(&post_url)
-            .header("Authorization", format!("Bearer {token}"))
-            .json(&serde_json::json!({ "products": unsynced_products }))
-            .send()
-            .await
-        {
-            if res.status().is_success() {
-                if let Ok(json) = res.json::<Value>().await {
-                    if let Some(arr) = json["data"]["productos"].as_array() {
-                        let conn = db.conn()?;
-                        for item in arr {
-                            let sku = item["sku"].as_str().unwrap_or_default();
-                            let erp_id = item["erpId"].as_str().unwrap_or_default();
-                            if !sku.is_empty() && !erp_id.is_empty() {
-                                let _ = conn.execute(
-                                    "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE sku = ?2",
-                                    params![erp_id, sku],
-                                );
+        for chunk in unsynced_products.chunks(50) {
+            if let Ok(res) = client
+                .post(&post_url)
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&serde_json::json!({ "products": chunk }))
+                .send()
+                .await
+            {
+                if res.status().is_success() {
+                    if let Ok(json) = res.json::<Value>().await {
+                        if let Some(arr) = json["data"]["productos"].as_array() {
+                            let conn = db.conn()?;
+                            for item in arr {
+                                let sku = item["sku"].as_str().unwrap_or_default();
+                                let erp_id = item["erpId"].as_str().unwrap_or_default();
+                                if !sku.is_empty() && !erp_id.is_empty() {
+                                    let _ = conn.execute(
+                                        "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE sku = ?2",
+                                        params![erp_id, sku],
+                                    );
+                                }
                             }
                         }
                     }
@@ -533,36 +542,21 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             }
         }
 
-        // Calcular ventas locales pendientes en cola que aún no se reflejan en el ERP (directas + como componente de combos)
-        let pending_sold: f64 = if let Some(local_id) = local_match {
-            let direct_sold: f64 = tx.query_row(
-                "SELECT COALESCE(SUM(si.quantity), 0) \
-                 FROM sale_items si \
-                 JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                 WHERE si.product_id = ?1 AND sq.status != 'synced'",
-                params![local_id],
-                |r| r.get(0),
-            ).unwrap_or(0.0);
-
-            let combo_sold: f64 = tx.query_row(
-                "SELECT COALESCE(SUM(si.quantity * pc.quantity), 0) \
-                 FROM sale_items si \
-                 JOIN product_components pc ON pc.parent_product_id = si.product_id \
-                 JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                 WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
-                params![local_id],
-                |r| r.get(0),
-            ).unwrap_or(0.0);
-
-            direct_sold + combo_sold
+        // Calcular delta neto de inventario pendiente en sync_queue (ventas locales no sincronizadas y devoluciones restock no sincronizadas)
+        let pending_net_delta: f64 = if let Some(local_id) = local_match {
+            compute_pending_stock_delta(&tx, local_id)
         } else {
             0.0
         };
 
-        let effective_stock = if controls_stock == 0 { 0.0 } else { (stock - pending_sold).max(0.0) };
+        let effective_stock = if controls_stock == 0 {
+            0.0
+        } else {
+            (stock + pending_net_delta).max(0.0)
+        };
 
         let category_str = p["category"].as_str().unwrap_or("General").trim();
-        let category_id: Option<i64> = if !category_str.is_empty() {
+        let erp_category_id: Option<i64> = if !category_str.is_empty() && !category_str.eq_ignore_ascii_case("General") {
             let _ = tx.execute(
                 "INSERT INTO categories (name, active) VALUES (?1, 1) ON CONFLICT(name) DO NOTHING",
                 params![category_str],
@@ -572,6 +566,17 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 params![category_str],
                 |r| r.get(0),
             ).ok()
+        } else {
+            None
+        };
+
+        // Si el ERP devuelve "General" pero el producto local ya tenía un Departamento específico (ej. importado de Eleventa), preservar el local
+        let category_id: Option<i64> = if erp_category_id.is_some() {
+            erp_category_id
+        } else if let Some(lid) = local_match {
+            tx.query_row("SELECT category_id FROM products WHERE id = ?1", params![lid], |r| r.get::<_, Option<i64>>(0))
+                .ok()
+                .flatten()
         } else {
             None
         };
@@ -597,7 +602,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             (local_stock, 1_i64)
         } else if let Some(&just_uploaded_stock) = uploaded_stocks_by_sku.get(sku) {
             if just_uploaded_stock > 0.0 && effective_stock <= 0.0 && is_service == 0 && is_bundle == 0 {
-                ((just_uploaded_stock - pending_sold).max(0.0), 1_i64)
+                ((just_uploaded_stock + pending_net_delta).max(0.0), 1_i64)
             } else {
                 (effective_stock, 0_i64)
             }
@@ -1504,7 +1509,7 @@ pub async fn get_sync_status_internal(db: &Db) -> AppResult<SyncStatusDto> {
 
         let pending_products_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
+                "SELECT COUNT(*) FROM products WHERE active = 1 AND needs_erp_upload = 1 AND (erp_id IS NOT NULL OR is_service = 1 OR is_bundle = 1 OR stock > 0)",
                 [],
                 |r| r.get(0),
             )
@@ -1575,7 +1580,7 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 .ok()
                 .and_then(|c| {
                     c.query_row(
-                        "SELECT COUNT(*) FROM products WHERE active = 1 AND (erp_id IS NULL OR needs_erp_upload = 1)",
+                        "SELECT COUNT(*) FROM products WHERE active = 1 AND needs_erp_upload = 1 AND (erp_id IS NOT NULL OR is_service = 1 OR is_bundle = 1 OR stock > 0)",
                         [],
                         |r| r.get::<_, i64>(0),
                     )
@@ -1605,3 +1610,146 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
         }
     });
 }
+
+/// Calcula el delta neto de unidades pendientes de sincronizar en `sync_queue` para un producto local:
+/// `pending_returned (restock) - pending_sold (directas + combos)`
+pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -> f64 {
+    let direct_sold: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(si.quantity), 0) \
+             FROM sale_items si \
+             JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+             WHERE si.product_id = ?1 AND sq.status != 'synced'",
+            params![local_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let combo_sold: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(si.quantity * pc.quantity), 0) \
+             FROM sale_items si \
+             JOIN product_components pc ON pc.parent_product_id = si.product_id \
+             JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+             WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
+            params![local_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let direct_returned: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(sri.quantity), 0) \
+             FROM sale_return_items sri \
+             JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
+             WHERE sri.product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status != 'synced'",
+            params![local_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let combo_returned: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(sri.quantity * pc.quantity), 0) \
+             FROM sale_return_items sri \
+             JOIN product_components pc ON pc.parent_product_id = sri.product_id \
+             JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
+             WHERE pc.child_product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status != 'synced'",
+            params![local_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    (direct_returned + combo_returned) - (direct_sold + combo_sold)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::sales::{create_sale_in_conn, create_sale_return_in_conn};
+    use crate::models::sale::{
+        CartItemInput, CreateSaleInput, CreateSaleReturnInput, CreateSaleReturnItemInput,
+        PaymentInput,
+    };
+
+    #[test]
+    fn test_sync_catalog_preserves_pending_sales_and_pending_returns() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Cajero Sync', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cash_sessions (id, folio, user_id, opening_cents, status, opened_at) VALUES (1, 'T-SYNC-01', 1, 5000000, 'open', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        // Producto con stock inicial = 20 en el ERP y en el POS
+        conn.execute(
+            "INSERT INTO products (id, erp_id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (77, 'erp-prod-77', 'SYNC-77', 'Producto Offline Sync', 'UND', 500000, 300000, 20.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // 1. Cajero vende 5 unidades offline (queda pendiente en sync_queue, stock local baja a 15)
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(77),
+                    sku: Some("SYNC-77".into()),
+                    barcode: None,
+                    description: "Producto Offline Sync".into(),
+                    quantity: 5.0,
+                    unit_price_cents: 500000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 2500000,
+                    reference: None,
+                }],
+            },
+        )
+        .unwrap();
+
+        // 2. Cajero procesa devolución con reingreso ('restock') de 2 unidades offline (pendiente en sync_queue, stock local sube a 17)
+        create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Devolución parcial offline".into(),
+                refund_method: "cash".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id: sale.items[0].id,
+                    quantity: 2.0,
+                    inventory_disposition: Some("restock".into()),
+                }],
+            },
+        )
+        .unwrap();
+
+        // 3. El delta neto pendiente en sync_queue debe ser: +2 (devueltas) - 5 (vendidas) = -3.0
+        let pending_delta = compute_pending_stock_delta(&conn, 77);
+        assert!((pending_delta - (-3.0)).abs() < 1e-6);
+
+        // Si el ERP aún informa stock = 20.0 antes de que el outbox termine de subir,
+        // el stock efectivo calculado por sync_catalog debe ser 20.0 + (-3.0) = 17.0 (preservando la venta y la devolución)
+        let erp_reported_stock = 20.0;
+        let effective_stock = (erp_reported_stock + pending_delta).max(0.0);
+        assert!((effective_stock - 17.0).abs() < 1e-6);
+    }
+}
+
+

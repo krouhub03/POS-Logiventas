@@ -11,10 +11,12 @@ pub struct Product {
     pub category_name: Option<String>,
     pub unit: String,
     pub price_cents: i64,
+    pub wholesale_price_cents: i64,
     pub cost_cents: i64,
     pub tax_rate_bp: i64,
     pub stock: f64,
     pub min_stock: f64,
+    pub max_stock: f64,
     pub is_service: bool,
     pub controls_stock: bool,
     pub allow_negative_stock: bool,
@@ -31,6 +33,7 @@ pub struct Product {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct NewProduct {
     pub sku: String,
     pub barcode: Option<String>,
@@ -38,10 +41,12 @@ pub struct NewProduct {
     pub category_id: Option<i64>,
     pub unit: Option<String>,
     pub price_cents: i64,
+    pub wholesale_price_cents: Option<i64>,
     pub cost_cents: Option<i64>,
     pub tax_rate_bp: Option<i64>,
     pub stock: Option<f64>,
     pub min_stock: Option<f64>,
+    pub max_stock: Option<f64>,
     pub is_service: Option<bool>,
     pub controls_stock: Option<bool>,
     pub allow_negative_stock: Option<bool>,
@@ -55,6 +60,7 @@ pub struct NewProduct {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct UpdateProductInput {
     pub id: i64,
     pub sku: String,
@@ -63,10 +69,12 @@ pub struct UpdateProductInput {
     pub category_id: Option<i64>,
     pub unit: Option<String>,
     pub price_cents: i64,
+    pub wholesale_price_cents: Option<i64>,
     pub cost_cents: Option<i64>,
     pub tax_rate_bp: Option<i64>,
     pub stock: Option<f64>,
     pub min_stock: Option<f64>,
+    pub max_stock: Option<f64>,
     pub is_service: Option<bool>,
     pub controls_stock: Option<bool>,
     pub allow_negative_stock: Option<bool>,

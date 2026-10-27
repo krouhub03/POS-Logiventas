@@ -31,6 +31,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0023_sale_returns_and_reprints.sql"),
     include_str!("../../migrations/0025_add_plan_settings.sql"),
     include_str!("../../migrations/0026_user_permission_audit.sql"),
+    include_str!("../../migrations/0027_eleventa_fields.sql"),
+    include_str!("../../migrations/0028_sales_paid_and_change_cents.sql"),
 ];
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {

@@ -1,5 +1,5 @@
 use reqwest::Client;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use serde_json::json;
 use std::time::Duration;
 use tauri::State;
@@ -62,11 +62,10 @@ pub fn get_active_shift(db: State<'_, Db>) -> AppResult<Option<CashShift>> {
     internal_get_active_shift(&conn)
 }
 
-#[tauri::command]
-pub async fn open_shift(
-    db: State<'_, Db>,
+pub fn open_shift_in_conn(
+    conn: &Connection,
     user_id: i64,
-    input: OpenShiftInput,
+    input: &OpenShiftInput,
 ) -> AppResult<CashShift> {
     if input.opening_cents < 0 {
         return Err(AppError::Validation(
@@ -74,107 +73,46 @@ pub async fn open_shift(
         ));
     }
 
-    let (caja_codigo, erp_url, terminal_token, erp_user_id) = {
-        let conn = db.conn()?;
-
-        // Verificar que no haya un turno ya abierto
-        let existe_abierto: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
-            [],
-            |r| r.get(0),
-        )?;
-        if existe_abierto > 0 {
-            return Err(AppError::Validation(
-                "Ya existe un turno de caja abierto en esta terminal".into(),
-            ));
-        }
-
-        let caja = get_setting(&conn, "caja_codigo").unwrap_or_else(|| "CAJA-01".into());
-        let erp_u = get_setting(&conn, "erp_url");
-        let token = get_setting(&conn, "terminal_token");
-        let erp_uid: Option<String> = conn
-            .query_row(
-                "SELECT erp_user_id FROM users WHERE id = ?1",
-                params![user_id],
-                |r| r.get(0),
-            )
-            .ok()
-            .flatten();
-
-        (caja, erp_u, token, erp_uid)
-    };
-
-    let shift_id: i64;
-    let folio: String;
-    let opened_at: String;
-
-    {
-        let conn = db.conn()?;
-        let today: String = conn.query_row(
-            "SELECT strftime('%Y%m%d', 'now', 'localtime')",
-            [],
-            |r| r.get(0),
-        )?;
-
-        let count_today: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM cash_sessions WHERE opened_at >= date('now', 'localtime')",
-            [],
-            |r| r.get(0),
-        )?;
-
-        folio = format!("T-{}-{}-{:02}", caja_codigo, today, count_today + 1);
-
-        conn.execute(
-            "INSERT INTO cash_sessions (folio, user_id, opening_cents, notes, status, opened_at)
-             VALUES (?1, ?2, ?3, ?4, 'open', datetime('now'))",
-            params![folio, user_id, input.opening_cents, input.notes],
-        )?;
-
-        shift_id = conn.last_insert_rowid();
-
-        opened_at = conn.query_row(
-            "SELECT opened_at FROM cash_sessions WHERE id = ?1",
-            params![shift_id],
-            |r| r.get(0),
-        )?;
+    let existe_abierto: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+        [],
+        |r| r.get(0),
+    )?;
+    if existe_abierto > 0 {
+        return Err(AppError::Validation(
+            "Ya existe un turno de caja abierto en esta terminal".into(),
+        ));
     }
 
-    // Intentar sincronizar con el ERP (M2M) si hay red y token
-    let mut erp_turno_id: Option<String> = None;
-    if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
-        let clean_url = url.trim_end_matches('/');
-        let api_url = format!("{}/api/pos/v1/sync/turno", clean_url);
-        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+    let caja_codigo = get_setting(conn, "caja_codigo").unwrap_or_else(|| "CAJA-01".into());
+    let today: String = conn.query_row(
+        "SELECT strftime('%Y%m%d', 'now', 'localtime')",
+        [],
+        |r| r.get(0),
+    )?;
 
-        let body = json!({
-            "folioTurno": folio,
-            "baseInicial": (input.opening_cents as f64) / 100.0,
-            "erpUserId": uid,
-        });
+    let count_today: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM cash_sessions WHERE opened_at >= date('now', 'localtime')",
+        [],
+        |r| r.get(0),
+    )?;
 
-        if let Ok(res) = client
-            .post(&api_url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(&body)
-            .send()
-            .await
-        {
-            if res.status().is_success() {
-                if let Ok(json_res) = res.json::<serde_json::Value>().await {
-                    if let Some(tid) = json_res["data"]["turno"]["id"].as_str() {
-                        erp_turno_id = Some(tid.to_string());
-                        let conn = db.conn()?;
-                        let _ = conn.execute(
-                            "UPDATE cash_sessions SET erp_turno_id = ?1 WHERE id = ?2",
-                            params![tid, shift_id],
-                        );
-                    }
-                }
-            }
-        }
-    }
+    let folio = format!("T-{}-{}-{:02}", caja_codigo, today, count_today + 1);
 
-    let conn = db.conn()?;
+    conn.execute(
+        "INSERT INTO cash_sessions (folio, user_id, opening_cents, notes, status, opened_at)
+         VALUES (?1, ?2, ?3, ?4, 'open', datetime('now'))",
+        params![folio, user_id, input.opening_cents, input.notes],
+    )?;
+
+    let shift_id = conn.last_insert_rowid();
+
+    let opened_at: String = conn.query_row(
+        "SELECT opened_at FROM cash_sessions WHERE id = ?1",
+        params![shift_id],
+        |r| r.get(0),
+    )?;
+
     let user_name: Option<String> = conn
         .query_row(
             "SELECT full_name FROM users WHERE id = ?1",
@@ -195,51 +133,118 @@ pub async fn open_shift(
         expected_cents: None,
         declared_cents: None,
         difference_cents: None,
-        notes: input.notes,
+        notes: input.notes.clone(),
         status: "open".into(),
-        erp_turno_id,
+        erp_turno_id: None,
     })
+}
+
+#[tauri::command]
+pub async fn open_shift(
+    db: State<'_, Db>,
+    user_id: i64,
+    input: OpenShiftInput,
+) -> AppResult<CashShift> {
+    let (mut shift, erp_url, terminal_token, erp_user_id) = {
+        let conn = db.conn()?;
+        let created = open_shift_in_conn(&conn, user_id, &input)?;
+        let erp_u = get_setting(&conn, "erp_url");
+        let token = get_setting(&conn, "terminal_token");
+        let erp_uid: Option<String> = conn
+            .query_row(
+                "SELECT erp_user_id FROM users WHERE id = ?1",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        (created, erp_u, token, erp_uid)
+    };
+
+    // Intentar sincronizar con el ERP (M2M) si hay red y token
+    if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
+        let clean_url = url.trim_end_matches('/');
+        let api_url = format!("{}/api/pos/v1/sync/turno", clean_url);
+        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+
+        let body = json!({
+            "folioTurno": shift.folio,
+            "baseInicial": (input.opening_cents as f64) / 100.0,
+            "erpUserId": uid,
+        });
+
+        if let Ok(res) = client
+            .post(&api_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&body)
+            .send()
+            .await
+        {
+            if res.status().is_success() {
+                if let Ok(json_res) = res.json::<serde_json::Value>().await {
+                    if let Some(tid) = json_res["data"]["turno"]["id"].as_str() {
+                        shift.erp_turno_id = Some(tid.to_string());
+                        let conn = db.conn()?;
+                        let _ = conn.execute(
+                            "UPDATE cash_sessions SET erp_turno_id = ?1 WHERE id = ?2",
+                            params![tid, shift.id],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(shift)
 }
 
 #[tauri::command]
 pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
     let conn = db.conn()?;
-    let shift = internal_get_active_shift(&conn)?
+    get_shift_summary_in_conn(&conn)
+}
+
+pub fn get_shift_summary_in_conn(conn: &Connection) -> AppResult<ShiftSummary> {
+    let shift = internal_get_active_shift(conn)?
         .ok_or_else(|| AppError::Validation("No hay un turno de caja abierto actualmente".into()))?;
 
-    let row = conn.query_row(
+    // 1. Totales de cabecera de ventas desacoplados del JOIN de pagos para evitar duplicación en pagos mixtos
+    let (sales_count, total_sales_cents, total_tax_cents): (i64, i64, i64) = conn.query_row(
         "SELECT 
-            COUNT(DISTINCT s.id) as sales_count,
+            COUNT(s.id) as sales_count,
             COALESCE(SUM(s.total_cents), 0) as total_sales_cents,
-            COALESCE(SUM(s.tax_cents), 0) as total_tax_cents,
-            COALESCE(SUM(CASE WHEN p.method = 'cash' THEN p.amount_cents ELSE 0 END), 0) as cash_cents,
-            COALESCE(SUM(CASE WHEN p.method = 'card' THEN p.amount_cents ELSE 0 END), 0) as card_cents,
-            COALESCE(SUM(CASE WHEN p.method = 'transfer' THEN p.amount_cents ELSE 0 END), 0) as transfer_cents,
-            COALESCE(SUM(CASE WHEN p.method NOT IN ('cash', 'card', 'transfer') THEN p.amount_cents ELSE 0 END), 0) as other_cents
+            COALESCE(SUM(s.tax_cents), 0) as total_tax_cents
          FROM sales s
-         LEFT JOIN payments p ON p.sale_id = s.id
          WHERE s.cash_session_id = ?1 AND s.status = 'completed'",
         params![shift.id],
-        |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, i64>(5)?,
-                r.get::<_, i64>(6)?,
-            ))
-        },
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
 
-    let sales_count = row.0;
-    let total_sales_cents = row.1;
-    let total_tax_cents = row.2;
-    let cash_sales_cents = row.3;
-    let card_sales_cents = row.4;
-    let transfer_sales_cents = row.5;
-    let other_sales_cents = row.6;
+    // 2. Agregación exacta de pagos por categoría normalizada
+    let (cash_sales_cents, card_sales_cents, transfer_sales_cents, other_sales_cents): (i64, i64, i64, i64) = conn.query_row(
+        "SELECT 
+            COALESCE(SUM(CASE 
+                WHEN LOWER(p.method) IN ('cash', 'efectivo') OR UPPER(COALESCE(pm.type, '')) = 'EFECTIVO'
+                THEN p.amount_cents ELSE 0 END), 0) as cash_cents,
+            COALESCE(SUM(CASE 
+                WHEN LOWER(p.method) IN ('card', 'tarjeta') OR UPPER(COALESCE(pm.type, '')) = 'TARJETA'
+                THEN p.amount_cents ELSE 0 END), 0) as card_cents,
+            COALESCE(SUM(CASE 
+                WHEN LOWER(p.method) IN ('transfer', 'transferencia') OR UPPER(COALESCE(pm.type, '')) = 'TRANSFERENCIA'
+                THEN p.amount_cents ELSE 0 END), 0) as transfer_cents,
+            COALESCE(SUM(CASE 
+                WHEN NOT (
+                    LOWER(p.method) IN ('cash', 'efectivo', 'card', 'tarjeta', 'transfer', 'transferencia')
+                    OR UPPER(COALESCE(pm.type, '')) IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA')
+                )
+                THEN p.amount_cents ELSE 0 END), 0) as other_cents
+         FROM payments p
+         JOIN sales s ON s.id = p.sale_id
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.cash_session_id = ?1 AND s.status = 'completed'",
+        params![shift.id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
 
     let (customer_payments_cash_cents, customer_payments_other_cents): (i64, i64) = conn.query_row(
         "SELECT 
@@ -371,10 +376,9 @@ pub fn get_shift_summary(db: State<'_, Db>) -> AppResult<ShiftSummary> {
     })
 }
 
-#[tauri::command]
-pub async fn close_shift(
-    db: State<'_, Db>,
-    input: CloseShiftInput,
+pub fn close_shift_in_conn(
+    conn: &Connection,
+    input: &CloseShiftInput,
 ) -> AppResult<CashShift> {
     if input.declared_cents < 0 {
         return Err(AppError::Validation(
@@ -382,53 +386,38 @@ pub async fn close_shift(
         ));
     }
 
-    let (shift_id, folio, user_id, user_name, opened_at, opening_cents, erp_url, terminal_token, erp_user_id) = {
-        let conn = db.conn()?;
-        let active = internal_get_active_shift(&conn)?
-            .ok_or_else(|| AppError::Validation("No hay un turno de caja abierto para cerrar".into()))?;
+    let active = internal_get_active_shift(conn)?
+        .ok_or_else(|| AppError::Validation("No hay un turno de caja abierto para cerrar".into()))?;
 
-        let erp_uid: Option<String> = conn
-            .query_row(
-                "SELECT erp_user_id FROM users WHERE id = ?1",
-                params![active.user_id],
-                |r| r.get(0),
-            )
-            .ok()
-            .flatten();
+    let shift_id = active.id;
+    let folio = active.folio;
+    let user_id = active.user_id;
+    let user_name = active.user_name;
+    let opened_at = active.opened_at;
+    let opening_cents = active.opening_cents;
 
-        let erp_u = get_setting(&conn, "erp_url");
-        let token = get_setting(&conn, "terminal_token");
-
-        (
-            active.id,
-            active.folio,
-            active.user_id,
-            active.user_name,
-            active.opened_at,
-            active.opening_cents,
-            erp_u,
-            token,
-            erp_uid,
+    let erp_user_id: Option<String> = conn
+        .query_row(
+            "SELECT erp_user_id FROM users WHERE id = ?1",
+            params![user_id],
+            |r| r.get(0),
         )
-    };
+        .ok()
+        .flatten();
 
-    let (cash_sales_cents, _total_sales_cents): (i64, i64) = {
-        let conn = db.conn()?;
-        conn.query_row(
-            "SELECT 
-                COALESCE(SUM(CASE WHEN p.method = 'cash' THEN p.amount_cents ELSE 0 END), 0),
-                COALESCE(SUM(s.total_cents), 0)
-             FROM sales s
-             LEFT JOIN payments p ON p.sale_id = s.id
-             WHERE s.cash_session_id = ?1 AND s.status = 'completed'",
-            params![shift_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-    };
+    let cash_sales_cents: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(p.amount_cents), 0)
+         FROM payments p
+         JOIN sales s ON s.id = p.sale_id
+         LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
+         WHERE s.cash_session_id = ?1 AND s.status = 'completed'
+           AND (LOWER(p.method) IN ('cash', 'efectivo') OR UPPER(COALESCE(pm.type, '')) = 'EFECTIVO')",
+        params![shift_id],
+        |r| r.get(0),
+    )?;
 
-    let customer_payments_cash_cents: i64 = {
-        let conn = db.conn()?;
-        conn.query_row(
+    let customer_payments_cash_cents: i64 = conn
+        .query_row(
             "SELECT 
                 COALESCE(SUM(CASE 
                     WHEN pm.type = 'EFECTIVO' 
@@ -443,66 +432,101 @@ pub async fn close_shift(
              WHERE cp.session_id = ?1",
             params![shift_id],
             |r| r.get(0),
-        ).unwrap_or(0)
-    };
-    let cash_returns_cents: i64 = {
-        let conn = db.conn()?;
-        conn.query_row(
+        )
+        .unwrap_or(0);
+
+    let cash_returns_cents: i64 = conn
+        .query_row(
             "SELECT COALESCE(SUM(total_cents), 0)
              FROM sale_returns
              WHERE cash_session_id = ?1 AND refund_method = 'cash'",
             params![shift_id],
             |r| r.get(0),
-        ).unwrap_or(0)
-    };
+        )
+        .unwrap_or(0);
 
-    let expected_cents = opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
+    let expected_cents =
+        opening_cents + cash_sales_cents + customer_payments_cash_cents - cash_returns_cents;
     let difference_cents = input.declared_cents - expected_cents;
 
-    let closed_at: String;
+    conn.execute(
+        "UPDATE cash_sessions
+         SET closed_at = datetime('now'),
+             closing_cents = ?1,
+             expected_cents = ?2,
+             declared_cents = ?3,
+             difference_cents = ?4,
+             notes = COALESCE(?5, notes),
+             status = 'closed'
+         WHERE id = ?6",
+        params![
+            input.declared_cents,
+            expected_cents,
+            input.declared_cents,
+            difference_cents,
+            input.notes,
+            shift_id
+        ],
+    )?;
 
-    {
+    let closed_at: String = conn.query_row(
+        "SELECT closed_at FROM cash_sessions WHERE id = ?1",
+        params![shift_id],
+        |r| r.get(0),
+    )?;
+
+    // Encolar en sync_queue para asegurar sincronización en background
+    let sync_payload = json!({
+        "folioTurno": folio,
+        "erpUserId": erp_user_id,
+        "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
+        "observaciones": input.notes
+    });
+
+    conn.execute(
+        "INSERT INTO sync_queue (entity_type, entity_id, payload, status)
+         VALUES ('cash_session', ?1, ?2, 'pending')",
+        params![shift_id, sync_payload.to_string()],
+    )?;
+
+    Ok(CashShift {
+        id: shift_id,
+        folio,
+        user_id,
+        user_name,
+        opened_at,
+        closed_at: Some(closed_at),
+        opening_cents,
+        closing_cents: Some(input.declared_cents),
+        expected_cents: Some(expected_cents),
+        declared_cents: Some(input.declared_cents),
+        difference_cents: Some(difference_cents),
+        notes: input.notes.clone(),
+        status: "closed".into(),
+        erp_turno_id: None,
+    })
+}
+
+#[tauri::command]
+pub async fn close_shift(
+    db: State<'_, Db>,
+    input: CloseShiftInput,
+) -> AppResult<CashShift> {
+    let (closed_shift, erp_url, terminal_token, erp_user_id) = {
         let conn = db.conn()?;
-        conn.execute(
-            "UPDATE cash_sessions
-             SET closed_at = datetime('now'),
-                 closing_cents = ?1,
-                 expected_cents = ?2,
-                 declared_cents = ?3,
-                 difference_cents = ?4,
-                 notes = COALESCE(?5, notes),
-                 status = 'closed'
-             WHERE id = ?6",
-            params![
-                input.declared_cents,
-                expected_cents,
-                input.declared_cents,
-                difference_cents,
-                input.notes,
-                shift_id
-            ],
-        )?;
-
-        closed_at = conn.query_row(
-            "SELECT closed_at FROM cash_sessions WHERE id = ?1",
-            params![shift_id],
-            |r| r.get(0),
-        )?;
-
-        // Encolar en sync_queue para asegurar sincronización en background
-        let sync_payload = json!({
-            "folioTurno": folio,
-            "erpUserId": erp_user_id,
-            "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
-            "observaciones": input.notes
-        });
-
-        conn.execute(
-            "INSERT INTO sync_queue (entity_type, entity_id, payload, status)
-             VALUES ('cash_session', ?1, ?2, 'pending')",
-            params![shift_id, sync_payload.to_string()],
-        )?;
-    }
+        let closed = close_shift_in_conn(&conn, &input)?;
+        let erp_u = get_setting(&conn, "erp_url");
+        let token = get_setting(&conn, "terminal_token");
+        let erp_uid: Option<String> = conn
+            .query_row(
+                "SELECT erp_user_id FROM users WHERE id = ?1",
+                params![closed.user_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
+        (closed, erp_u, token, erp_uid)
+    };
 
     // Intentar sincronizar inmediatamente con el ERP (Z-Report contable)
     if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
@@ -511,7 +535,7 @@ pub async fn close_shift(
         let client = Client::builder().timeout(Duration::from_secs(8)).build()?;
 
         let body = json!({
-            "folioTurno": folio,
+            "folioTurno": closed_shift.folio,
             "erpUserId": uid,
             "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
             "observaciones": input.notes.clone().unwrap_or_default()
@@ -529,7 +553,7 @@ pub async fn close_shift(
                 let _ = conn.execute(
                     "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now')
                      WHERE entity_type = 'cash_session' AND entity_id = ?1",
-                    params![shift_id],
+                    params![closed_shift.id],
                 );
             }
         }
@@ -539,25 +563,205 @@ pub async fn close_shift(
     // Protege a la tienda/PyME ante fallas de disco o apagones tras consolidar el arqueo
     if let Ok(conn) = db.conn() {
         let backup_query = "VACUUM INTO ?1";
-        // Si SQLite soporta VACUUM INTO, genera backup atómico con fecha del turno
-        let backup_name = format!("backup_turno_{}.db", folio.replace(['/', '\\', ':', '*'], "-"));
+        let backup_name = format!("backup_turno_{}.db", closed_shift.folio.replace(['/', '\\', ':', '*'], "-"));
         let _ = conn.execute(backup_query, params![backup_name]);
     }
 
-    Ok(CashShift {
-        id: shift_id,
-        folio,
-        user_id,
-        user_name,
-        opened_at,
-        closed_at: Some(closed_at),
-        opening_cents,
-        closing_cents: Some(input.declared_cents),
-        expected_cents: Some(expected_cents),
-        declared_cents: Some(input.declared_cents),
-        difference_cents: Some(difference_cents),
-        notes: input.notes,
-        status: "closed".into(),
-        erp_turno_id: None,
-    })
+    Ok(closed_shift)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::customers::{record_customer_payment_in_conn, RecordCustomerPaymentInput};
+    use crate::commands::sales::{create_sale_in_conn, create_sale_return_in_conn};
+    use crate::models::sale::{
+        CartItemInput, CreateSaleInput, CreateSaleReturnInput, CreateSaleReturnItemInput,
+        PaymentInput,
+    };
+
+    fn setup_shift_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Cajero Turno', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO products (id, sku, name, unit, price_cents, cost_cents, tax_rate_bp, stock, is_service, controls_stock, active)
+             VALUES (1, 'PROD-01', 'Producto Turno', 'UND', 1000000, 600000, 0, 100.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_shift_mixed_payments_no_total_duplication() {
+        let mut conn = setup_shift_test_db();
+
+        // Abrir turno con base de $100.000 (10,000,000 centavos)
+        let shift = open_shift_in_conn(
+            &conn,
+            1,
+            &OpenShiftInput {
+                opening_cents: 10000000,
+                notes: Some("Apertura prueba mixta".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(shift.opening_cents, 10000000);
+
+        // Registrar 1 venta de 2 unidades ($20.000 = 2,000,000 centavos) pagada con:
+        // - $10.000 en transferencia (1,000,000 centavos)
+        // - Billete de $20.000 en efectivo (2,000,000 centavos) -> devuelve $10.000 de cambio, retiene $10.000 netos
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(1),
+                    sku: Some("PROD-01".into()),
+                    barcode: None,
+                    description: "Producto Turno".into(),
+                    quantity: 2.0,
+                    unit_price_cents: 1000000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![
+                    PaymentInput {
+                        method: "transfer".into(),
+                        amount_cents: 1000000,
+                        reference: Some("NEQUI-123".into()),
+                    },
+                    PaymentInput {
+                        method: "cash".into(),
+                        amount_cents: 2000000,
+                        reference: None,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(sale.total_cents, 2000000);
+        assert_eq!(sale.change_cents, 1000000);
+
+        // Consultar resumen del turno:
+        // Total ventas debe ser $20.000 (2,000,000) y NUNCA $40.000 duplicado por el JOIN de los 2 pagos
+        // Efectivo en ventas debe ser $10.000 netos (1,000,000) y transferencia $10.000 (1,000,000)
+        // Efectivo esperado en gaveta = Base ($100.000) + Efectivo neto ($10.000) = $110.000 (11,000,000)
+        let summary = get_shift_summary_in_conn(&conn).unwrap();
+        assert_eq!(summary.sales_count, 1);
+        assert_eq!(summary.total_sales_cents, 2000000);
+        assert_eq!(summary.cash_sales_cents, 1000000);
+        assert_eq!(summary.transfer_sales_cents, 1000000);
+        assert_eq!(summary.expected_cash_cents, 11000000);
+    }
+
+    #[test]
+    fn test_shift_full_cash_equation_with_returns_and_abonos() {
+        let mut conn = setup_shift_test_db();
+        conn.execute(
+            "INSERT INTO customers (id, name, tax_id, credit_limit_cents, current_balance_cents, is_credit_blocked, active)
+             VALUES (1, 'Cliente Abono', '900555666', 10000000, 3000000, 0, 1)",
+            [],
+        )
+        .unwrap();
+
+        // 1. Abrir turno con Base Inicial = $50.000 (5,000,000 centavos)
+        open_shift_in_conn(
+            &conn,
+            1,
+            &OpenShiftInput {
+                opening_cents: 5000000,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        // 2. Venta en efectivo de 3 unidades ($30.000 = 3,000,000 centavos)
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(1),
+                    sku: None,
+                    barcode: None,
+                    description: "Producto Turno".into(),
+                    quantity: 3.0,
+                    unit_price_cents: 1000000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "efectivo".into(), // probando código 'efectivo' en español
+                    amount_cents: 3000000,
+                    reference: None,
+                }],
+            },
+        )
+        .unwrap();
+
+        // 3. Abono de cartera en efectivo por $15.000 (1,500,000 centavos)
+        record_customer_payment_in_conn(
+            &mut conn,
+            RecordCustomerPaymentInput {
+                customer_id: 1,
+                user_id: 1,
+                payment_method_id: Some("cash".into()),
+                method: "cash".into(),
+                amount_cents: 1500000,
+                reference: None,
+                notes: Some("Abono en efectivo".into()),
+            },
+        )
+        .unwrap();
+
+        // 4. Devolución en efectivo de 1 unidad ($10.000 = 1,000,000 centavos)
+        create_sale_return_in_conn(
+            &mut conn,
+            CreateSaleReturnInput {
+                sale_id: sale.id,
+                user_id: Some(1),
+                reason: "Devolución efectivo".into(),
+                refund_method: "cash".into(),
+                notes: None,
+                items: vec![CreateSaleReturnItemInput {
+                    sale_item_id: sale.items[0].id,
+                    quantity: 1.0,
+                    inventory_disposition: Some("restock".into()),
+                }],
+            },
+        )
+        .unwrap();
+
+        // Ecuación Maestra del Cajón:
+        // Base ($50.000) + Ventas Efectivo ($30.000) + Abonos Efectivo ($15.000) - Devoluciones Efectivo ($10.000) = $85.000 (8,500,000 centavos)
+        let summary = get_shift_summary_in_conn(&conn).unwrap();
+        assert_eq!(summary.expected_cash_cents, 8500000);
+
+        // 5. Cerrar turno declarando exactamente $85.000 -> Diferencia = 0
+        let closed = close_shift_in_conn(
+            &conn,
+            &CloseShiftInput {
+                declared_cents: 8500000,
+                notes: Some("Cuadre perfecto".into()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(closed.expected_cents, Some(8500000));
+        assert_eq!(closed.declared_cents, Some(8500000));
+        assert_eq!(closed.difference_cents, Some(0));
+        assert_eq!(closed.status, "closed");
+    }
 }

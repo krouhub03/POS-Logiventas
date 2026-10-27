@@ -305,7 +305,8 @@ pub async fn save_product_image_local(
     let conn = db.conn()?;
     let sql = "SELECT p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
                p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, \
-               p.is_bundle, p.tags, p.tax_fixed_cents, c.name, p.image_url, p.image_local_path, p.image_hash, p.image_sync_status \
+               p.is_bundle, p.tags, p.tax_fixed_cents, c.name, p.image_url, p.image_local_path, p.image_hash, p.image_sync_status, \
+               p.wholesale_price_cents, p.max_stock \
                FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?1";
 
     let mut product = conn.query_row(sql, params![product_id], |r| {
@@ -321,6 +322,8 @@ pub async fn save_product_image_local(
         let image_local_path: Option<String> = r.get(20).ok();
         let image_hash: Option<String> = r.get(21).ok();
         let image_sync_status: Option<String> = r.get(22).ok();
+        let wholesale_price_cents: i64 = r.get(23).unwrap_or(0);
+        let max_stock: f64 = r.get(24).unwrap_or(0.0);
 
         Ok(Product {
             id: r.get(0)?,
@@ -331,10 +334,12 @@ pub async fn save_product_image_local(
             category_name,
             unit: r.get(5)?,
             price_cents: r.get(6)?,
+            wholesale_price_cents,
             cost_cents: r.get(7)?,
             tax_rate_bp: r.get(8)?,
             stock: r.get(9)?,
             min_stock: r.get(10)?,
+            max_stock,
             is_service: is_service_int != 0,
             controls_stock: controls_stock_int != 0,
             allow_negative_stock: allow_negative_stock_int != 0,
@@ -399,7 +404,8 @@ pub fn delete_product_image_local(
     let conn = db.conn()?;
     let sql = "SELECT p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
                p.tax_rate_bp, p.stock, p.min_stock, p.is_service, p.active, p.controls_stock, p.allow_negative_stock, \
-               p.is_bundle, p.tags, p.tax_fixed_cents, c.name, p.image_url, p.image_local_path, p.image_hash, p.image_sync_status \
+               p.is_bundle, p.tags, p.tax_fixed_cents, c.name, p.image_url, p.image_local_path, p.image_hash, p.image_sync_status, \
+               p.wholesale_price_cents, p.max_stock \
                FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.id = ?1";
 
     let mut product = conn.query_row(sql, params![product_id], |r| {
@@ -415,6 +421,8 @@ pub fn delete_product_image_local(
         let image_local_path: Option<String> = r.get(20).ok();
         let image_hash: Option<String> = r.get(21).ok();
         let image_sync_status: Option<String> = r.get(22).ok();
+        let wholesale_price_cents: i64 = r.get(23).unwrap_or(0);
+        let max_stock: f64 = r.get(24).unwrap_or(0.0);
 
         Ok(Product {
             id: r.get(0)?,
@@ -425,10 +433,12 @@ pub fn delete_product_image_local(
             category_name,
             unit: r.get(5)?,
             price_cents: r.get(6)?,
+            wholesale_price_cents,
             cost_cents: r.get(7)?,
             tax_rate_bp: r.get(8)?,
             stock: r.get(9)?,
             min_stock: r.get(10)?,
+            max_stock,
             is_service: is_service_int != 0,
             controls_stock: controls_stock_int != 0,
             allow_negative_stock: allow_negative_stock_int != 0,

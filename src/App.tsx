@@ -302,22 +302,52 @@ function App() {
 
   // 4. Estación de Ventas principal (siempre viva para preservar tickets y foco) + Pantallas superpuestas
   return (
-    <div className="w-screen h-screen overflow-hidden relative">
+    <div className="w-full h-full overflow-hidden flex flex-col relative">
+      <div className="shrink-0">
         <LicenseBanner />
-      {/* VISTA DE VENTAS (F1): Siempre viva en DOM para no perder productos escaneados ni tickets */}
-      <div className={currentView === "sales" ? "w-full h-full" : "hidden"}>
-        <SalesStationPage
-          cashier={activeCashier}
-          terminalStatus={terminalStatus}
-          activeShift={activeShift}
-          isActive={currentView === "sales"}
-          onLockTerminal={() => handleSetCashier(null)}
-          onOpenCloseShiftModal={() => setShowCloseShiftModal(true)}
-          onCloseApp={handleRequestCloseApp}
-          onNavigateToProducts={handleNavigateToProducts}
-          onNavigateToInventory={handleNavigateToInventory}
-          onNavigateToSettings={handleNavigateToSettings}
-        />
+      </div>
+
+      <div className="flex-1 min-h-0 w-full relative overflow-hidden">
+        {/* VISTA DE VENTAS (F1): Siempre viva en DOM para no perder productos escaneados ni tickets */}
+        <div className={currentView === "sales" ? "w-full h-full" : "hidden"}>
+          <SalesStationPage
+            cashier={activeCashier}
+            terminalStatus={terminalStatus}
+            activeShift={activeShift}
+            isActive={currentView === "sales"}
+            onLockTerminal={() => handleSetCashier(null)}
+            onOpenCloseShiftModal={() => setShowCloseShiftModal(true)}
+            onCloseApp={handleRequestCloseApp}
+            onNavigateToProducts={handleNavigateToProducts}
+            onNavigateToInventory={handleNavigateToInventory}
+            onNavigateToSettings={handleNavigateToSettings}
+          />
+        </div>
+
+        {/* VISTA DE CONFIGURACIÓN (F7) */}
+        {currentView === "settings" && (
+          <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950 overflow-hidden">
+            <SettingsPage
+              terminalStatus={terminalStatus}
+              onBackToSales={() => setCurrentView("sales")}
+              onStatusUpdated={(status) => setTerminalStatus(status)}
+              onUnpaired={() => {
+                setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
+                handleSetCashier(null);
+              }}
+            />
+          </div>
+        )}
+
+        {/* VISTA DE PRODUCTOS E INVENTARIO (F3 / F4) */}
+        {(currentView === "products" || currentView === "inventory") && (
+          <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950 overflow-hidden">
+            <ProductsPage
+              initialTab={currentView === "inventory" ? "inventory" : "catalog"}
+              onBackToSales={() => setCurrentView("sales")}
+            />
+          </div>
+        )}
       </div>
 
       {/* MODAL DE ARQUEO Y CIERRE DE TURNO (Z-REPORT) */}
@@ -342,31 +372,6 @@ function App() {
             setExitActionPending(false);
           }}
         />
-      )}
-
-      {/* VISTA DE CONFIGURACIÓN (F7) */}
-      {currentView === "settings" && (
-        <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950">
-          <SettingsPage
-            terminalStatus={terminalStatus}
-            onBackToSales={() => setCurrentView("sales")}
-            onStatusUpdated={(status) => setTerminalStatus(status)}
-            onUnpaired={() => {
-              setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
-              handleSetCashier(null);
-            }}
-          />
-        </div>
-      )}
-
-      {/* VISTA DE PRODUCTOS E INVENTARIO (F3 / F4) */}
-      {(currentView === "products" || currentView === "inventory") && (
-        <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950">
-          <ProductsPage
-            initialTab={currentView === "inventory" ? "inventory" : "catalog"}
-            onBackToSales={() => setCurrentView("sales")}
-          />
-        </div>
       )}
 
       {/* BANNER FLOTANTE DE ACTUALIZACIÓN AUTOMÁTICA */}
