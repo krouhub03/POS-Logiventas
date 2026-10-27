@@ -617,7 +617,7 @@ pub async fn login_cashier_user_pin(db: State<'_, Db>, user_id: i64, pin: String
                         };
 
                         let conn = db.conn()?;
-                        let _ = conn.execute(
+                        if let Err(err) = conn.execute(
                             "UPDATE users SET 
                                 role = ?1,
                                 permissions = ?2,
@@ -626,7 +626,9 @@ pub async fn login_cashier_user_pin(db: State<'_, Db>, user_id: i64, pin: String
                                 pin_hash = COALESCE(?5, pin_hash)
                              WHERE id = ?6",
                             params![role_mapped, permisos_json, fresh_perfil, fresh_rol, fresh_pin_hash, user_id],
-                        );
+                        ) {
+                            eprintln!("[AUTH] Error al refrescar datos del usuario {} en SQLite: {}", user_id, err);
+                        }
                     }
                 }
                 Err(e) => {

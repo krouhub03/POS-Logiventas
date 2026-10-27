@@ -260,43 +260,52 @@ function App() {
   // 1. Si la terminal no está vinculada al ERP -> Pantalla de emparejamiento
   if (!terminalStatus?.isPaired) {
     return (
-      <PairingScreen
-        initialErpUrl={terminalStatus?.erpUrl}
-        terminalStatus={terminalStatus}
-        onPaired={(newStatus) => {
-          setTerminalStatus(newStatus);
-          handleSetCashier(null);
-        }}
-        onUnpaired={(newStatus) => {
-          setTerminalStatus(newStatus);
-        }}
-        onCloseApp={handleRequestCloseApp}
-      />
+      <>
+        <PairingScreen
+          initialErpUrl={terminalStatus?.erpUrl}
+          terminalStatus={terminalStatus}
+          onPaired={(newStatus) => {
+            setTerminalStatus(newStatus);
+            handleSetCashier(null);
+          }}
+          onUnpaired={(newStatus) => {
+            setTerminalStatus(newStatus);
+          }}
+          onCloseApp={handleRequestCloseApp}
+        />
+        <UpdateNotificationBanner />
+      </>
     );
   }
 
   // 2. Si está vinculada pero no hay cajero autenticado -> Pantalla de bloqueo con PIN
   if (!activeCashier) {
     return (
-      <CashierLockScreen
-        status={terminalStatus}
-        onUnlocked={(cashier) => handleSetCashier(cashier)}
-        onUnpaired={() => {
-          setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
-          handleSetCashier(null);
-        }}
-      />
+      <>
+        <CashierLockScreen
+          status={terminalStatus}
+          onUnlocked={(cashier) => handleSetCashier(cashier)}
+          onUnpaired={() => {
+            setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
+            handleSetCashier(null);
+          }}
+        />
+        <UpdateNotificationBanner />
+      </>
     );
   }
 
   // 3. Si hay cajero pero no hay turno de caja abierto -> Apertura Obligatoria de Turno
   if (!activeShift && !loadingShift) {
     return (
-      <OpenShiftModal
-        cashier={activeCashier}
-        onShiftOpened={(shift) => setActiveShift(shift)}
-        onCancel={() => handleSetCashier(null)}
-      />
+      <>
+        <OpenShiftModal
+          cashier={activeCashier}
+          onShiftOpened={(shift) => setActiveShift(shift)}
+          onCancel={() => handleSetCashier(null)}
+        />
+        <UpdateNotificationBanner />
+      </>
     );
   }
 

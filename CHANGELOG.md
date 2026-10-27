@@ -5,6 +5,19 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.7] - 2026-10-26
+
+### Agregado
+- **Codificador Nativo ESC/POS Español (`encode_escpos_text` en `printers.rs`):** Traducción directa de caracteres UTF-8 a página de códigos térmica de 1 byte (`CP437` / `CP850`) junto con desactivación de modo multibyte (`FS .`), eliminando símbolos corruptos en tildes, eñes y signos de apertura (`Cigarrería`, `Bogotá`, `¡Gracias!`).
+- **Auto-Reparación Idempotente de Esquema SQLite (`ensure_critical_schema` en `migrations.rs`):** Verificación automática en cada arranque que garantiza la existencia de columnas críticas y triggers válidos sin importar la versión previa de la base de datos local.
+- **Actualizador Visible en Pantalla de Bloqueo y Emparejamiento:** Montaje global de `UpdateNotificationBanner` en `App.tsx` y botón directo de búsqueda/aplicación de actualizaciones con versión dinámica real en el pie de página de `CashierLockScreen.tsx`.
+
+### Corregido
+- **Desbloqueo de Sincronización de Usuarios e Inicio de Sesión (`0029_fix_user_permission_audit_trigger.sql`):** Adición de la columna `last_modified_by` en `users` y recreación del trigger `trg_user_permissions_audit` (`WHEN OLD.permissions IS NOT NEW.permissions`), corrigiendo el error `no such column: NEW.last_modified_by` al sincronizar operadores o validar PIN contra el ERP.
+- **Alineación, Tipografía y Hora Local en Impresión de Tickets (`printers.rs` y `sales.rs`):** Formato de encabezado y línea `TOTAL:` en negrita + doble altura (`ESC ! 0x18`) para evitar saltos de línea por doble ancho, conversión de fecha de venta a hora local (`datetime(s.created_at, 'localtime')`) y visualización del monto entregado (`paid_cents`) junto con el cambio.
+
+---
+
 ## [0.1.6] - 2026-10-26
 
 ### Agregado

@@ -6,6 +6,7 @@ import { CloseShiftModal } from "./CloseShiftModal";
 import { ForgotPinModal } from "./ForgotPinModal";
 import { useModals } from "../contexts/ModalContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { useUpdater } from "../contexts/UpdaterContext";
 
 interface CashierLockScreenProps {
   status: TerminalStatus;
@@ -52,6 +53,13 @@ export function CashierLockScreen({
 }: CashierLockScreenProps) {
   const { theme, toggleTheme } = useTheme();
   const { confirm, alert: modalAlert } = useModals();
+  const {
+    currentVersion,
+    status: updateStatus,
+    newVersion,
+    checkForUpdates,
+    restartAndApply,
+  } = useUpdater();
   const [cashiers, setCashiers] = useState<CashierUser[]>([]);
   const [selectedCashier, setSelectedCashier] = useState<CashierUser | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
@@ -985,8 +993,33 @@ export function CashierLockScreen({
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           <span>Metahabi POS • Estación de Caja Activa</span>
         </div>
-        <div>
-          <span>Versión 0.1.2 Oficial</span>
+        <div className="flex items-center gap-3">
+          {updateStatus === "ready" ? (
+            <button
+              type="button"
+              onClick={() => restartAndApply()}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <span>🔄</span>
+              <span>Reiniciar y aplicar v{newVersion}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => checkForUpdates(true)}
+              disabled={updateStatus === "checking" || updateStatus === "downloading"}
+              className="hover:text-emerald-500 transition-colors cursor-pointer disabled:opacity-50"
+              title="Buscar actualizaciones de Metahabi POS"
+            >
+              {updateStatus === "checking"
+                ? "Buscando actualizaciones…"
+                : updateStatus === "downloading"
+                ? "Descargando actualización…"
+                : "Buscar actualización"}
+            </button>
+          )}
+          <span>•</span>
+          <span>Versión {currentVersion || "0.1.6"} Oficial</span>
         </div>
       </footer>
 

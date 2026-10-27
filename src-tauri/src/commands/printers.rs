@@ -305,8 +305,8 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     // Construcción del payload binario ESC/POS
     let mut payload = Vec::new();
 
-    // 1. Inicializar impresora (ESC @)
-    payload.extend_from_slice(b"\x1B\x40");
+    // 1. Inicializar impresora (ESC @), desactivar modo multibyte chino (FS .) y seleccionar tabla CP850/CP437 (ESC t 2)
+    payload.extend_from_slice(b"\x1B\x40\x1C\x2E\x1B\x74\x02");
 
     // 2. Si el cajón está configurado para abrir al imprimir, enviar pulso eléctrico RJ11
     if drawer_enabled && drawer_on_print {
@@ -315,35 +315,35 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
         payload.extend_from_slice(b"\x1B\x70\x01\x19\xFA");
     }
 
-    // 3. Encabezado centrado con doble altura/anchura (ESC a 1, ESC ! 16)
+    // 3. Encabezado centrado con negrita + doble altura (ESC a 1, ESC ! 0x18) sin deformar el ancho
     payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
-    payload.extend_from_slice(b"\x1B\x21\x10"); // Doble altura
-    payload.extend_from_slice(b"*** TICKET DE PRUEBA ***\n");
-    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
-    payload.extend_from_slice(empresa_nombre.trim().as_bytes());
+    payload.extend_from_slice(b"\x1B\x45\x01"); // Negrita ON
+    payload.extend_from_slice(&encode_escpos_text("*** TICKET DE PRUEBA ***\n"));
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita (1x ancho para no estirar letras)
+    payload.extend_from_slice(&encode_escpos_text(empresa_nombre.trim()));
     payload.push(b'\n');
-    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
+    payload.extend_from_slice(b"\x1B\x21\x00\x1B\x45\x00"); // Normal
 
     if !empresa_nit.trim().is_empty() {
-        payload.extend_from_slice(format!("NIT/RUT: {}\n", empresa_nit.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("NIT/RUT: {}\n", empresa_nit.trim())));
     }
     if !empresa_regimen.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_regimen.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_regimen.trim())));
     }
     if !empresa_direccion.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_direccion.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_direccion.trim())));
     }
     if !empresa_telefono.trim().is_empty() {
-        payload.extend_from_slice(format!("Tel: {}\n", empresa_telefono.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("Tel: {}\n", empresa_telefono.trim())));
     }
     if !empresa_ciudad.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_ciudad.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_ciudad.trim())));
     }
 
     for line in header_text.split('\n') {
         let clean = line.trim();
         if !clean.is_empty() {
-            payload.extend_from_slice(clean.as_bytes());
+            payload.extend_from_slice(&encode_escpos_text(clean));
             payload.push(b'\n');
         }
     }
@@ -353,18 +353,22 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     payload.extend_from_slice(separator.as_bytes());
     payload.push(b'\n');
 
-    let now_str = chrono_or_fallback_time();
-    payload.extend_from_slice(format!("Fecha: {}\n", now_str).as_bytes());
-    payload.extend_from_slice(format!("Impresora: {}\n", printer_target).as_bytes());
-    payload.extend_from_slice(format!("Ancho papel: {} ({} col)\n", paper_width, col_width).as_bytes());
-    payload.extend_from_slice(format!("Corte automatico: {}\n", if auto_cut { "SI" } else { "NO" }).as_bytes());
-    payload.extend_from_slice(format!("Apertura de cajon: {}\n", if drawer_enabled && drawer_on_print { "SI (Pulso RJ11)" } else { "NO" }).as_bytes());
+    let now_str: String = conn
+        .query_row("SELECT datetime('now', 'localtime')", [], |r| r.get(0))
+        .unwrap_or_else(|_| chrono_or_fallback_time());
+    payload.extend_from_slice(&encode_escpos_text(&format!("Fecha: {}\n", now_str)));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Impresora: {}\n", printer_target)));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Ancho papel: {} ({} col)\n", paper_width, col_width)));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Corte automático: {}\n", if auto_cut { "SÍ" } else { "NO" })));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Apertura de cajón: {}\n", if drawer_enabled && drawer_on_print { "SÍ (Pulso RJ11)" } else { "NO" })));
 
     payload.extend_from_slice(separator.as_bytes());
     payload.push(b'\n');
-    payload.extend_from_slice(b"1x  PRODUCTO DEMO        $10.000\n");
-    payload.extend_from_slice(b"    SUBTOTAL:            $10.000\n");
-    payload.extend_from_slice(b"    TOTAL VENTA:         $10.000\n");
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("1x PRODUCTO DEMO", "$10,000.00", col_width))));
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Subtotal:", "$10,000.00", col_width))));
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita (misma línea)
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("TOTAL:", "$10,000.00", col_width))));
+    payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
     payload.extend_from_slice(separator.as_bytes());
     payload.push(b'\n');
 
@@ -373,7 +377,7 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     for line in footer_text.split('\n') {
         let clean = line.trim();
         if !clean.is_empty() {
-            payload.extend_from_slice(clean.as_bytes());
+            payload.extend_from_slice(&encode_escpos_text(clean));
             payload.push(b'\n');
         }
     }
@@ -396,6 +400,48 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
 
     let drawer_msg = if drawer_enabled && drawer_on_print { " con pulso de cajón" } else { "" };
     Ok(format!("Ticket de prueba enviado con éxito a '{}' ({}){}", printer_target, paper_width, drawer_msg))
+}
+
+/// Convierte cadenas UTF-8 (español) a bytes de 1 byte compatibles simultáneamente
+/// con las páginas de códigos térmicas ESC/POS estándar (CP437 / CP850), evitando
+/// caracteres basura como "Cigarrer├ía", "Bogot├í" o "┬íGracias".
+pub fn encode_escpos_text(input: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    for ch in input.chars() {
+        let byte = match ch {
+            '\n' => b'\n',
+            '\r' => b'\r',
+            '\t' => b' ',
+            ' '..='~' => ch as u8,
+            // Vocales acentuadas minúsculas y eñe (idénticas en CP437 y CP850)
+            'á' | 'à' | 'â' | 'ä' => 0xA0,
+            'é' | 'è' | 'ê' | 'ë' => 0x82,
+            'í' | 'ì' | 'î' | 'ï' => 0xA1,
+            'ó' | 'ò' | 'ô' | 'ö' => 0xA2,
+            'ú' | 'ù' | 'û' => 0xA3,
+            'ü' => 0x81,
+            'Ü' => 0x9A,
+            'ñ' => 0xA4,
+            'Ñ' => 0xA5,
+            // Signos de apertura y símbolos comunes en CP437 / CP850
+            '¡' => 0xAD,
+            '¿' => 0xA8,
+            '°' | 'º' | 'ª' => 0xF8,
+            'É' => 0x90,
+            // Mayúsculas acentuadas normalizadas a ASCII limpio para evitar símbolos de caja en CP437
+            'Á' | 'À' | 'Â' | 'Ä' => b'A',
+            'È' | 'Ê' | 'Ë' => b'E',
+            'Í' | 'Ì' | 'Î' | 'Ï' => b'I',
+            'Ó' | 'Ò' | 'Ô' | 'Ö' => b'O',
+            'Ú' | 'Ù' | 'Û' => b'U',
+            '—' | '–' | '•' | '·' => b'-',
+            '“' | '”' | '«' | '»' => b'"',
+            '‘' | '’' | '´' => b'\'',
+            _ => b'?',
+        };
+        out.push(byte);
+    }
+    out
 }
 
 /// Formatea dinero en centavos a texto para ticket ($5,000.00)
@@ -421,7 +467,7 @@ fn format_money(cents: i64) -> String {
 
 /// Alinea dos columnas justificando a la izquierda y derecha para ancho térmico
 fn pad_cols(left: &str, right: &str, width: usize) -> String {
-    let left_clean = left.trim();
+    let left_clean = left.trim_end();
     let right_clean = right.trim();
     let left_len = left_clean.chars().count();
     let right_len = right_clean.chars().count();
@@ -520,8 +566,8 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
 
     let mut payload = Vec::new();
 
-    // 1. Inicializar impresora (ESC @)
-    payload.extend_from_slice(b"\x1B\x40");
+    // 1. Inicializar impresora (ESC @), desactivar modo multibyte chino (FS .) y seleccionar tabla CP850/CP437 (ESC t 2)
+    payload.extend_from_slice(b"\x1B\x40\x1C\x2E\x1B\x74\x02");
 
     // 2. Pulso de cajón monedero (si está activo al imprimir)
     if drawer_enabled && drawer_on_print {
@@ -529,67 +575,69 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
         payload.extend_from_slice(b"\x1B\x70\x01\x19\xFA");
     }
 
-    // 3. Encabezado centrado
+    // 3. Encabezado centrado con Negrita + Doble Altura (ESC ! 0x18) para máxima nitidez sin deformar el ancho
     payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
-    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
-    payload.extend_from_slice(empresa_nombre.trim().as_bytes());
+    payload.extend_from_slice(b"\x1B\x21\x18"); // Doble altura + Negrita
+    payload.extend_from_slice(&encode_escpos_text(empresa_nombre.trim()));
     payload.push(b'\n');
     payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
 
     if !empresa_nit.trim().is_empty() {
-        payload.extend_from_slice(format!("NIT/RUT: {}\n", empresa_nit.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("NIT/RUT: {}\n", empresa_nit.trim())));
     }
     if !empresa_regimen.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_regimen.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_regimen.trim())));
     }
     if !empresa_direccion.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_direccion.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_direccion.trim())));
     }
     if !empresa_telefono.trim().is_empty() {
-        payload.extend_from_slice(format!("Tel: {}\n", empresa_telefono.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("Tel: {}\n", empresa_telefono.trim())));
     }
     if !empresa_ciudad.trim().is_empty() {
-        payload.extend_from_slice(format!("{}\n", empresa_ciudad.trim()).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", empresa_ciudad.trim())));
     }
 
     if !header_text.trim().is_empty() {
         for line in header_text.split('\n') {
             let clean = line.trim();
             if !clean.is_empty() {
-                payload.extend_from_slice(clean.as_bytes());
+                payload.extend_from_slice(&encode_escpos_text(clean));
                 payload.push(b'\n');
             }
         }
     }
 
-    payload.extend_from_slice(format!("Terminal: {}\n", caja_codigo).as_bytes());
-    payload.extend_from_slice(format!("Fecha: {}\n", receipt.created_at).as_bytes());
-    payload.extend_from_slice(format!("TICKET: {}\n", receipt.folio).as_bytes());
+    payload.extend_from_slice(&encode_escpos_text(&format!("Terminal: {}\n", caja_codigo)));
+    payload.extend_from_slice(&encode_escpos_text(&format!("Fecha: {}\n", receipt.created_at)));
+    payload.extend_from_slice(&encode_escpos_text(&format!("TICKET: {}\n", receipt.folio)));
 
     if let Some(ref cashier) = receipt.cashier_name {
-        payload.extend_from_slice(format!("Cajero: {}\n", cashier).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("Cajero: {}\n", cashier)));
     }
 
     // Si es reimpresión / copia
     if receipt.reprint_count > 0 {
-        payload.extend_from_slice(b"\n");
-        payload.extend_from_slice(format!("*** COPIA DE TICKET #{} ***\n", receipt.reprint_count).as_bytes());
-        payload.extend_from_slice(b"REIMPRESION SIN VALOR FISCAL ADICIONAL\n\n");
+        payload.extend_from_slice(b"\n\x1B\x45\x01");
+        payload.extend_from_slice(&encode_escpos_text(&format!("*** COPIA DE TICKET #{} ***\n", receipt.reprint_count)));
+        payload.extend_from_slice(b"\x1B\x45\x00");
+        payload.extend_from_slice(&encode_escpos_text("REIMPRESIÓN SIN VALOR FISCAL ADICIONAL\n\n"));
     }
 
     // Cliente
     payload.extend_from_slice(b"\x1B\x61\x00"); // Alinear a la izquierda
     let cliente_str = receipt.customer_name.as_deref().unwrap_or("Consumidor Final");
-    payload.extend_from_slice(format!("Cliente: {}\n", cliente_str).as_bytes());
+    payload.extend_from_slice(&encode_escpos_text(&format!("Cliente: {}\n", cliente_str)));
     if let Some(ref nit) = receipt.customer_tax_id {
-        payload.extend_from_slice(format!("Doc/NIT: {}\n", nit).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&format!("Doc/NIT: {}\n", nit)));
     }
 
     // 4. Tabla de ítems
     payload.extend_from_slice(separator.as_bytes());
     payload.push(b'\n');
-    payload.extend_from_slice(pad_cols("CANT. DESCRIPCION", "TOTAL", col_width).as_bytes());
-    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x45\x01"); // Negrita encabezado
+    payload.extend_from_slice(&encode_escpos_text(&pad_cols("CANT. DESCRIPCIÓN", "TOTAL", col_width)));
+    payload.extend_from_slice(b"\x1B\x45\x00\n");
     payload.extend_from_slice(separator.as_bytes());
     payload.push(b'\n');
 
@@ -600,12 +648,12 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
             format!("{:.2}", item.quantity)
         };
         let line_item_header = format!("{} x {}", qty_str, item.description);
-        payload.extend_from_slice(line_item_header.as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&line_item_header));
         payload.push(b'\n');
 
         let price_str = format!("  Precio: {}", format_money(item.unit_price_cents));
         let total_str = format_money(item.total_cents);
-        payload.extend_from_slice(pad_cols(&price_str, &total_str, col_width).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&pad_cols(&price_str, &total_str, col_width)));
         payload.push(b'\n');
     }
 
@@ -613,21 +661,22 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
     payload.push(b'\n');
 
     // 5. Totales
-    payload.extend_from_slice(pad_cols("Subtotal:", &format_money(receipt.subtotal_cents), col_width).as_bytes());
+    payload.extend_from_slice(&encode_escpos_text(&pad_cols("Subtotal:", &format_money(receipt.subtotal_cents), col_width)));
     payload.push(b'\n');
 
     if receipt.discount_cents > 0 {
-        payload.extend_from_slice(pad_cols("Descuento:", &format!("-{}", format_money(receipt.discount_cents)), col_width).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&pad_cols("Descuento:", &format!("-{}", format_money(receipt.discount_cents)), col_width)));
         payload.push(b'\n');
     }
 
     if receipt.tax_cents > 0 {
-        payload.extend_from_slice(pad_cols("Impuestos:", &format_money(receipt.tax_cents), col_width).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&pad_cols("Impuestos:", &format_money(receipt.tax_cents), col_width)));
         payload.push(b'\n');
     }
 
-    payload.extend_from_slice(b"\x1B\x21\x20"); // Doble ancho
-    payload.extend_from_slice(pad_cols("TOTAL:", &format_money(receipt.total_cents), col_width).as_bytes());
+    // TOTAL en Negrita + Doble Altura (ESC ! 0x18) para que "TOTAL:" y el monto queden en la misma línea
+    payload.extend_from_slice(b"\x1B\x21\x18");
+    payload.extend_from_slice(&encode_escpos_text(&pad_cols("TOTAL:", &format_money(receipt.total_cents), col_width)));
     payload.push(b'\n');
     payload.extend_from_slice(b"\x1B\x21\x00"); // Normal
 
@@ -635,21 +684,27 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
     payload.push(b'\n');
 
     // 6. Formas de pago
-    payload.extend_from_slice(b"FORMAS DE PAGO:\n");
-    let mut total_paid = 0i64;
+    payload.extend_from_slice(&encode_escpos_text("FORMAS DE PAGO:\n"));
+    let mut sum_payments = 0i64;
     for payment in &receipt.payments {
-        total_paid += payment.amount_cents;
+        sum_payments += payment.amount_cents;
         let method_label = crate::commands::sales::format_payment_method_label(&payment.method, Some(payment.method_name.clone()));
-        payload.extend_from_slice(pad_cols(&format!("  {}", method_label), &format_money(payment.amount_cents), col_width).as_bytes());
+        payload.extend_from_slice(&encode_escpos_text(&pad_cols(&format!("  {}", method_label), &format_money(payment.amount_cents), col_width)));
         payload.push(b'\n');
     }
 
-    payload.extend_from_slice(pad_cols("Total Pagado:", &format_money(total_paid), col_width).as_bytes());
+    let total_paid_display = if receipt.paid_cents > 0 {
+        receipt.paid_cents
+    } else {
+        sum_payments
+    };
+    payload.extend_from_slice(&encode_escpos_text(&pad_cols("Total Pagado:", &format_money(total_paid_display), col_width)));
     payload.push(b'\n');
 
     if receipt.change_cents > 0 {
-        payload.extend_from_slice(pad_cols("Cambio / Vueltas:", &format_money(receipt.change_cents), col_width).as_bytes());
-        payload.push(b'\n');
+        payload.extend_from_slice(b"\x1B\x45\x01");
+        payload.extend_from_slice(&encode_escpos_text(&pad_cols("Cambio / Vueltas:", &format_money(receipt.change_cents), col_width)));
+        payload.extend_from_slice(b"\x1B\x45\x00\n");
     }
 
     payload.extend_from_slice(separator.as_bytes());
@@ -660,7 +715,7 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
     for line in footer_text.split('\n') {
         let clean = line.trim();
         if !clean.is_empty() {
-            payload.extend_from_slice(clean.as_bytes());
+            payload.extend_from_slice(&encode_escpos_text(clean));
             payload.push(b'\n');
         }
     }
@@ -710,6 +765,27 @@ fn chrono_or_fallback_time() -> String {
             format!("UNIX {}", secs)
         }
         Err(_) => "Hora del sistema".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escpos_spanish_encoding_and_padding() {
+        let encoded = encode_escpos_text("Cigarrería Bogotá ¡Gracias!");
+        // 'í' = 0xA1, 'á' = 0xA0, '¡' = 0xAD (sin bytes UTF-8 0xC3 ni 0xC2)
+        assert!(!encoded.contains(&0xC3));
+        assert!(!encoded.contains(&0xC2));
+        assert!(encoded.contains(&0xA1));
+        assert!(encoded.contains(&0xA0));
+        assert!(encoded.contains(&0xAD));
+
+        let line = pad_cols("TOTAL:", "$4,500.00", 32);
+        assert_eq!(line.chars().count(), 32);
+        assert!(line.starts_with("TOTAL:"));
+        assert!(line.ends_with("$4,500.00"));
     }
 }
 

@@ -33,7 +33,86 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0026_user_permission_audit.sql"),
     include_str!("../../migrations/0027_eleventa_fields.sql"),
     include_str!("../../migrations/0028_sales_paid_and_change_cents.sql"),
+    include_str!("../../migrations/0029_fix_user_permission_audit_trigger.sql"),
 ];
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+    let mut stmt = match conn.prepare(&format!("PRAGMA table_info({})", table)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let rows = stmt.query_map([], |r| r.get::<_, String>(1));
+    if let Ok(iter) = rows {
+        for col in iter.flatten() {
+            if col.eq_ignore_ascii_case(column) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
+    if !column_exists(conn, "users", "last_modified_by") {
+        let _ = conn.execute(
+            "ALTER TABLE users ADD COLUMN last_modified_by TEXT DEFAULT 'system'",
+            [],
+        );
+    }
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS user_permission_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            old_permissions TEXT NOT NULL,
+            new_permissions TEXT NOT NULL,
+            changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            changed_by TEXT NOT NULL
+        );
+        DROP TRIGGER IF EXISTS trg_user_permissions_audit;
+        CREATE TRIGGER trg_user_permissions_audit
+        AFTER UPDATE OF permissions ON users
+        FOR EACH ROW
+        WHEN OLD.permissions IS NOT NEW.permissions
+        BEGIN
+            INSERT INTO user_permission_audit (
+                user_id, old_permissions, new_permissions, changed_by
+            ) VALUES (
+                OLD.id,
+                COALESCE(OLD.permissions, '[]'),
+                COALESCE(NEW.permissions, '[]'),
+                COALESCE(NEW.last_modified_by, 'system')
+            );
+        END;",
+    )?;
+
+    if !column_exists(conn, "products", "wholesale_price_cents") {
+        let _ = conn.execute(
+            "ALTER TABLE products ADD COLUMN wholesale_price_cents INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+    if !column_exists(conn, "products", "max_stock") {
+        let _ = conn.execute(
+            "ALTER TABLE products ADD COLUMN max_stock REAL NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+    if !column_exists(conn, "sales", "paid_cents") {
+        let _ = conn.execute(
+            "ALTER TABLE sales ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+    if !column_exists(conn, "sales", "change_cents") {
+        let _ = conn.execute(
+            "ALTER TABLE sales ADD COLUMN change_cents INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    }
+
+    Ok(())
+}
 
 pub fn run(conn: &mut Connection) -> AppResult<()> {
     let current: usize = conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))? as usize;
@@ -41,10 +120,17 @@ pub fn run(conn: &mut Connection) -> AppResult<()> {
     for (idx, sql) in MIGRATIONS.iter().enumerate().skip(current) {
         let version = idx + 1;
         let tx = conn.transaction()?;
-        tx.execute_batch(sql)?;
+        if let Err(err) = tx.execute_batch(sql) {
+            let msg = err.to_string().to_lowercase();
+            if !msg.contains("duplicate column name") {
+                return Err(err.into());
+            }
+        }
         tx.pragma_update(None, "user_version", version as i64)?;
         tx.commit()?;
     }
+
+    ensure_critical_schema(conn)?;
 
     Ok(())
 }
@@ -62,5 +148,35 @@ mod tests {
         assert_eq!(v as usize, MIGRATIONS.len());
         // Idempotente: correr de nuevo no falla
         run(&mut conn).unwrap();
+    }
+
+    #[test]
+    fn user_permission_audit_trigger_works_on_update() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO users (erp_user_id, username, email, full_name, pin_hash, role, permissions, active)
+             VALUES ('erp_u1', 'cajero1', 'cajero1@test.com', 'Cajero Uno', 'hash1', 'cashier', '[\"ventas:crear\"]', 1)",
+            [],
+        ).unwrap();
+
+        // Actualizar permisos simulando sync_users (ON CONFLICT DO UPDATE)
+        conn.execute(
+            "INSERT INTO users (erp_user_id, username, email, full_name, pin_hash, role, permissions, active)
+             VALUES ('erp_u1', 'cajero1', 'cajero1@test.com', 'Cajero Uno', 'hash2', 'admin', '[\"ventas:crear\",\"inventario:ver\"]', 1)
+             ON CONFLICT(erp_user_id) DO UPDATE SET
+                pin_hash = COALESCE(excluded.pin_hash, users.pin_hash),
+                role = excluded.role,
+                permissions = excluded.permissions,
+                active = 1",
+            [],
+        ).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM user_permission_audit", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

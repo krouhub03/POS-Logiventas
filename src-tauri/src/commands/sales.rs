@@ -31,7 +31,7 @@ pub fn build_sale_receipt(conn: &Connection, sale_id: i64) -> AppResult<SaleRece
                 s.paid_cents, COALESCE(s.change_cents, 0),
                 COALESCE(s.reprint_count, 0), s.last_reprinted_at,
                 COALESCE(s.return_status, 'none'), COALESCE(s.returned_cents, 0),
-                s.created_at
+                COALESCE(datetime(s.created_at, 'localtime'), s.created_at)
          FROM sales s
          LEFT JOIN customers c ON c.id = s.customer_id
          LEFT JOIN users u ON u.id = s.user_id
