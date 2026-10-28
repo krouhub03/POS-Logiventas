@@ -1125,7 +1125,7 @@ export function SalesStationPage({
   const handleAddVarios = (description: string, priceCents: number, quantity: number) => {
     const subtotal = Math.round(priceCents * quantity);
     const newLine: CartLine = {
-      id: `line-${Date.now()}`,
+      id: `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       barcode: "VARIOS",
       description,
       unitPriceCents: priceCents,
@@ -1945,11 +1945,13 @@ export function SalesStationPage({
                 if (!barcodeInput && cartLines.length > 0) {
                   if (e.key === "+" || e.key === "Add" || e.code === "NumpadAdd") {
                     e.preventDefault();
+                    e.stopPropagation();
                     modifyQuantity(1);
                     return;
                   }
                   if (e.key === "-" || e.key === "Subtract" || e.code === "NumpadSubtract") {
                     e.preventDefault();
+                    e.stopPropagation();
                     modifyQuantity(-1);
                     return;
                   }
@@ -2247,11 +2249,11 @@ export function SalesStationPage({
                           <div className="flex items-center justify-center gap-1">
                             <input
                               ref={qtyInputRef}
-                              type="number"
-                              step="any"
-                              min="0.001"
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
                               value={editingQtyValue}
-                              onChange={(e) => setEditingQtyValue(e.target.value)}
+                              onChange={(e) => setEditingQtyValue(e.target.value.replace(/[^0-9.]/g, ""))}
                               onKeyDown={(e) => {
                                 e.stopPropagation();
                                 if (e.key === "Enter") {
@@ -2260,25 +2262,59 @@ export function SalesStationPage({
                                 } else if (e.key === "Escape") {
                                   e.preventDefault();
                                   handleCancelEditQty();
+                                } else if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  const cur = parseFloat(editingQtyValue) || 0;
+                                  setEditingQtyValue(String(Math.round((cur + 1) * 1000) / 1000));
+                                } else if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  const cur = parseFloat(editingQtyValue) || 1;
+                                  setEditingQtyValue(String(Math.max(1, Math.round((cur - 1) * 1000) / 1000)));
                                 }
                               }}
                               onBlur={() => handleSaveEditQty(line.id)}
-                              className="w-16 px-1.5 py-0.5 text-center font-bold font-mono text-xs rounded bg-white dark:bg-slate-900 border-2 border-emerald-500 text-slate-900 dark:text-white outline-none shadow-sm"
+                              className="w-16 px-1.5 py-0.5 text-center font-bold font-mono text-xs rounded bg-white dark:bg-slate-900 border-2 border-emerald-500 text-slate-900 dark:text-white outline-none shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             />
                             <span className="text-[10px] text-slate-400 font-bold uppercase">
                               {line.unit || "UND"}
                             </span>
                           </div>
                         ) : (
-                          <span
-                            className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-950 dark:hover:bg-slate-900 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 font-bold text-emerald-700 dark:text-emerald-400 transition-colors select-none cursor-pointer shadow-2xs"
-                            title="Doble clic para cambiar cantidad"
-                          >
-                            <span>{line.quantity}</span>
-                            <span className="text-[9px] text-slate-500 dark:text-slate-400 font-sans font-semibold uppercase px-1 py-0.2 rounded bg-white/70 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700">
-                              {line.unit || "UND"}
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                modifyQuantity(-1, index);
+                              }}
+                              className="w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/60 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-400 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center transition-colors cursor-pointer select-none"
+                              title="Restar 1 unidad (-)"
+                            >
+                              −
+                            </button>
+                            <span
+                              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-950 dark:hover:bg-slate-900 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-800 font-bold text-emerald-700 dark:text-emerald-400 transition-colors select-none cursor-pointer shadow-2xs"
+                              title="Doble clic para escribir cantidad exacta"
+                            >
+                              <span>{line.quantity}</span>
+                              <span className="text-[9px] text-slate-500 dark:text-slate-400 font-sans font-semibold uppercase px-1 py-0.2 rounded bg-white/70 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700">
+                                {line.unit || "UND"}
+                              </span>
                             </span>
-                          </span>
+                            <button
+                              type="button"
+                              onDoubleClick={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                modifyQuantity(1, index);
+                              }}
+                              className="w-6 h-6 rounded-md bg-slate-100 hover:bg-emerald-100 dark:bg-slate-800 dark:hover:bg-emerald-950/60 text-slate-600 hover:text-emerald-600 dark:text-slate-300 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 font-bold text-xs flex items-center justify-center transition-colors cursor-pointer select-none"
+                              title="Sumar 1 unidad (+)"
+                            >
+                              +
+                            </button>
+                          </div>
                         )}
                       </td>
                       <td className="py-2 px-2.5 text-right font-bold text-emerald-700 dark:text-emerald-400 text-sm align-middle">
@@ -2492,7 +2528,7 @@ export function SalesStationPage({
           setIsReceiptModalOpen(false);
           setIsRecentSalesOpen(true);
         }}
-        businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
+        businessName={terminalStatus.empresaNombre || "METAHABI POS"}
         businessNit={terminalStatus.empresaNit || undefined}
         businessAddress={terminalStatus.empresaDireccion || undefined}
         businessPhone={terminalStatus.empresaTelefono || undefined}
@@ -2507,7 +2543,7 @@ export function SalesStationPage({
         isOpen={isRecentSalesOpen}
         currentUserId={cashier.id}
         terminalCode={terminalStatus.cajaCodigo || "CAJA-01"}
-        businessName={terminalStatus.empresaNombre || "LOGIVENTA POS"}
+        businessName={terminalStatus.empresaNombre || "METAHABI POS"}
         businessNit={terminalStatus.empresaNit || undefined}
         businessAddress={terminalStatus.empresaDireccion || undefined}
         businessPhone={terminalStatus.empresaTelefono || undefined}

@@ -252,7 +252,7 @@ function App() {
   if (loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#020617", color: "#f8fafc" }}>
-        <span>Iniciando Logiventa POS…</span>
+        <span>Iniciando Metahabi POS…</span>
       </div>
     );
   }

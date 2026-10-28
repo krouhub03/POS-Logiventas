@@ -1,4 +1,4 @@
-# 🚀 Logiventa POS — Sistema de Punto de Venta de Escritorio
+# 🚀 Metahabi POS — Sistema de Punto de Venta de Escritorio
 
 Sistema de Punto de Venta (POS) de alto rendimiento, arquitectura **Offline-First** y diseño ergonómico de mostrador, construido con **Tauri 2 + React 19 + TypeScript + Vite** y base de datos local **SQLite embebida (`rusqlite`)**.
 
@@ -329,4 +329,4 @@ El punto de venta cuenta con auto-actualización silenciosa en segundo plano med
 
 ## 📄 Licencia
 
-Desarrollado para el ecosistema **Logiventa POS**. Todos los derechos reservados.
+Desarrollado para el ecosistema **Metahabi POS**. Todos los derechos reservados.

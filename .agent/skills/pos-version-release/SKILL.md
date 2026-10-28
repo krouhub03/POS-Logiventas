@@ -1,7 +1,7 @@
 ---
 name: pos-version-release
 description: >-
-  Protocolo de versionado semántico (SemVer) y documentación automatizada de cambios en CHANGELOG.md para Metahabi POS (Logiventa).
+  Protocolo de versionado semántico (SemVer) y documentación automatizada de cambios en CHANGELOG.md para Metahabi POS.
   Activar cuando se solicite crear una nueva versión, documentar lo que se agregó, preparar un release, hacer bump de versión o publicar actualizaciones.
 ---
 

@@ -24,7 +24,7 @@ export function ReceiptModal({
   isOpen,
   onClose,
   onRequestReturn,
-  businessName = "LOGIVENTA POS",
+  businessName = "METAHABI POS",
   businessNit,
   businessAddress,
   businessPhone,

@@ -5,6 +5,19 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.9] - 2026-10-27
+
+### Agregado
+- **Rebranding Oficial a Metahabi POS:** Actualización integral de identidad visual, nombre de aplicación, banners de licencia, encabezados y documentación a Metahabi POS, preservando el almacenamiento local para total compatibilidad y continuidad operacional.
+- **Botones Ergonómicos de Incremento y Reducción Unitaria en Mostrador (`SalesStationPage.tsx` y `VariosModal.tsx`):** Controles dedicados `−` y `+` por línea en la tabla del ticket de venta y en el diálogo de artículos varios para modificar la cantidad en saltos exactos de 1 unidad con prevención de apertura accidental por doble clic.
+
+### Corregido
+- **Blindaje contra Incremento Accidental de Múltiples Unidades (`VariosModal.tsx` y `SalesStationPage.tsx`):** Reemplazo de los inputs nativos con spinners de Chromium/WebView2 por campos de texto numérico controlado con sanitización estricta, eliminando el error donde la rueda del ratón o el evento repetitivo de flechas sumaba múltiples unidades por clic (ej. 29 unidades involuntarias).
+- **Aislamiento de Atajos de Teclado `+` / `−` en Estación de Venta:** Adición de `stopPropagation` en la tecla `+` y `−` dentro del campo de código de barras para erradicar la doble ejecución con el listener global del teclado.
+- **Generación de Claves Únicas de Línea en Artículos Varios:** Inclusión de sufijo pseudoaleatorio en el identificador de línea para prevenir colisiones de claves en React al agregar múltiples productos varios de forma continua.
+
+---
+
 ## [0.1.8] - 2026-10-27
 
 ### Agregado
@@ -133,7 +146,7 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 ## [0.1.0] - 2026-10-13
 
 ### Agregado
-- **Lanzamiento Inicial de Metahabi POS (Logiventa).**
+- **Lanzamiento Inicial de Metahabi POS.**
 - **Arquitectura Offline-First:** Persistencia atómica local en SQLite embebido (`rusqlite`) con sincronización asíncrona mediante cola Outbox (`sync_queue`).
 - **Estación de Ventas de Alta Velocidad:** Operación 100% mediante atajos de teclado (`F1`-`F12`, `+`, `-`, `Enter`, `Esc`) e interceptor global de lector de código de barras.
 - **Integridad Financiera:** Moneda procesada estrictamente en centavos enteros (`i64`) e impuestos calculados en puntos base (BP) e impuestos fijos por unidad.

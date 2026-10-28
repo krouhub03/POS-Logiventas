@@ -394,7 +394,7 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
     // Enviar al spooler nativo de Windows
     #[cfg(windows)]
     {
-        send_raw_to_printer_spooler(&printer_target, &payload, "Prueba Impresion Logiventa POS")
+        send_raw_to_printer_spooler(&printer_target, &payload, "Prueba Impresion Metahabi POS")
             .map_err(|e| crate::error::AppError::Validation(e))?;
     }
 
@@ -985,7 +985,7 @@ pub fn test_open_drawer(db: State<'_, Db>) -> AppResult<String> {
 
     #[cfg(windows)]
     {
-        send_raw_to_printer_spooler(&printer_target, pulse_bytes, "Apertura Cajon Logiventa POS")
+        send_raw_to_printer_spooler(&printer_target, pulse_bytes, "Apertura Cajon Metahabi POS")
             .map_err(|e| crate::error::AppError::Validation(format!("Error abriendo cajón vía '{}': {}", printer_target, e)))?;
     }
 

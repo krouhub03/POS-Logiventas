@@ -1,4 +1,4 @@
-# Logiventa POS — Reglas y Estándares del Agente de Desarrollo
+# Metahabi POS — Reglas y Estándares del Agente de Desarrollo
 
 Sistema de Punto de Venta (POS) de escritorio de alto rendimiento construido con **Tauri 2 + React 19 + TypeScript + Vite + SQLite embebido (`rusqlite`)**, diseñado para operar con arquitectura **Offline-First** y sincronización bidireccional mediante API REST con el servidor de gestión central.
 

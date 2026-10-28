@@ -1,6 +1,6 @@
-# 📘 Manual Operativo de Usuario — Logiventa POS
+# 📘 Manual Operativo de Usuario — Metahabi POS
 
-Guía visual y paso a paso para cajeros, supervisores y administradores del punto de venta de escritorio **Logiventa POS**.
+Guía visual y paso a paso para cajeros, supervisores y administradores del punto de venta de escritorio **Metahabi POS**.
 
 ---
 

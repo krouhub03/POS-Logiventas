@@ -1,12 +1,12 @@
-# 🏗️ Arquitectura Técnica y Estándares de Ingeniería — Logiventa POS
+# 🏗️ Arquitectura Técnica y Estándares de Ingeniería — Metahabi POS
 
-Documento de especificación técnica y directivas de diseño centradas exclusivamente en el cliente de escritorio **Logiventa POS** (`POS-Logiventa`).
+Documento de especificación técnica y directivas de diseño centradas exclusivamente en el cliente de escritorio **Metahabi POS** (`POS-Logiventa`).
 
 ---
 
 ## 🏛️ 1. Visión General del Stack Tecnológico
 
-Logiventa POS es una aplicación de escritorio nativa de alto rendimiento (optimizada para Windows 10/11) con separación estricta entre presentación e infraestructura local:
+Metahabi POS es una aplicación de escritorio nativa de alto rendimiento (optimizada para Windows 10/11) con separación estricta entre presentación e infraestructura local:
 
 | Capa | Tecnología | Rol Principal |
 |---|---|---|
