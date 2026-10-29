@@ -44,6 +44,15 @@ pub fn get_images_dir(app: &AppHandle) -> PathBuf {
 /// Descarga de imágenes pendientes desde el ERP hacia el POS local (Worker en segundo plano).
 /// Solo descarga productos donde `image_sync_status = 'pending_download'`.
 pub async fn download_pending_images_internal(app: &AppHandle, db: &Db) -> AppResult<usize> {
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_default();
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
     let pending_images: Vec<(i64, String, String, Option<String>)> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
@@ -78,7 +87,20 @@ pub async fn download_pending_images_internal(app: &AppHandle, db: &Db) -> AppRe
     let mut downloaded_count = 0;
 
     for (product_id, sku, image_url, expected_hash) in pending_images {
-        let res = client.get(&image_url).send().await;
+        let full_url = if image_url.starts_with("http://") || image_url.starts_with("https://") {
+            image_url.clone()
+        } else {
+            if erp_url.is_empty() {
+                continue;
+            }
+            format!("{}/{}", erp_url.trim_end_matches('/'), image_url.trim_start_matches('/'))
+        };
+
+        let mut req = client.get(&full_url);
+        if !token.is_empty() {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        let res = req.send().await;
         let resp = match res {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
@@ -138,11 +160,18 @@ pub async fn download_pending_images_internal(app: &AppHandle, db: &Db) -> AppRe
     Ok(downloaded_count)
 }
 
-/// Sube al ERP las imágenes capturadas o modificadas localmente en el POS.
+/// Sube al ERP las imágenes capturadas o modificadas localmente en el POS (delegado a Db).
 pub async fn upload_pending_images_internal(_app: &AppHandle, db: &Db) -> AppResult<usize> {
+    upload_pending_images_db(db).await
+}
+
+/// Sube al ERP las imágenes pendientes directamente con la referencia a la base de datos local.
+pub async fn upload_pending_images_db(db: &Db) -> AppResult<usize> {
     let (erp_url, token) = {
         let conn = db.conn()?;
-        let erp_url = get_setting(&conn, "erp_api_url").unwrap_or_default();
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_default();
         let token = get_setting(&conn, "terminal_token").unwrap_or_default();
         (erp_url, token)
     };
@@ -156,7 +185,7 @@ pub async fn upload_pending_images_internal(_app: &AppHandle, db: &Db) -> AppRes
         let mut stmt = conn.prepare(
             "SELECT id, sku, image_local_path FROM products \
              WHERE image_sync_status = 'pending_upload' AND image_local_path IS NOT NULL AND active = 1 \
-             LIMIT 5",
+             LIMIT 50",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((

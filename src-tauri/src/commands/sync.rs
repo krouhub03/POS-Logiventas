@@ -1,7 +1,7 @@
 use rusqlite::params;
 use serde_json::Value;
 use std::time::Duration;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -413,6 +413,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             }
         }
     }
+
+    // 2.1 Subir imágenes pendientes de productos modificados o creados hacia el ERP
+    let _ = crate::commands::images::upload_pending_images_db(db).await;
 
     // 3. Descargar catálogo completo desde el ERP
     let url = format!("{}/api/pos/v1/sync/productos", erp_url.trim_end_matches('/'));
@@ -833,8 +836,10 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
 }
 
 #[tauri::command]
-pub async fn sync_catalog_from_erp(db: State<'_, Db>) -> AppResult<usize> {
-    sync_catalog_internal(&db).await
+pub async fn sync_catalog_from_erp(app: AppHandle, db: State<'_, Db>) -> AppResult<usize> {
+    let count = sync_catalog_internal(&db).await?;
+    let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
+    Ok(count)
 }
 
 /// 💳 Sincroniza medios de pago y sus cuentas PUC desde el ERP hacia SQLite local.
