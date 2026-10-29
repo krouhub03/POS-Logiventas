@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.10] - 2026-10-29
+### Agregado
+- Sincronizacion de imagenes POS-ERP y proteccion de catalogos
+
+### Cambios recientes
+- fix(sync): corregir lectura de erp_url y despachar subida y descarga de imágenes en catálogo
+---
 ## [0.1.9] - 2026-10-27
 
 ### Agregado
