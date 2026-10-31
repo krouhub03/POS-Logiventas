@@ -5,6 +5,10 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.11] - 2026-10-31
+### Agregado
+- Depuracion de barra superior de login y bloqueo estricto de apagado con turno abierto
+---
 ## [0.1.10] - 2026-10-29
 ### Agregado
 - Sincronizacion de imagenes POS-ERP y proteccion de catalogos
