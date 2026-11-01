@@ -103,7 +103,6 @@ interface SalesStationPageProps {
   isActive?: boolean;
   onLockTerminal: () => void;
   onOpenCloseShiftModal?: () => void;
-  onCloseApp?: () => void;
   onNavigateToProducts?: () => void;
   onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
@@ -172,7 +171,6 @@ export function SalesStationPage({
   isActive = true,
   onLockTerminal,
   onOpenCloseShiftModal,
-  onCloseApp,
   onNavigateToProducts,
   onNavigateToInventory,
   onNavigateToSettings,
@@ -1638,18 +1636,6 @@ export function SalesStationPage({
           >
             <span>🔒</span>
           </button>
-
-          {/* Botón Apagar / Salir del POS */}
-          {onCloseApp && (
-            <button
-              type="button"
-              onClick={onCloseApp}
-              className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/60 border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-800 text-slate-500 hover:text-rose-500 flex items-center justify-center transition-colors cursor-pointer"
-              title="Apagar o Salir del POS"
-            >
-              <span>⏻</span>
-            </button>
-          )}
 
           {/* Botón Modo Claro / Oscuro */}
           <button

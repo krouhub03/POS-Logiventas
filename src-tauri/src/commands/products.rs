@@ -153,7 +153,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     let sql = format!(
         "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
          WHERE p.active = 1 AND (p.name LIKE ?1 OR p.sku LIKE ?1 OR p.barcode LIKE ?1 OR p.tags LIKE ?1) \
-         ORDER BY p.name LIMIT 2000"
+         ORDER BY p.name LIMIT 20000"
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut products = stmt.query_map(params![pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;

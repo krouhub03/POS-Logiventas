@@ -453,104 +453,95 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         let mut sorted_products = products_array.clone();
     sorted_products.sort_by_key(|p| if p["active"].as_i64().unwrap_or(1) == 1 { 0 } else { 1 });
 
-    let mut used_barcodes = std::collections::HashSet::<String>::new();
+        let mut used_barcodes = std::collections::HashSet::<String>::new();
+        let pending_deltas_map = compute_all_pending_stock_deltas(&tx);
 
-    for p in &sorted_products {
-        let erp_id = p["id"].as_str().unwrap_or_default();
-        let sku = p["sku"].as_str().unwrap_or_default();
-        let raw_barcode = p["barcode"].as_str().map(str::trim).filter(|s| !s.is_empty());
-        let name = p["name"].as_str().unwrap_or("Sin Nombre");
-        let unit = p["unit"].as_str().unwrap_or("pza");
-        let is_service = p["is_service"].as_i64().unwrap_or(0);
-        let controls_stock = if is_service == 1 { 0 } else { 1 };
-        let allow_negative_stock: i64 = 0;
-        let is_bundle = p["is_bundle"].as_i64().unwrap_or(0);
-        let tags = p["tags"].as_str().unwrap_or("");
-        let tax_fixed_cents = p["tax_fixed_cents"].as_i64().unwrap_or(0);
-        let price_cents = p["price_cents"].as_i64().unwrap_or(0);
-        let cost_cents = p["cost_cents"].as_i64().unwrap_or(0);
-        let tax_rate_bp = p["tax_rate_bp"].as_i64().unwrap_or(0);
-        let stock = p["stock"].as_f64().unwrap_or(0.0);
-        let min_stock = p["min_stock"].as_f64().unwrap_or(0.0);
-        let active = p["active"].as_i64().unwrap_or(1);
+        for p in &sorted_products {
+            let erp_id = p["id"].as_str().unwrap_or_default();
+            let sku = p["sku"].as_str().unwrap_or_default();
+            let raw_barcode = p["barcode"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            let name = p["name"].as_str().unwrap_or("Sin Nombre");
+            let unit = p["unit"].as_str().unwrap_or("pza");
+            let is_service = p["is_service"].as_i64().unwrap_or(0);
+            let controls_stock = if is_service == 1 { 0 } else { 1 };
+            let allow_negative_stock: i64 = 0;
+            let is_bundle = p["is_bundle"].as_i64().unwrap_or(0);
+            let tags = p["tags"].as_str().unwrap_or("");
+            let tax_fixed_cents = p["tax_fixed_cents"].as_i64().unwrap_or(0);
+            let price_cents = p["price_cents"].as_i64().unwrap_or(0);
+            let cost_cents = p["cost_cents"].as_i64().unwrap_or(0);
+            let tax_rate_bp = p["tax_rate_bp"].as_i64().unwrap_or(0);
+            let stock = p["stock"].as_f64().unwrap_or(0.0);
+            let min_stock = p["min_stock"].as_f64().unwrap_or(0.0);
+            let active = p["active"].as_i64().unwrap_or(1);
 
-        if sku.is_empty() {
-            continue;
-        }
+            if sku.is_empty() {
+                continue;
+            }
 
-        // Buscar si ya existe localmente por erp_id o sku
-        let local_match: Option<i64> = if !erp_id.is_empty() {
-            tx.query_row(
-                "SELECT id FROM products WHERE erp_id = ?1",
-                params![erp_id],
-                |r| r.get(0),
-            )
-            .ok()
-        } else {
-            None
-        }
-        .or_else(|| {
-            tx.query_row(
-                "SELECT id FROM products WHERE sku = ?1",
-                params![sku],
-                |r| r.get(0),
-            )
-            .ok()
-        });
-
-        // Resolución segura de código de barras para evitar violación de UNIQUE constraint
-        let mut resolved_barcode: Option<String> = None;
-        if let Some(bc) = raw_barcode {
-            if used_barcodes.contains(bc) {
-                // Ya asignado a otro producto prioritario en este lote
-                resolved_barcode = None;
+            // Buscar si ya existe localmente por erp_id o sku (usando caché de prepared statements)
+            let local_match: Option<i64> = if !erp_id.is_empty() {
+                tx.prepare_cached("SELECT id FROM products WHERE erp_id = ?1")?
+                    .query_row(params![erp_id], |r| r.get(0))
+                    .ok()
             } else {
-                // Verificar si otro producto en SQLite tiene este código de barras
-                let other_row: Option<(i64, i64)> = tx
-                    .query_row(
-                        "SELECT id, active FROM products WHERE barcode = ?1",
-                        params![bc],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .ok();
+                None
+            }
+            .or_else(|| {
+                tx.prepare_cached("SELECT id FROM products WHERE sku = ?1")
+                    .ok()?
+                    .query_row(params![sku], |r| r.get(0))
+                    .ok()
+            });
 
-                match other_row {
-                    Some((other_id, other_active)) => {
-                        if Some(other_id) == local_match {
-                            // Es el mismo producto
-                            resolved_barcode = Some(bc.to_string());
-                            used_barcodes.insert(bc.to_string());
-                        } else if other_active == 0 {
-                            // El otro producto está inactivo: liberamos su código de barras
-                            let _ = tx.execute(
-                                "UPDATE products SET barcode = NULL WHERE id = ?1",
-                                params![other_id],
-                            );
-                            if active == 1 {
+            // Resolución segura de código de barras para evitar violación de UNIQUE constraint
+            let mut resolved_barcode: Option<String> = None;
+            if let Some(bc) = raw_barcode {
+                if used_barcodes.contains(bc) {
+                    // Ya asignado a otro producto prioritario en este lote
+                    resolved_barcode = None;
+                } else {
+                    // Verificar si otro producto en SQLite tiene este código de barras
+                    let other_row: Option<(i64, i64)> = tx
+                        .prepare_cached("SELECT id, active FROM products WHERE barcode = ?1")?
+                        .query_row(params![bc], |r| Ok((r.get(0)?, r.get(1)?)))
+                        .ok();
+
+                    match other_row {
+                        Some((other_id, other_active)) => {
+                            if Some(other_id) == local_match {
+                                // Es el mismo producto
                                 resolved_barcode = Some(bc.to_string());
                                 used_barcodes.insert(bc.to_string());
+                            } else if other_active == 0 {
+                                // El otro producto está inactivo: liberamos su código de barras
+                                let _ = tx.prepare_cached("UPDATE products SET barcode = NULL WHERE id = ?1")?
+                                    .execute(params![other_id]);
+                                if active == 1 {
+                                    resolved_barcode = Some(bc.to_string());
+                                    used_barcodes.insert(bc.to_string());
+                                } else {
+                                    resolved_barcode = None;
+                                }
                             } else {
+                                // El otro producto está activo: si este es inactivo o colisiona, se asigna None
                                 resolved_barcode = None;
                             }
-                        } else {
-                            // El otro producto está activo: si este es inactivo o colisiona, se asigna None
-                            resolved_barcode = None;
                         }
-                    }
-                    None => {
-                        resolved_barcode = Some(bc.to_string());
-                        used_barcodes.insert(bc.to_string());
+                        None => {
+                            resolved_barcode = Some(bc.to_string());
+                            used_barcodes.insert(bc.to_string());
+                        }
                     }
                 }
             }
-        }
 
-        // Calcular delta neto de inventario pendiente en sync_queue (ventas locales no sincronizadas y devoluciones restock no sincronizadas)
-        let pending_net_delta: f64 = if let Some(local_id) = local_match {
-            compute_pending_stock_delta(&tx, local_id)
-        } else {
-            0.0
-        };
+            // Delta neto pre-calculado en memoria O(1) para evitar N*M consultas SQL secuenciales
+            let pending_net_delta: f64 = if let Some(local_id) = local_match {
+                pending_deltas_map.get(&local_id).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
 
         let effective_stock = if controls_stock == 0 {
             0.0
@@ -627,7 +618,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         };
 
         if let Some(local_id) = local_match {
-            tx.execute(
+            tx.prepare_cached(
                 "UPDATE products SET
                     erp_id = ?1,
                     sku = ?2,
@@ -654,66 +645,66 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     image_sync_status = ?23,
                     updated_at = datetime('now')
                  WHERE id = ?24",
-                params![
-                    erp_id,
-                    sku,
-                    resolved_barcode,
-                    name,
-                    unit,
-                    is_service,
-                    price_cents,
-                    cost_cents,
-                    tax_rate_bp,
-                    final_stock,
-                    min_stock,
-                    active,
-                    final_needs_upload,
-                    controls_stock,
-                    allow_negative_stock,
-                    is_bundle,
-                    tags,
-                    tax_fixed_cents,
-                    category_id,
-                    final_img_url,
-                    final_local_path,
-                    final_img_hash,
-                    final_sync_status,
-                    local_id
-                ],
-            )?;
+            )?
+            .execute(params![
+                erp_id,
+                sku,
+                resolved_barcode,
+                name,
+                unit,
+                is_service,
+                price_cents,
+                cost_cents,
+                tax_rate_bp,
+                final_stock,
+                min_stock,
+                active,
+                final_needs_upload,
+                controls_stock,
+                allow_negative_stock,
+                is_bundle,
+                tags,
+                tax_fixed_cents,
+                category_id,
+                final_img_url,
+                final_local_path,
+                final_img_hash,
+                final_sync_status,
+                local_id
+            ])?;
         } else {
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT INTO products (
                     erp_id, sku, barcode, name, unit, is_service,
                     price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload,
                     controls_stock, allow_negative_stock, is_bundle, tags, tax_fixed_cents, category_id,
                     image_url, image_local_path, image_hash, image_sync_status
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
-                params![
-                    erp_id,
-                    sku,
-                    resolved_barcode,
-                    name,
-                    unit,
-                    is_service,
-                    price_cents,
-                    cost_cents,
-                    tax_rate_bp,
-                    effective_stock,
-                    min_stock,
-                    active,
-                    controls_stock,
-                    allow_negative_stock,
-                    is_bundle,
-                    tags,
-                    tax_fixed_cents,
-                    category_id,
-                    final_img_url,
-                    final_local_path,
-                    final_img_hash,
-                    final_sync_status,
-                ],
-            )?;
+            )?
+            .execute(params![
+                erp_id,
+                sku,
+                resolved_barcode,
+                name,
+                unit,
+                is_service,
+                price_cents,
+                cost_cents,
+                tax_rate_bp,
+                effective_stock,
+                min_stock,
+                active,
+                controls_stock,
+                allow_negative_stock,
+                is_bundle,
+                tags,
+                tax_fixed_cents,
+                category_id,
+                final_img_url,
+                final_local_path,
+                final_img_hash,
+                final_sync_status,
+            ])?;
         }
 
         total_synced += 1;
@@ -1517,16 +1508,20 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
         None => return Ok(0),
     };
 
-    let conn = db.conn()?;
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+    let pending_deltas_map = compute_all_pending_stock_deltas(&tx);
     let mut count = 0;
     for d in deltas {
         let p_id = d["productoId"].as_str().unwrap_or_default();
         let stock_actual = d["stockActual"].as_f64().unwrap_or(0.0);
 
         if !p_id.is_empty() {
-            let local_info: Option<(i64, i64, i64, i64)> = conn
-                .query_row(
+            let local_info: Option<(i64, i64, i64, i64)> = tx
+                .prepare_cached(
                     "SELECT id, is_service, is_bundle, COALESCE(needs_erp_upload, 0) FROM products WHERE erp_id = ?1",
+                )?
+                .query_row(
                     params![p_id],
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
@@ -1537,36 +1532,13 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
                     continue;
                 }
 
-                let pending_sold_direct: f64 = conn
-                    .query_row(
-                        "SELECT COALESCE(SUM(si.quantity), 0) \
-                         FROM sale_items si \
-                         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                         WHERE si.product_id = ?1 AND sq.status != 'synced'",
-                        params![local_id],
-                        |r| r.get(0),
-                    )
-                    .unwrap_or(0.0);
+                // pending_net_delta pre-calculado en memoria O(1)
+                let net_delta = pending_deltas_map.get(&local_id).copied().unwrap_or(0.0);
+                let effective_stock = (stock_actual + net_delta).max(0.0);
 
-                let pending_sold_bundle: f64 = conn
-                    .query_row(
-                        "SELECT COALESCE(SUM(si.quantity * pc.quantity), 0) \
-                         FROM sale_items si \
-                         JOIN product_components pc ON pc.parent_product_id = si.product_id \
-                         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-                         WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
-                        params![local_id],
-                        |r| r.get(0),
-                    )
-                    .unwrap_or(0.0);
-
-                let pending_sold = pending_sold_direct + pending_sold_bundle;
-                let effective_stock = (stock_actual - pending_sold).max(0.0);
-
-                let affected = conn.execute(
+                let affected = tx.prepare_cached(
                     "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2 AND COALESCE(needs_erp_upload, 0) = 0",
-                    params![effective_stock, local_id],
-                );
+                )?.execute(params![effective_stock, local_id]);
                 if let Ok(n) = affected {
                     if n > 0 {
                         count += 1;
@@ -1577,9 +1549,12 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
     }
 
     if let Some(ts) = json["data"]["timestamp"].as_str() {
-        let _ = set_setting(&conn, "last_sync_timestamp", ts);
+        let _ = tx.prepare_cached(
+            "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+        )?.execute(params![ts]);
     }
 
+    tx.commit()?;
     Ok(count)
 }
 
@@ -1663,7 +1638,8 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
         tokio::time::sleep(Duration::from_secs(3)).await;
 
         let mut loop_count: u64 = 0;
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut last_catalog_sync_loop: u64 = 0;
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
 
         loop {
             interval.tick().await;
@@ -1672,7 +1648,7 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
             // 1. Despachar Outbox si hay ventas o movimientos pendientes
             let _ = dispatch_outbox_internal(&db).await;
 
-            // 2. Si hay ajustes de stock o productos locales pendientes de subir al ERP, sincronizar antes de traer deltas
+            // 2. Si hay ajustes de stock o productos locales pendientes de subir al ERP
             let has_pending_products = db
                 .conn()
                 .ok()
@@ -1687,14 +1663,20 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 .unwrap_or(0)
                 > 0;
 
-            if has_pending_products || loop_count % 12 == 0 {
+            // Sincronización completa de catálogo: cada 10 minutos (60 ticks de 10s)
+            // o si hay productos pendientes locales con un cooldown mínimo de 30s (3 ticks)
+            let should_sync_catalog = (loop_count >= last_catalog_sync_loop + 60)
+                || (has_pending_products && loop_count >= last_catalog_sync_loop + 3);
+
+            if should_sync_catalog {
+                last_catalog_sync_loop = loop_count;
                 let _ = sync_catalog_internal(&db).await;
             } else {
-                // 3. Traer deltas de existencias desde el ERP cada 5 segundos
+                // 3. Traer deltas de existencias desde el ERP cada ciclo ligero (10 segundos)
                 let _ = pull_inventory_deltas_internal(&db).await;
             }
 
-            // 4. Sincronización asíncrona de imágenes (baja prioridad, cada 15 segundos)
+            // 4. Sincronización asíncrona de imágenes (baja prioridad, cada 30 segundos)
             if loop_count % 3 == 0 {
                 let _ = crate::commands::images::upload_pending_images_internal(&app, &db).await;
                 let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
@@ -1709,8 +1691,80 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
     });
 }
 
+/// Pre-calcula los deltas netos de inventario pendientes de sincronizar en `sync_queue`
+/// para TODOS los productos locales en una sola pasada rápida con GROUP BY en memoria.
+/// Retorna `local_id -> delta_neto`. Evita miles de consultas repetitivas N+1.
+pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::collections::HashMap<i64, f64> {
+    let mut map: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+
+    // 1. Unidades vendidas directamente en tickets pendientes
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT si.product_id, COALESCE(SUM(si.quantity), 0) \
+         FROM sale_items si \
+         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+         WHERE sq.status != 'synced' \
+         GROUP BY si.product_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
+            for (pid, qty) in rows.flatten() {
+                *map.entry(pid).or_insert(0.0) -= qty;
+            }
+        }
+    }
+
+    // 2. Unidades hijas vendidas a través de combos/kits en tickets pendientes
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT pc.child_product_id, COALESCE(SUM(si.quantity * pc.quantity), 0) \
+         FROM sale_items si \
+         JOIN product_components pc ON pc.parent_product_id = si.product_id \
+         JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
+         WHERE sq.status != 'synced' \
+         GROUP BY pc.child_product_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
+            for (pid, qty) in rows.flatten() {
+                *map.entry(pid).or_insert(0.0) -= qty;
+            }
+        }
+    }
+
+    // 3. Unidades devueltas directamente (con reingreso a stock) en devoluciones pendientes
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT sri.product_id, COALESCE(SUM(sri.quantity), 0) \
+         FROM sale_return_items sri \
+         JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
+         WHERE sri.inventory_disposition = 'restock' AND sq.status != 'synced' \
+         GROUP BY sri.product_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
+            for (pid, qty) in rows.flatten() {
+                *map.entry(pid).or_insert(0.0) += qty;
+            }
+        }
+    }
+
+    // 4. Unidades hijas devueltas a través de combos en devoluciones pendientes
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT pc.child_product_id, COALESCE(SUM(sri.quantity * pc.quantity), 0) \
+         FROM sale_return_items sri \
+         JOIN product_components pc ON pc.parent_product_id = sri.product_id \
+         JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
+         WHERE sri.inventory_disposition = 'restock' AND sq.status != 'synced' \
+         GROUP BY pc.child_product_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
+            for (pid, qty) in rows.flatten() {
+                *map.entry(pid).or_insert(0.0) += qty;
+            }
+        }
+    }
+
+    map
+}
+
 /// Calcula el delta neto de unidades pendientes de sincronizar en `sync_queue` para un producto local:
 /// `pending_returned (restock) - pending_sold (directas + combos)`
+#[allow(dead_code)]
 pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -> f64 {
     let direct_sold: f64 = conn
         .query_row(

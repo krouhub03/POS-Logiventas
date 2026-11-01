@@ -188,39 +188,21 @@ function App() {
       const currentShift = activeShift ?? (await api.shifts.getActiveShift().catch(() => null));
 
       if (currentShift) {
-        const doCloseShift = await confirm({
-          title: "⚠️ Turno de Caja Abierto",
-          message: `El turno ${currentShift.folio} (${currentShift.userName || "Cajero"}) sigue activo con ventas en custodia. Se debe realizar el arqueo y cierre antes de apagar la estación para emitir el reporte Z al ERP.`,
-          confirmText: "Hacer Arqueo y Apagar",
-          cancelText: "Suspender y Salir",
+        await alert({
+          title: "⛔ Turno de Caja Abierto",
+          message: `El turno ${currentShift.folio} (${currentShift.userName || "Cajero"}) sigue activo con dinero en custodia. Debes realizar el arqueo y cierre de turno antes de poder apagar el sistema.`,
           variant: "warning",
         });
-
-        if (doCloseShift) {
-          setExitActionPending(true);
-          setShowCloseShiftModal(true);
-          return;
-        }
-
-        const forceExit = await confirm({
-          title: "¿Salir sin Arqueo (Solo Emergencias)?",
-          message:
-            "El turno continuará abierto en el sistema y se reanudará al encender el POS. ¿Deseas apagar ahora?",
-          confirmText: "Sí, apagar sin arqueo",
-          cancelText: "Volver al POS",
-          variant: "danger",
-        });
-        if (forceExit) {
-          await api.system.closeApp(true);
-        }
+        setExitActionPending(true);
+        setShowCloseShiftModal(true);
         return;
       }
 
       const ok = await confirm({
         title: "¿Apagar o Salir del POS?",
-        message: "¿Deseas cerrar la aplicación de Punto de Venta?",
+        message: "¿Deseas cerrar y apagar la aplicación de Punto de Venta?",
         confirmText: "Apagar Caja",
-        cancelText: "Continuar en POS",
+        cancelText: "Cancelar",
         variant: "danger",
       });
       if (!ok) return;
@@ -229,7 +211,7 @@ function App() {
     } catch (err) {
       console.error("Error al salir de la aplicación:", err);
     }
-  }, [activeShift, confirm]);
+  }, [activeShift, alert, confirm]);
 
   // Interceptar cierre de ventana de Windows (Alt+F4 o botón X) enviado desde Tauri
   useEffect(() => {
@@ -326,7 +308,6 @@ function App() {
             isActive={currentView === "sales"}
             onLockTerminal={() => handleSetCashier(null)}
             onOpenCloseShiftModal={() => setShowCloseShiftModal(true)}
-            onCloseApp={handleRequestCloseApp}
             onNavigateToProducts={handleNavigateToProducts}
             onNavigateToInventory={handleNavigateToInventory}
             onNavigateToSettings={handleNavigateToSettings}

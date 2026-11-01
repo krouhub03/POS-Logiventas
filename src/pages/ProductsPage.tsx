@@ -216,9 +216,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     );
   }, [formIsBundle, formComponents]);
 
-  // Estado del formulario de ajuste de stock
-  const [adjustNewStock, setAdjustNewStock] = useState<number>(0);
-  const [adjustReason, setAdjustReason] = useState("Ajuste manual de inventario");
+  // Estado del formulario de ajuste de stock (Multimodo: Entrada +, Conteo =, Salida -)
+  const [adjustMode, setAdjustMode] = useState<"add" | "set" | "sub">("add");
+  const [adjustQuantity, setAdjustQuantity] = useState<number>(1);
+  const [adjustReason, setAdjustReason] = useState("Entrada de mercancía / Compra directa");
+  const [adjustNotes, setAdjustNotes] = useState("");
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const showNotification = (msg: string) => {
@@ -384,7 +386,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   const [syncingCatalog, setSyncingCatalog] = useState(false);
 
-  // Sincronización bidireccional de catálogo con el ERP
+  // Sincronización bajo demanda de catálogo con el ERP (disparada por botón manual o tras edición)
   const handleSyncCatalog = useCallback(async () => {
     try {
       setSyncingCatalog(true);
@@ -398,11 +400,6 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   }, [loadProducts]);
 
-  // Sincronizar catálogo al abrir la vista
-  useEffect(() => {
-    handleSyncCatalog();
-  }, [handleSyncCatalog]);
-
   useEffect(() => {
     const t = setTimeout(() => {
       loadProducts();
@@ -415,6 +412,19 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined);
     }
   }, [activeTab, selectedKardexProduct, loadMovements]);
+
+  // ==============================================================
+  // PAGINACIÓN DE ALTO RENDIMIENTO (VIRTUALIZACIÓN LIGERA)
+  // ==============================================================
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [inventoryPage, setInventoryPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState<number>(50);
+
+  // Reiniciar a la página 1 cuando cambia el texto de búsqueda o filtros
+  useEffect(() => {
+    setCatalogPage(1);
+    setInventoryPage(1);
+  }, [search, catalogTypeFilter, selectedTagsFilter, inventoryStatusFilter, activeTab]);
 
   // ==============================================================
   // CATÁLOGO COMERCIAL: Lista de todos los productos y servicios
@@ -435,6 +445,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     });
   }, [products, catalogTypeFilter, selectedTagsFilter, dbTags]);
 
+  const paginatedCatalogProducts = useMemo(() => {
+    const start = (catalogPage - 1) * itemsPerPage;
+    return catalogProducts.slice(start, start + itemsPerPage);
+  }, [catalogProducts, catalogPage, itemsPerPage]);
+
+  const totalCatalogPages = Math.max(1, Math.ceil(catalogProducts.length / itemsPerPage));
+
   // ==============================================================
   // CONTROL DE EXISTENCIAS: Exclusivo productos físicos simples en bodega (excluye servicios y combos)
   // ==============================================================
@@ -450,6 +467,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       return true;
     });
   }, [physicalProducts, inventoryStatusFilter]);
+
+  const paginatedInventoryProducts = useMemo(() => {
+    const start = (inventoryPage - 1) * itemsPerPage;
+    return inventoryFilteredProducts.slice(start, start + itemsPerPage);
+  }, [inventoryFilteredProducts, inventoryPage, itemsPerPage]);
+
+  const totalInventoryPages = Math.max(1, Math.ceil(inventoryFilteredProducts.length / itemsPerPage));
 
   // Métricas financieras y de almacén para Existencias (F4)
   const inventoryKpis = useMemo(() => {
@@ -762,21 +786,41 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   };
 
-  // Abrir modal de ajuste de stock
-  const handleOpenAdjustModal = (p: Product) => {
+  // Abrir modal de ajuste de stock con soporte para modos: 'add' (Entrada +), 'set' (Conteo =), 'sub' (Salida -)
+  const handleOpenAdjustModal = (p: Product, defaultMode: "add" | "set" | "sub" = "add") => {
     setAdjustingProduct(p);
-    setAdjustNewStock(p.stock);
-    setAdjustReason("Ajuste manual de inventario");
+    setAdjustMode(defaultMode);
+    if (defaultMode === "add") {
+      setAdjustQuantity(1);
+      setAdjustReason("Entrada de mercancía / Compra directa");
+    } else if (defaultMode === "set") {
+      setAdjustQuantity(p.stock);
+      setAdjustReason("Conteo físico / Cuadre de stock");
+    } else {
+      setAdjustQuantity(1);
+      setAdjustReason("Merma por caducidad o daño");
+    }
+    setAdjustNotes("");
   };
 
-  // Guardar ajuste de stock
+  // Guardar ajuste de stock con cálculo automático según el modo
   const handleSaveAdjust = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adjustingProduct) return;
-    if (adjustNewStock < 0) {
+
+    let finalStock = adjustingProduct.stock;
+    if (adjustMode === "add") {
+      finalStock = adjustingProduct.stock + adjustQuantity;
+    } else if (adjustMode === "set") {
+      finalStock = adjustQuantity;
+    } else if (adjustMode === "sub") {
+      finalStock = adjustingProduct.stock - adjustQuantity;
+    }
+
+    if (finalStock < 0) {
       modalAlert({
         title: "Existencia Inválida",
-        message: "La existencia contada no puede ser menor a 0.",
+        message: `El movimiento resultaría en un stock negativo (${finalStock} ${adjustingProduct.unit}). No se permite existencia menor a 0.`,
         variant: "warning",
       });
       return;
@@ -784,13 +828,17 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
     try {
       setAdjustSubmitting(true);
+      const fullReason = adjustNotes.trim()
+        ? `${adjustReason}: ${adjustNotes.trim()}`
+        : adjustReason;
+
       const input: StockAdjustmentInput = {
         productId: adjustingProduct.id,
-        newStock: adjustNewStock,
-        reason: adjustReason.trim() || "Ajuste manual",
+        newStock: finalStock,
+        reason: fullReason,
       };
       await api.products.adjustStock(input);
-      showNotification(`✓ Stock de "${adjustingProduct.name}" actualizado a ${adjustNewStock} ${adjustingProduct.unit}.`);
+      showNotification(`✓ Stock de "${adjustingProduct.name}" actualizado a ${finalStock} ${adjustingProduct.unit}.`);
       setAdjustingProduct(null);
       loadProducts();
       if (activeTab === "kardex") loadMovements();
@@ -1303,7 +1351,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     </td>
                   </tr>
                 ) : (
-                  catalogProducts.map((p) => {
+                  paginatedCatalogProducts.map((p) => {
                     const marginPct =
                       p.priceCents > 0
                         ? ((p.priceCents - p.costCents) / p.priceCents) * 100
@@ -1474,6 +1522,72 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 )}
               </tbody>
             </table>
+
+            {/* BARRA DE PAGINACIÓN DE ALTO RENDIMIENTO */}
+            {catalogProducts.length > 0 && (
+              <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Mostrando <strong className="text-slate-800 dark:text-slate-200">{(catalogPage - 1) * itemsPerPage + 1}</strong> a{" "}
+                    <strong className="text-slate-800 dark:text-slate-200">{Math.min(catalogPage * itemsPerPage, catalogProducts.length)}</strong> de{" "}
+                    <strong className="text-slate-800 dark:text-slate-200">{catalogProducts.length}</strong> ítems
+                  </span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value));
+                      setCatalogPage(1);
+                    }}
+                    className="ml-2 px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value={25}>25 por página</option>
+                    <option value={50}>50 por página</option>
+                    <option value={100}>100 por página</option>
+                    <option value={200}>200 por página</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={catalogPage === 1}
+                    onClick={() => setCatalogPage(1)}
+                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    title="Primera página"
+                  >
+                    ««
+                  </button>
+                  <button
+                    type="button"
+                    disabled={catalogPage === 1}
+                    onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                  >
+                    ‹ Anterior
+                  </button>
+                  <span className="px-3 py-1 font-bold text-slate-800 dark:text-slate-200">
+                    Página {catalogPage} de {totalCatalogPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={catalogPage >= totalCatalogPages}
+                    onClick={() => setCatalogPage((p) => Math.min(totalCatalogPages, p + 1))}
+                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                  >
+                    Siguiente ›
+                  </button>
+                  <button
+                    type="button"
+                    disabled={catalogPage >= totalCatalogPages}
+                    onClick={() => setCatalogPage(totalCatalogPages)}
+                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    title="Última página"
+                  >
+                    »»
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1557,7 +1671,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                     <th className="py-3 px-4 text-right w-28">Stock Mínimo</th>
                     <th className="py-3 px-4 text-right w-28">Costo Unit.</th>
                     <th className="py-3 px-4 text-right w-36">Valor en Bodega</th>
-                    <th className="py-3 px-4 text-center w-40">Acciones de Almacén</th>
+                    <th className="py-3 px-4 text-center w-48">Acciones de Almacén</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -1569,7 +1683,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                       </td>
                     </tr>
                   ) : (
-                    inventoryFilteredProducts.map((p) => {
+                    paginatedInventoryProducts.map((p) => {
                       const isOutStock = p.stock <= 0;
                       const isLowStock = !isOutStock && p.stock <= p.minStock;
                       const lineValuationCents = p.stock > 0 ? Math.round(p.stock * p.costCents) : 0;
@@ -1647,22 +1761,28 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
                           {/* ACCIONES DE ALMACÉN */}
                           <td className="py-3 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
+                            <div className="flex items-center justify-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => handleOpenAdjustModal(p)}
-                                className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 border border-amber-200 dark:border-amber-800/40 text-amber-700 dark:text-amber-300 font-bold text-[11px] transition-colors"
-                                title="Ajuste rápido de conteo físico"
+                                onClick={() => handleOpenAdjustModal(p, "add")}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 active:scale-95 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-300 font-semibold text-xs transition-all shadow-xs hover:shadow-sm cursor-pointer"
+                                title="Entrada rápida de mercancía (+)"
                               >
-                                📝 Conteo
+                                <svg className="w-3.5 h-3.5 stroke-[2.5]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                </svg>
+                                <span>Entrada</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleViewProductKardex(p)}
-                                className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800/40 text-indigo-700 dark:text-indigo-300 font-bold text-[11px] transition-colors"
-                                title="Ver historial de movimientos de este producto"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 active:scale-95 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-700/70 text-indigo-700 dark:text-indigo-300 font-semibold text-xs transition-all shadow-xs hover:shadow-sm cursor-pointer"
+                                title="Ver historial de movimientos Kardex"
                               >
-                                📜 Kardex
+                                <svg className="w-3.5 h-3.5 stroke-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                </svg>
+                                <span>Kardex</span>
                               </button>
                             </div>
                           </td>
@@ -1672,6 +1792,72 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                   )}
                 </tbody>
               </table>
+
+              {/* BARRA DE PAGINACIÓN DE ALTO RENDIMIENTO (EXISTENCIAS F4) */}
+              {inventoryFilteredProducts.length > 0 && (
+                <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
+                  <div className="flex items-center gap-2">
+                    <span>
+                      Mostrando <strong className="text-slate-800 dark:text-slate-200">{(inventoryPage - 1) * itemsPerPage + 1}</strong> a{" "}
+                      <strong className="text-slate-800 dark:text-slate-200">{Math.min(inventoryPage * itemsPerPage, inventoryFilteredProducts.length)}</strong> de{" "}
+                      <strong className="text-slate-800 dark:text-slate-200">{inventoryFilteredProducts.length}</strong> artículos
+                    </span>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setInventoryPage(1);
+                      }}
+                      className="ml-2 px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value={25}>25 por página</option>
+                      <option value={50}>50 por página</option>
+                      <option value={100}>100 por página</option>
+                      <option value={200}>200 por página</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={inventoryPage === 1}
+                      onClick={() => setInventoryPage(1)}
+                      className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                      title="Primera página"
+                    >
+                      ««
+                    </button>
+                    <button
+                      type="button"
+                      disabled={inventoryPage === 1}
+                      onClick={() => setInventoryPage((p) => Math.max(1, p - 1))}
+                      className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    >
+                      ‹ Anterior
+                    </button>
+                    <span className="px-3 py-1 font-bold text-slate-800 dark:text-slate-200">
+                      Página {inventoryPage} de {totalInventoryPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={inventoryPage >= totalInventoryPages}
+                      onClick={() => setInventoryPage((p) => Math.min(totalInventoryPages, p + 1))}
+                      className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    >
+                      Siguiente ›
+                    </button>
+                    <button
+                      type="button"
+                      disabled={inventoryPage >= totalInventoryPages}
+                      onClick={() => setInventoryPage(totalInventoryPages)}
+                      className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                      title="Última página"
+                    >
+                      »»
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1778,6 +1964,72 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 )}
               </tbody>
             </table>
+
+            {/* BARRA DE PAGINACIÓN DE ALTO RENDIMIENTO */}
+            {catalogProducts.length > 0 && (
+              <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
+                <div className="flex items-center gap-2">
+                  <span>
+                    Mostrando <strong className="text-slate-800 dark:text-slate-200">{(catalogPage - 1) * itemsPerPage + 1}</strong> a{" "}
+                    <strong className="text-slate-800 dark:text-slate-200">{Math.min(catalogPage * itemsPerPage, catalogProducts.length)}</strong> de{" "}
+                    <strong className="text-slate-800 dark:text-slate-200">{catalogProducts.length}</strong> ítems
+                  </span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value));
+                      setCatalogPage(1);
+                    }}
+                    className="ml-2 px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value={25}>25 por página</option>
+                    <option value={50}>50 por página</option>
+                    <option value={100}>100 por página</option>
+                    <option value={200}>200 por página</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={catalogPage === 1}
+                    onClick={() => setCatalogPage(1)}
+                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    title="Primera página"
+                  >
+                    ««
+                  </button>
+                  <button
+                    type="button"
+                    disabled={catalogPage === 1}
+                    onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
+                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                  >
+                    ‹ Anterior
+                  </button>
+                  <span className="px-3 py-1 font-bold text-slate-800 dark:text-slate-200">
+                    Página {catalogPage} de {totalCatalogPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={catalogPage >= totalCatalogPages}
+                    onClick={() => setCatalogPage((p) => Math.min(totalCatalogPages, p + 1))}
+                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                  >
+                    Siguiente ›
+                  </button>
+                  <button
+                    type="button"
+                    disabled={catalogPage >= totalCatalogPages}
+                    onClick={() => setCatalogPage(totalCatalogPages)}
+                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
+                    title="Última página"
+                  >
+                    »»
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2195,9 +2447,21 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           </div>
 
                           <div>
-                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                              {editingProduct ? "Exist. Actual *" : "Exist. Inicial *"}
-                            </label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                                {editingProduct ? "Exist. Actual *" : "Exist. Inicial *"}
+                              </label>
+                              {editingProduct && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAdjustModal(editingProduct, "add")}
+                                  className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
+                                  title="Abrir asistente de entrada rápida de mercancía"
+                                >
+                                  + Entrada
+                                </button>
+                              )}
+                            </div>
                             <input
                               type="number"
                               step="any"
@@ -2579,116 +2843,254 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       )}
 
       {/* ==============================================================
-          MODAL: AJUSTE RÁPIDO DE INVENTARIO FÍSICO
+          MODAL INTELIGENTE DE INVENTARIO: ENTRADA (+), CONTEO (=), SALIDA (-)
           ============================================================== */}
-      {adjustingProduct && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <header className="px-6 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>📊 Ajuste de Inventario</span>
-                </h2>
-                <p className="text-[11px] text-slate-400 font-bold truncate max-w-xs">
-                  {adjustingProduct.name}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAdjustingProduct(null)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg font-bold"
-              >
-                ✕
-              </button>
-            </header>
+      {adjustingProduct && (() => {
+        const currentStock = adjustingProduct.stock;
+        let finalResultStock = currentStock;
+        if (adjustMode === "add") {
+          finalResultStock = currentStock + (Number(adjustQuantity) || 0);
+        } else if (adjustMode === "set") {
+          finalResultStock = Number(adjustQuantity) || 0;
+        } else if (adjustMode === "sub") {
+          finalResultStock = Math.max(0, currentStock - (Number(adjustQuantity) || 0));
+        }
+        const diff = finalResultStock - currentStock;
 
-            <form onSubmit={handleSaveAdjust} className="p-6 space-y-4">
-              <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-bold">Existencia Actual</div>
-                  <div className="text-lg font-black text-slate-800 dark:text-slate-200 font-mono">
-                    {adjustingProduct.stock} {adjustingProduct.unit}
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95">
+              <header className="px-6 py-4 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-xl text-amber-500 shadow-inner">
+                    📦
+                  </div>
+                  <div>
+                    <h2 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>Ajuste / Entrada de Inventario</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-mono font-medium truncate max-w-xs">
+                      {adjustingProduct.name} • SKU: {adjustingProduct.sku}
+                    </p>
                   </div>
                 </div>
-
-                <div className="text-right">
-                  <div className="text-[10px] text-slate-400 uppercase font-bold">Diferencia</div>
-                  <div
-                    className={`text-lg font-black font-mono ${
-                      adjustNewStock - adjustingProduct.stock > 0
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : adjustNewStock - adjustingProduct.stock < 0
-                        ? "text-rose-600 dark:text-rose-400"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    {adjustNewStock - adjustingProduct.stock > 0 ? "+" : ""}
-                    {(adjustNewStock - adjustingProduct.stock).toFixed(2)} {adjustingProduct.unit}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Nueva Existencia Contada *
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  min="0"
-                  required
-                  autoFocus
-                  value={adjustNewStock}
-                  onChange={(e) => setAdjustNewStock(Number(e.target.value))}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-sm font-mono font-black text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Motivo o Justificación del Ajuste *
-                </label>
-                <select
-                  value={adjustReason}
-                  onChange={(e) => setAdjustReason(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-2"
-                >
-                  <option value="Ajuste manual de inventario">Ajuste manual de inventario</option>
-                  <option value="Conteo físico / Cuadre de stock">Conteo físico / Cuadre de stock</option>
-                  <option value="Merma por caducidad o daño">Merma por caducidad o daño</option>
-                  <option value="Entrada de mercancía / Compra directa">Entrada de mercancía / Compra directa</option>
-                  <option value="Devolución de cliente">Devolución de cliente</option>
-                </select>
-
-                <input
-                  type="text"
-                  placeholder="Detalle adicional (opcional)…"
-                  value={adjustReason}
-                  onChange={(e) => setAdjustReason(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div className="pt-3 flex items-center justify-end gap-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setAdjustingProduct(null)}
-                  className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800"
+                  className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-bold transition-colors cursor-pointer"
                 >
-                  Cancelar (Esc)
+                  ✕
                 </button>
-                <button
-                  type="submit"
-                  disabled={adjustSubmitting}
-                  className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-md transition-all disabled:opacity-50"
-                >
-                  {adjustSubmitting ? "Guardando…" : "Aplicar Ajuste"}
-                </button>
-              </div>
-            </form>
+              </header>
+
+              <form onSubmit={handleSaveAdjust} className="p-6 space-y-4">
+                {/* SELECTOR DE MODOS (3 PESTAÑAS RÁPIDAS) */}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">
+                    Tipo de Movimiento:
+                  </label>
+                  <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdjustMode("add");
+                        setAdjustReason("Entrada de mercancía / Compra directa");
+                        if (adjustQuantity <= 0) setAdjustQuantity(1);
+                      }}
+                      className={`flex flex-col items-center justify-center py-2 px-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                        adjustMode === "add"
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      <span className="text-sm">📥 Entrada (+)</span>
+                      <span className="text-[10px] font-normal opacity-90">Llegó mercancía</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdjustMode("set");
+                        setAdjustReason("Conteo físico / Cuadre de stock");
+                        setAdjustQuantity(currentStock);
+                      }}
+                      className={`flex flex-col items-center justify-center py-2 px-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                        adjustMode === "set"
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      <span className="text-sm">📦 Conteo (=)</span>
+                      <span className="text-[10px] font-normal opacity-90">Existencia exacta</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdjustMode("sub");
+                        setAdjustReason("Merma por caducidad o daño");
+                        if (adjustQuantity <= 0) setAdjustQuantity(1);
+                      }}
+                      className={`flex flex-col items-center justify-center py-2 px-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                        adjustMode === "sub"
+                          ? "bg-rose-600 text-white shadow-sm"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      <span className="text-sm">📤 Salida (-)</span>
+                      <span className="text-[10px] font-normal opacity-90">Merma o daño</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* TARJETA RESUMEN DE STOCK EN BODEGA */}
+                <div className="bg-slate-50 dark:bg-slate-950 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs text-slate-400 uppercase font-bold tracking-wide">Stock Actual en Bodega</div>
+                    <div className="text-xl font-black text-slate-800 dark:text-slate-200 font-mono">
+                      {currentStock} <span className="text-xs font-semibold text-slate-400">{adjustingProduct.unit}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-xs text-slate-400 uppercase font-bold tracking-wide">Nuevo Stock Resultante</div>
+                    <div
+                      className={`text-xl font-black font-mono ${
+                        adjustMode === "add"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : adjustMode === "sub"
+                          ? "text-rose-600 dark:text-rose-400"
+                          : diff >= 0
+                          ? "text-indigo-600 dark:text-indigo-400"
+                          : "text-amber-600 dark:text-amber-400"
+                      }`}
+                    >
+                      {finalResultStock.toFixed(2)} <span className="text-xs font-semibold">{adjustingProduct.unit}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* INPUT PRINCIPAL REACTIVO */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {adjustMode === "add"
+                      ? "Cantidad a Agregar al Almacén (+) *"
+                      : adjustMode === "set"
+                      ? "Existencia Exacta Contada en Estante (=) *"
+                      : "Cantidad a Retirar / Merma (-) *"}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      required
+                      autoFocus
+                      value={adjustQuantity}
+                      onChange={(e) => setAdjustQuantity(Number(e.target.value))}
+                      placeholder="Ingresa la cantidad..."
+                      className={`w-full pl-4 pr-16 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border-2 text-base font-mono font-black text-slate-900 dark:text-white focus:outline-none transition-all ${
+                        adjustMode === "add"
+                          ? "border-emerald-500/60 focus:ring-2 focus:ring-emerald-500"
+                          : adjustMode === "set"
+                          ? "border-indigo-500/60 focus:ring-2 focus:ring-indigo-500"
+                          : "border-rose-500/60 focus:ring-2 focus:ring-rose-500"
+                      }`}
+                    />
+                    <span className="absolute inset-y-0 right-0 pr-4 flex items-center text-xs font-bold text-slate-400 uppercase">
+                      {adjustingProduct.unit}
+                    </span>
+                  </div>
+                  <p
+                    className={`text-xs mt-1 font-medium flex items-center gap-1 ${
+                      adjustMode === "add"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : adjustMode === "set"
+                        ? diff >= 0
+                          ? "text-indigo-600 dark:text-indigo-400"
+                          : "text-amber-600 dark:text-amber-400"
+                        : "text-rose-600 dark:text-rose-400"
+                    }`}
+                  >
+                    {adjustMode === "add" && (
+                      <span>⚡ {currentStock} {adjustingProduct.unit} actuales + {adjustQuantity} agregadas = {finalResultStock.toFixed(2)} {adjustingProduct.unit} finales en sistema</span>
+                    )}
+                    {adjustMode === "set" && (
+                      <span>📋 Stock fijado en {finalResultStock.toFixed(2)} {adjustingProduct.unit} (Diferencia: {diff >= 0 ? "+" : ""}{diff.toFixed(2)} {adjustingProduct.unit})</span>
+                    )}
+                    {adjustMode === "sub" && (
+                      adjustQuantity > currentStock ? (
+                        <span>⚠️ La merma ({adjustQuantity}) supera el stock actual ({currentStock}). No se permite existencia negativa.</span>
+                      ) : (
+                        <span>📉 {currentStock} {adjustingProduct.unit} actuales - {adjustQuantity} retiradas = {finalResultStock.toFixed(2)} {adjustingProduct.unit} finales en sistema</span>
+                      )
+                    )}
+                  </p>
+                </div>
+
+                {/* MOTIVO & NOTAS INTERNAS */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Motivo o Justificación del Movimiento *
+                  </label>
+                  <select
+                    value={adjustReason}
+                    onChange={(e) => setAdjustReason(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="Entrada de mercancía / Compra directa">📥 Entrada de mercancía / Compra directa</option>
+                    <option value="Conteo físico / Cuadre de stock">📦 Conteo físico / Cuadre de stock</option>
+                    <option value="Merma por caducidad o daño">📤 Merma por caducidad o rotura</option>
+                    <option value="Devolución de cliente">↩️ Devolución de cliente</option>
+                    <option value="Ajuste manual de inventario">✏️ Ajuste manual de inventario</option>
+                  </select>
+
+                  <input
+                    type="text"
+                    placeholder="Factura proveedor, remisión o nota interna (opcional)..."
+                    value={adjustNotes}
+                    onChange={(e) => setAdjustNotes(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* FOOTER CON BOTONES DE ACCIÓN */}
+                <div className="pt-3 flex items-center justify-between border-t border-slate-200 dark:border-slate-800">
+                  <span className="text-[11px] text-slate-400">
+                    Atajo: <kbd className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-[10px] font-mono font-bold">Enter</kbd> guardar
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAdjustingProduct(null)}
+                      className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Cancelar (Esc)
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={adjustSubmitting || (adjustMode === "sub" && adjustQuantity > currentStock)}
+                      className={`px-5 py-2 rounded-xl text-white text-xs font-black shadow-md transition-all disabled:opacity-50 cursor-pointer ${
+                        adjustMode === "add"
+                          ? "bg-emerald-600 hover:bg-emerald-700"
+                          : adjustMode === "set"
+                          ? "bg-indigo-600 hover:bg-indigo-700"
+                          : "bg-rose-600 hover:bg-rose-700"
+                      }`}
+                    >
+                      {adjustSubmitting
+                        ? "Guardando…"
+                        : adjustMode === "add"
+                        ? "Confirmar Entrada (+)"
+                        : adjustMode === "set"
+                        ? "Fijar Conteo Real (=)"
+                        : "Registrar Salida (-)"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL MAESTRO: GESTIÓN DE ETIQUETAS (TAGS) */}
       {isTagsModalOpen && (

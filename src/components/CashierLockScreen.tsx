@@ -51,8 +51,8 @@ export function CashierLockScreen({
   onUnlocked,
   onUnpaired,
 }: CashierLockScreenProps) {
-  const { theme, toggleTheme } = useTheme();
-  const { confirm, alert: modalAlert } = useModals();
+  const { theme } = useTheme();
+  const { confirm, alert } = useModals();
   const {
     currentVersion,
     status: updateStatus,
@@ -260,91 +260,32 @@ export function CashierLockScreen({
     }
   };
 
-  const handleDisconnectTerminal = async () => {
-    try {
-      const activeShift = await api.shifts.getActiveShift().catch(() => null);
-      if (activeShift) {
-        const doClose = await confirm({
-          title: "⛔ Turno Activo: Cierre Obligatorio",
-          message: `La caja tiene un turno abierto (${activeShift.folio} de ${activeShift.userName || "Cajero"}). No se puede desconectar o cambiar la estación con ventas en custodia sin realizar el arqueo.`,
-          confirmText: "Hacer Arqueo y Desconectar",
-          cancelText: "Cancelar",
-          variant: "warning",
-        });
-        if (doClose) {
-          setPendingActionAfterCloseShift("disconnect");
-          setShowCloseShiftModal(true);
-        }
-        return;
-      }
-
-      const ok = await confirm({
-        title: "¿Desconectar esta Caja?",
-        message:
-          "La terminal se desvinculará de la estación actual. Podrás volver a vincularla o reconectarte cuando lo requieras.",
-        confirmText: "Sí, desconectar",
-        cancelText: "Cancelar",
-        variant: "warning",
-      });
-      if (!ok) return;
-
-      await api.auth.disconnectTemporarily();
-      if (onUnpaired) {
-        onUnpaired();
-      }
-    } catch (err) {
-      modalAlert({
-        title: "Error al desconectar",
-        message: String(err),
-        variant: "error",
-      });
-    }
-  };
-
   const handleCloseApp = async () => {
     try {
       const activeShift = await api.shifts.getActiveShift().catch(() => null);
       if (activeShift) {
-        const doClose = await confirm({
-          title: "⚠️ Turno de Caja Abierto",
-          message: `El turno ${activeShift.folio} (${activeShift.userName || "Cajero"}) sigue activo con dinero en custodia. Se debe realizar el arqueo y cierre antes de apagar la estación para emitir el reporte Z.`,
-          confirmText: "Hacer Arqueo y Apagar",
-          cancelText: "Suspender y Salir",
+        await alert({
+          title: "⛔ Turno de Caja Abierto",
+          message: `El turno ${activeShift.folio} (${activeShift.userName || "Cajero"}) sigue activo con dinero en custodia. Debes realizar el arqueo y cierre de turno antes de poder apagar el sistema.`,
           variant: "warning",
         });
-
-        if (doClose) {
-          setPendingActionAfterCloseShift("shutdown");
-          setShowCloseShiftModal(true);
-          return;
-        }
-
-        const forceExit = await confirm({
-          title: "¿Salir sin Arqueo (Solo Emergencias)?",
-          message:
-            "El turno continuará abierto en el sistema y se reanudará intacto al encender nuevamente el POS. ¿Deseas apagar ahora?",
-          confirmText: "Sí, apagar sin arqueo",
-          cancelText: "Volver a la caja",
-          variant: "danger",
-        });
-        if (forceExit) {
-          await api.system.closeApp(true);
-        }
+        setPendingActionAfterCloseShift("shutdown");
+        setShowCloseShiftModal(true);
         return;
       }
 
       const ok = await confirm({
         title: "¿Apagar o Salir del POS?",
-        message: "¿Deseas cerrar la aplicación de Punto de Venta?",
+        message: "¿Deseas cerrar y apagar la aplicación de Punto de Venta?",
         confirmText: "Apagar Caja",
-        cancelText: "Continuar en POS",
+        cancelText: "Cancelar",
         variant: "danger",
       });
       if (!ok) return;
 
       await api.system.closeApp(false);
     } catch (err) {
-      console.error("Error al cerrar app:", err);
+      console.error("Error al salir de la aplicación:", err);
     }
   };
 
@@ -518,57 +459,28 @@ export function CashierLockScreen({
         </div>
 
         {/* Derecha: Botones de Acción de Sistema */}
-        <div className="flex items-center gap-2.5">
-          {/* Botón para Alternar Tema Claro / Oscuro */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className={`p-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 ${
-              isDark
-                ? "bg-slate-800/90 hover:bg-slate-700 text-amber-300 border-slate-700 hover:border-amber-400/50"
-                : "bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 shadow-xs"
-            }`}
-            title={isDark ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-          >
-            <span>{isDark ? "☀️" : "🌙"}</span>
-            <span className="hidden sm:inline">{isDark ? "Modo Claro" : "Modo Oscuro"}</span>
-          </button>
-
+        <div className="flex items-center gap-2">
+          {/* Botón Sincronizar (solo icono 🔄 sin texto) */}
           <button
             type="button"
             onClick={handleSyncUsers}
             disabled={syncing}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 disabled:opacity-50 cursor-pointer ${
+            className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all active:scale-95 disabled:opacity-50 cursor-pointer ${
               isDark
                 ? "bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700 hover:border-emerald-500/50 shadow-xs"
                 : "bg-white hover:bg-slate-50 text-slate-700 hover:text-slate-900 border-slate-200 hover:border-emerald-500 shadow-xs"
             }`}
-            title="Sincronizar lista de usuarios y permisos desde el ERP"
+            title={syncing ? "Sincronizando usuarios y catálogo con el ERP…" : "Sincronizar usuarios y catálogo con el ERP"}
+            aria-label="Sincronizar con el ERP"
           >
-            <span className={syncing ? "animate-spin" : ""}>🔄</span>
-            <span>{syncing ? "Sincronizando…" : "Sincronizar"}</span>
+            <span className={`text-sm ${syncing ? "animate-spin" : ""}`}>🔄</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleDisconnectTerminal}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 cursor-pointer shadow-xs ${
-              isDark
-                ? "bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 border-amber-500/40 hover:border-amber-400"
-                : "bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200 hover:border-amber-300"
-            }`}
-            title="Desconectar o cambiar de terminal de caja"
-          >
-            <span>⚡</span>
-            <span>Desconectar</span>
-          </button>
-
-          <div className={`h-6 w-px mx-0.5 ${isDark ? "bg-slate-800" : "bg-slate-200"}`} />
-
+          {/* Botón Apagar */}
           <button
             type="button"
             onClick={handleCloseApp}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 cursor-pointer shadow-xs ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 cursor-pointer shadow-xs ${
               isDark
                 ? "bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-rose-100 border-rose-500/40 hover:border-rose-400"
                 : "bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 hover:border-rose-300"
