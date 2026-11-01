@@ -304,18 +304,16 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     let _ = dispatch_outbox_internal(db).await;
 
     // 1. Extraer productos creados o modificados localmente en el POS para subir al ERP
-    // Nota: El ERP requiere stock > 0 para dar de alta productos físicos nuevos (sin erp_id).
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
             "SELECT p.id, p.sku, p.barcode, p.name, p.unit, p.is_service, p.price_cents, p.cost_cents, \
-                    p.tax_rate_bp, p.stock, p.min_stock, p.tags, p.is_bundle, COALESCE(c.name, 'General') \
+                    p.tax_rate_bp, p.stock, p.min_stock, p.tags, p.is_bundle, COALESCE(c.name, 'General'), p.active \
              FROM products p \
              LEFT JOIN categories c ON c.id = p.category_id \
-             WHERE p.active = 1 AND p.needs_erp_upload = 1 \
-               AND (p.erp_id IS NOT NULL OR p.is_service = 1 OR p.is_bundle = 1 OR p.stock > 0)",
+             WHERE p.needs_erp_upload = 1",
         )?;
-        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64, String)> = stmt
+        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64, String, i64)> = stmt
             .query_map([], |r| {
                 Ok((
                     r.get(0)?,
@@ -332,13 +330,14 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                     r.get::<_, Option<String>>(11)?.unwrap_or_default(),
                     r.get::<_, i64>(12).unwrap_or(0),
                     r.get::<_, String>(13).unwrap_or_else(|_| "General".to_string()),
+                    r.get::<_, i64>(14).unwrap_or(1),
                 ))
             })?
             .filter_map(|r| r.ok())
             .collect();
 
         let mut list = Vec::new();
-        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle, category_name) in rows {
+        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle, category_name, active) in rows {
             let mut components_json = Vec::new();
             if is_bundle == 1 {
                 if let Ok(mut c_stmt) = conn.prepare(
@@ -369,6 +368,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 "stock": stock,
                 "min_stock": min_stock,
                 "tags": tags,
+                "active": active,
                 "components": components_json,
             }));
         }

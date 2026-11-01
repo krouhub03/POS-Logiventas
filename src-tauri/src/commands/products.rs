@@ -226,12 +226,7 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         .filter(|s| !s.is_empty())
         .unwrap_or(if is_service { "serv" } else { "pza" });
 
-    let stock = if is_service || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0) };
-    if !is_service && !is_bundle && stock <= 0.0 {
-        return Err(AppError::Validation(
-            "No se permite registrar productos físicos sin inventario. La existencia inicial debe ser mayor a 0.".into(),
-        ));
-    }
+    let stock = if is_service || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0).max(0.0) };
     let min_stock = if is_service || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let max_stock = if is_service || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
     let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
@@ -342,12 +337,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     let tags_val = input.tags.as_deref().unwrap_or("").trim().to_string();
     let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
 
-    let stock = if !controls_stock || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0) };
-    if !is_service && !is_bundle && stock <= 0.0 {
-        return Err(AppError::Validation(
-            "No se permite guardar un producto físico sin inventario (existencia <= 0).".into(),
-        ));
-    }
+    let stock = if !controls_stock || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0).max(0.0) };
     let min_stock = if !controls_stock || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let max_stock = if !controls_stock || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
     let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
@@ -436,7 +426,7 @@ pub fn delete_product(db: State<'_, Db>, id: i64) -> AppResult<()> {
     }
     let conn = db.conn()?;
     let affected = conn.execute(
-        "UPDATE products SET active = 0, updated_at = datetime('now') WHERE id = ?1",
+        "UPDATE products SET active = 0, needs_erp_upload = 1, updated_at = datetime('now') WHERE id = ?1",
         params![id],
     )?;
 

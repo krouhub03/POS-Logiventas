@@ -945,12 +945,9 @@ pub fn execute_products_xlsx_import(
 
             // Si el producto aún no existe en el ERP y su stock sigue en 0, mantener needs_erp_upload = 0
             // para evitar bucle infinito contra la validación del ERP; si ya tiene erp_id o stock > 0, subir al ERP.
-            let should_upload_to_erp = if _erp_id.is_some() || final_stock > 0.0 {
+            let should_upload_to_erp = {
                 queued_for_erp_sync += 1;
                 1_i64
-            } else {
-                local_only_zero_stock += 1;
-                0_i64
             };
 
             tx.execute(
@@ -1007,9 +1004,9 @@ pub fn execute_products_xlsx_import(
                     }
                     "set_one" => (1.0, 1_i64),
                     _ => {
-                        // "local_only": Se guarda en SQLite con stock 0 y needs_erp_upload = 0
-                        // Cuando se le ingrese stock > 0 en el POS, subirá automáticamente al ERP
-                        (0.0, 0_i64)
+                        // "local_only": Se guarda en SQLite con stock 0 y se encola para sincronizar también con el catálogo del ERP
+                        queued_for_erp_sync += 1;
+                        (0.0, 1_i64)
                     }
                 }
             };
