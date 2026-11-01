@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.12] - 2026-11-01
+### Agregado
+- Optimizacion de sincronizacion ERP con miles de productos, paginacion fluida y entradas directas de stock
+
+### Cambios recientes
+- feat(inventory): optimizacion de sincronizacion ERP, paginacion y flujo simplificado de entradas de stock
+---
 ## [0.1.11] - 2026-10-31
 ### Agregado
 - Depuracion de barra superior de login y bloqueo estricto de apagado con turno abierto
