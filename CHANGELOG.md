@@ -5,6 +5,14 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.13] - 2026-11-01
+### Agregado
+- Sincronizacion bidireccional completa POS-ERP, remocion de limite de 2000 productos y soporte para stock inicial en 0
+
+### Cambios recientes
+- feat(sync): sincronizacion bidireccional total, remocion de limite 2000 y soporte de productos stock 0
+- chore: actualizar Cargo.lock para v0.1.12
+---
 ## [0.1.12] - 2026-11-01
 ### Agregado
 - Optimizacion de sincronizacion ERP con miles de productos, paginacion fluida y entradas directas de stock
