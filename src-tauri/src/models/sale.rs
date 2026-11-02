@@ -23,13 +23,15 @@ pub struct PaymentInput {
     pub reference: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSaleInput {
     pub user_id: Option<i64>,
     pub customer_id: Option<i64>,
     pub items: Vec<CartItemInput>,
     pub payments: Vec<PaymentInput>,
+    #[serde(default)]
+    pub client_tx_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

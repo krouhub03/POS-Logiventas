@@ -687,6 +687,7 @@ mod tests {
                         reference: None,
                     },
                 ],
+                client_tx_id: None,
             },
         )
         .unwrap();
@@ -749,6 +750,7 @@ mod tests {
                     amount_cents: 3000000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .unwrap();

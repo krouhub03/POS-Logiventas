@@ -63,16 +63,22 @@ La estación de ventas está diseñada para cobrar en segundos sin usar el rató
 - **Edición exacta**: También puedes hacer **doble clic** sobre la cantidad de cualquier fila para escribir un número exacto (incluyendo decimales para productos a granel como `1.25` kg).
 - Presiona **`Supr` (`Delete`)** para quitar el producto seleccionado del ticket.
 
-### D. Imágenes de Productos y Visor Lightbox
+### D. Aplicar Precio de Mayoreo en Mostrador (`F9` o Clic en Ticket)
+Si un producto cuenta con tarifa de mayoreo configurada (`wholesale_price_cents > 0`), el cajero puede alternar entre el precio menudeo y el precio mayorista en cualquier momento:
+- **Atajo de Teclado `F9` (o `Alt+M`):** Presiona **`F9`** sobre la línea seleccionada en el ticket (o inmediatamente tras escanear un producto). El precio unitario cambiará al instante a precio mayoreo y el total se recalculará automáticamente. Una segunda pulsación restablece el precio normal de menudeo.
+- **Botón en Barra de Acciones:** El botón **`[F9] Mayoreo`** en la cabecera del escáner se activa en color ámbar (`Mayoreo ON`) cuando la línea activa tiene aplicado el precio mayorista.
+- **Clic Directo en la Columna de Precio:** En la tabla del ticket, verás una etiqueta punteada `[Mayoreo: $X.XX]` debajo del precio normal. Haz clic sobre ella para activar el mayoreo (o clic sobre la insignia ámbar `[📦 Mayoreo]` para volver a menudeo).
+
+### E. Imágenes de Productos y Visor Lightbox
 - **Alternar Miniaturas**: Haz clic en el botón con ícono de imagen en la cabecera del ticket para **mostrar u ocultar** las fotografías de los artículos según el tamaño de tu pantalla.
 - **Visor Ampliado (Lightbox)**: Haz **doble clic** sobre la foto pequeña de cualquier producto para abrirla en alta resolución a pantalla completa. Presiona **`Escape`** o **`Enter`** para cerrarla.
 - **Íconos Automáticos**: Si un artículo no tiene foto, el sistema muestra automáticamente un diseño representativo según su tipología (📦 Físico, 🛠️ Servicio, 🍱 Combo).
 
-### E. Limpiar Código o Vaciar Ticket (`Escape`)
+### F. Limpiar Código o Vaciar Ticket (`Escape`)
 - Si escribiste mal un código en la barra, presiona **`Escape`** una vez para borrar el texto escrito.
 - Si la barra ya está vacía y presionas **`Escape`**, el sistema te preguntará si deseas vaciar o cerrar el ticket actual (`Enter` para confirmar, `Esc` para cancelar).
 
-### F. Atajos Universales en Todas las Ventanas Modales (`Enter` / `Esc`)
+### G. Atajos Universales en Todas las Ventanas Modales (`Enter` / `Esc`)
 Todas las ventanas y diálogos del sistema (Cobro `F12`, Clientes `F2`, Búsqueda `F10`, Varios `Insert`, Apertura/Cierre de Turno y Alertas) responden al teclado:
 - **`Enter`**: Confirma la operación principal, envía el formulario o cobra el ticket.
 - **`Escape`**: Cancela y cierra la ventana abierta de inmediato sin tocar el ratón.
@@ -129,13 +135,31 @@ Para registrar la venta a nombre de un cliente específico:
 Una vez listos los productos del ticket:
 
 1. Presiona **`F12`** (o `Ctrl + Espacio` / botón verde **"COBRAR"**).
-   - *Nota:* Si el ticket incluye un producto con últimas existencias, el POS verificará automáticamente que otra caja no lo haya vendido en ese instante.
-2. **Selecciona el Medio de Pago**:
-   - **Efectivo**: Ingresa el monto recibido o usa los botones de billetes rápidos. El sistema mostrará en grande el **Cambio / Vuelto** a entregar.
-   - **Medios Electrónicos / Digitales (Tarjeta, Nequi, Daviplata, Transferencia)**: Selecciona el medio habilitado en tu terminal e ingresa la referencia del comprobante si aplica.
-   - **Venta a Crédito / Cuenta por Cobrar (CxC)**: Si el cliente cuenta con cupo disponible, selecciona esta opción para registrar la deuda en su estado de cuenta comercial.
-   - **Pago Mixto / Dividido**: Puedes combinar varios medios de pago en una misma compra (ej. una parte en Efectivo y el resto por Transferencia o Crédito) hasta cubrir el total.
-3. Presiona **`Enter`** desde cualquier campo para finalizar la venta y emitir el ticket (o **`Escape`** para volver al ticket y continuar agregando productos).
+   - *Nota:* Si el ticket incluye un producto con existencias críticas, el POS verificará automáticamente que otra caja no lo haya comprometido en ese instante.
+2. **Navegación Ergonómica por Teclado (`[←] [↑] [→] [↓]`):**
+   - Puedes moverte fluidamente entre todos los medios de pago configurados en tu sucursal usando las flechas de dirección:
+     - **`[→]` / `[←]`**: Desplazamiento horizontal entre métodos consecutivos.
+     - **`[↓]` / `[↑]`**: Salto vertical directo entre filas de la cuadrícula manteniendo la columna activa.
+   - El método seleccionado se resalta de inmediato con borde esmeralda e indicador visual sin alterar los números digitados.
+3. **Cinta de Balance Financiero:**
+   - La parte superior del formulario presenta una cinta informativa continua dividida en tres columnas:
+     - **Total a Pagar**: Valor final de la venta calculado en centavos exactos.
+     - **Dinero Recibido**: Importe ingresado por el cajero.
+     - **Cambio (Vuelto)**: Saldo a favor del cliente a devolver en efectivo.
+4. **Tipos de Medios de Pago Soportados:**
+   - **💵 Efectivo**: Ingresa el monto recibido o usa los botones de billetes sugeridos. El sistema calcula el vuelto al instante.
+   - **💳 Tarjetas y Medios Digitales (Tarjeta Débito/Crédito, Nequi, Daviplata, Bancos)**: Digita el número de comprobante o autorización en el campo opcional de referencia.
+   - **📋 Crédito de Clientes (Cartera / Fiado)**: Requiere un cliente asignado al ticket. Si no hay cliente, el POS despliega una alerta amigable y abre el selector de clientes para validar su cupo autorizado y deuda actual antes de permitir el cobro.
+   - **🔄 Pago Mixto (Dividido)**: Integrado como la última opción de la cuadrícula. Permite repartir el total entre múltiples medios simultáneamente (ej. parte en Efectivo y parte en Nequi/Tarjeta) con atajos de auto-asignación de saldo restante.
+5. **🖨️ Impresión de Ticket Opcional (`Ctrl + P`):**
+   - La ventana de cobro cuenta con un selector `🖨️ Ticket: Sí / No` que recuerda la última preferencia del operador (`localStorage`).
+   - Si un cliente no desea comprobante físico o compras rápidas de mostrador, puedes desactivarlo con **`Ctrl + P`** para ahorrar papel térmico y agilizar la fila.
+6. **Confirmación con `Enter` y Blindaje Anti-Duplicados:**
+   - Presiona **`Enter`** desde cualquier campo para consolidar la venta. El sistema bloquea síncronamente dobles pulsaciones y valida la transacción en base de datos mediante clave de idempotencia única (`client_tx_id`).
+7. **Gestión Automática de Fila al Cerrar la Venta:**
+   - Al completarse el cobro, si tienes otros tickets en espera y todos ya contienen productos, el sistema crea y activa automáticamente un **nuevo ticket limpio** para recibir al siguiente cliente de inmediato sin tocar el ratón.
+8. **Apertura Automática del Cajón Monedero:**
+   - Al confirmar un cobro que incluya **Efectivo** o que genere **Cambio / Vueltos**, el sistema dispara automáticamente el pulso RJ11 a través de la impresora para abrir el cajón monedero, garantizando su apertura incluso si elegiste no imprimir el ticket de papel. También puedes abrirlo manualmente en cualquier momento con la tecla rápida **`F8`**.
 
 ---
 

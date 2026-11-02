@@ -35,6 +35,9 @@ interface CartLine {
   imageLocalPath?: string | null;
   isService?: boolean;
   isBundle?: boolean;
+  regularPriceCents?: number;
+  wholesalePriceCents?: number;
+  isWholesale?: boolean;
 }
 
 interface TicketTab {
@@ -212,6 +215,7 @@ export function SalesStationPage({
   const [selectedLineIndex, setSelectedLineIndex] = useState<number>(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const tableRowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  const isProcessingSaleRef = useRef(false);
 
   // Desplazar automáticamente la fila seleccionada a la vista visible
   useEffect(() => {
@@ -792,7 +796,12 @@ export function SalesStationPage({
       const updatedLines = [...cartLines];
       const existing = updatedLines[existingIndex];
       const newQty = existing.quantity + quantity;
-      const newSubtotal = Math.round(existing.unitPriceCents * newQty);
+      const isWholesale = existing.isWholesale ?? false;
+      const wholesaleCents = existing.wholesalePriceCents ?? product.wholesalePriceCents ?? 0;
+      const regularCents = existing.regularPriceCents || product.priceCents;
+      const activeUnitPrice = isWholesale && wholesaleCents > 0 ? wholesaleCents : regularCents;
+
+      const newSubtotal = Math.round(activeUnitPrice * newQty);
       const fixedTax = Math.round((existing.taxFixedCents || 0) * newQty);
       const newTax = calculateTaxCents(newSubtotal, existing.taxRateBp) + fixedTax;
       const newTotal = newSubtotal + newTax;
@@ -800,6 +809,10 @@ export function SalesStationPage({
       updatedLines[existingIndex] = {
         ...existing,
         quantity: newQty,
+        unitPriceCents: activeUnitPrice,
+        regularPriceCents: regularCents,
+        wholesalePriceCents: wholesaleCents,
+        isWholesale,
         currentStock: product.stock,
         controlsStock: !product.isService,
         subtotalCents: newSubtotal,
@@ -815,14 +828,19 @@ export function SalesStationPage({
       return true;
     } else {
       const prodTaxFixed = product.taxFixedCents || 0;
-      const unitSubtotal = Math.round(product.priceCents * quantity);
+      const regularPrice = product.priceCents;
+      const wholesalePrice = product.wholesalePriceCents || 0;
+      const unitSubtotal = Math.round(regularPrice * quantity);
       const unitTax = calculateTaxCents(unitSubtotal, product.taxRateBp) + Math.round(prodTaxFixed * quantity);
       const newLine: CartLine = {
         id: `line-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
         productId: product.id,
         barcode: product.barcode || product.sku,
         description: product.name,
-        unitPriceCents: product.priceCents,
+        unitPriceCents: regularPrice,
+        regularPriceCents: regularPrice,
+        wholesalePriceCents: wholesalePrice,
+        isWholesale: false,
         quantity,
         taxRateBp: product.taxRateBp,
         taxFixedCents: prodTaxFixed,
@@ -1119,6 +1137,60 @@ export function SalesStationPage({
     focusInput();
   };
 
+  // Alternar Precio de Mayoreo en la línea seleccionada (F9)
+  const handleToggleWholesale = (targetIndex?: number) => {
+    let idx = targetIndex !== undefined ? targetIndex : selectedLineIndex;
+    if (idx < 0) {
+      if (cartLines.length === 1) {
+        idx = 0;
+      } else if (cartLines.length > 0) {
+        idx = cartLines.length - 1;
+      }
+    }
+
+    if (idx < 0 || idx >= cartLines.length) {
+      showFeedback("⚠️ Selecciona un producto en el ticket para alternar precio mayoreo", "warning");
+      return;
+    }
+
+    const line = cartLines[idx];
+    const wholesaleCents = line.wholesalePriceCents || 0;
+    const regularCents = line.regularPriceCents || line.unitPriceCents;
+
+    if (wholesaleCents <= 0) {
+      showFeedback(`ℹ️ "${line.description}" no tiene precio de mayoreo configurado`, "warning");
+      return;
+    }
+
+    const willBeWholesale = !line.isWholesale;
+    const newUnitPrice = willBeWholesale ? wholesaleCents : regularCents;
+    const newSubtotal = Math.round(newUnitPrice * line.quantity);
+    const fixedTax = Math.round((line.taxFixedCents || 0) * line.quantity);
+    const newTax = calculateTaxCents(newSubtotal, line.taxRateBp) + fixedTax;
+    const newTotal = newSubtotal + newTax;
+
+    const updatedLines = [...cartLines];
+    updatedLines[idx] = {
+      ...line,
+      isWholesale: willBeWholesale,
+      unitPriceCents: newUnitPrice,
+      subtotalCents: newSubtotal,
+      taxCents: newTax,
+      totalCents: newTotal,
+    };
+
+    updateCurrentTicketLines(updatedLines);
+    setSelectedLineIndex(idx);
+
+    if (willBeWholesale) {
+      playScanSuccess();
+      showFeedback(`📦 Mayoreo aplicado a "${line.description}": ${formatCents(newUnitPrice)}`, "success");
+    } else {
+      showFeedback(`🏷️ Menudeo restablecido a "${line.description}": ${formatCents(newUnitPrice)}`, "info");
+    }
+    focusInput();
+  };
+
   // Agregar artículo común / varios (INS)
   const handleAddVarios = (description: string, priceCents: number, quantity: number) => {
     const subtotal = Math.round(priceCents * quantity);
@@ -1127,6 +1199,9 @@ export function SalesStationPage({
       barcode: "VARIOS",
       description,
       unitPriceCents: priceCents,
+      regularPriceCents: priceCents,
+      wholesalePriceCents: 0,
+      isWholesale: false,
       quantity,
       taxRateBp: 0,
       subtotalCents: subtotal,
@@ -1142,8 +1217,13 @@ export function SalesStationPage({
   };
 
   // Procesar cobro (F12)
-  const handleProcessSale = async (payments: PaymentInput[], customerId?: number) => {
-    if (cartLines.length === 0) return;
+  const handleProcessSale = async (
+    payments: PaymentInput[],
+    customerId?: number,
+    shouldPrint: boolean = true
+  ) => {
+    if (isProcessingSaleRef.current || cartLines.length === 0) return;
+    isProcessingSaleRef.current = true;
 
     const finalCustomerId = customerId ?? currentTicket?.customer?.id ?? undefined;
 
@@ -1159,18 +1239,43 @@ export function SalesStationPage({
     }));
 
     try {
+      const clientTxId = `pos-${cashier.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const receipt = await api.sales.create({
         userId: cashier.id,
         customerId: finalCustomerId,
         items,
         payments,
+        clientTxId,
       });
 
-      // Si hay más de un ticket, cerramos el ticket que se acaba de cobrar
+      // Gestión de tickets tras cerrar la venta:
+      // Si hay más de un ticket:
+      // - Si ya existe otro ticket vacío en remaining, cambiamos a él.
+      // - Si TODOS los demás tickets restantes tienen productos, abrimos un ticket nuevo limpio.
+      // Si solo había 1 ticket:
+      // - Se vacían sus líneas y cliente para atender al siguiente cliente (no se abren más tickets).
       if (tickets.length > 1) {
         const remaining = tickets.filter((t) => t.id !== activeTicketId);
-        setTickets(remaining);
-        setActiveTicketId(remaining[0].id);
+        const existingEmpty = remaining.find((t) => t.lines.length === 0);
+
+        if (existingEmpty) {
+          setTickets(remaining);
+          setActiveTicketId(existingEmpty.id);
+        } else {
+          const maxNum = tickets.reduce((max, t) => {
+            const match = t.name.match(/\d+/);
+            return match ? Math.max(max, parseInt(match[0], 10)) : max;
+          }, tickets.length);
+          const newTicketId = Date.now();
+          const newTicket: TicketTab = {
+            id: newTicketId,
+            name: `Ticket ${maxNum + 1}`,
+            lines: [],
+            customer: null,
+          };
+          setTickets([...remaining, newTicket]);
+          setActiveTicketId(newTicketId);
+        }
       } else {
         setTickets((prev) =>
           prev.map((t) => (t.id === activeTicketId ? { ...t, lines: [], customer: null } : t))
@@ -1183,14 +1288,48 @@ export function SalesStationPage({
       refreshCatalogMap();
       focusInput();
 
-      // Impresión automática silenciosa en impresora térmica si está habilitada
-      api.settings.getAll().then((sets) => {
-        if (sets.printer_enabled !== "false" && sets.printer_auto_print === "true") {
-          api.printers.printSaleTicket(receipt.id).catch((err) => {
-            console.warn("[Auto-Print] No se pudo imprimir ticket automáticamente:", err);
-          });
-        }
-      }).catch(() => {});
+      // Impresión y apertura automática de cajón monedero
+      api.settings
+        .getAll()
+        .then(async (sets) => {
+          const printerEnabled = sets.printer_enabled !== "false";
+          const printerAutoPrint = sets.printer_auto_print !== "false";
+          const drawerEnabled = sets.drawer_enabled !== "false";
+          const drawerOpenOnSale = sets.drawer_open_on_sale !== "false";
+          const drawerOpenOnPrint = sets.drawer_open_on_print !== "false";
+
+          // Detectar si la venta involucró efectivo (pago o vuelto)
+          const hasCashPayment = payments.some(
+            (p) =>
+              p.method.toLowerCase().includes("cash") ||
+              p.method.toLowerCase().includes("efectivo")
+          );
+          const hadCashTransaction = hasCashPayment || (receipt.changeCents && receipt.changeCents > 0);
+
+          let ticketPrinted = false;
+
+          // Si se solicitó imprimir ticket y la impresora está habilitada
+          if (shouldPrint && printerEnabled && printerAutoPrint) {
+            try {
+              await api.printers.printSaleTicket(receipt.id);
+              ticketPrinted = true;
+            } catch (err) {
+              console.warn("[Auto-Print] No se pudo imprimir ticket automáticamente:", err);
+            }
+          }
+
+          // Si el ticket NO se imprimió (por toggle 'Ticket: No', error de impresora, o auto_print desactivado),
+          // pero el cajón monedero está habilitado y la venta tuvo efectivo o está configurado para abrir:
+          if (!ticketPrinted && drawerEnabled) {
+            const shouldOpenDrawer = hadCashTransaction || drawerOpenOnSale || drawerOpenOnPrint;
+            if (shouldOpenDrawer) {
+              api.settings.testOpenDrawer().catch((err) => {
+                console.warn("[Auto-Drawer] No se pudo enviar pulso directo al cajón:", err);
+              });
+            }
+          }
+        })
+        .catch(() => {});
 
       // Notificar al outbox dispatcher de inmediato para subida rápida
       api.sync.dispatchOutbox().catch(console.warn);
@@ -1201,6 +1340,8 @@ export function SalesStationPage({
         message: err instanceof Error ? err.message : String(err),
         variant: "error",
       });
+    } finally {
+      isProcessingSaleRef.current = false;
     }
   };
 
@@ -1385,6 +1526,9 @@ export function SalesStationPage({
       } else if (e.key === "F8") {
         e.preventDefault();
         handleManualOpenDrawer();
+      } else if (e.key === "F9" || ((e.altKey || e.ctrlKey) && (e.key === "m" || e.key === "M"))) {
+        e.preventDefault();
+        handleToggleWholesale();
       } else if (e.key === "F11") {
         e.preventDefault();
         api.system.toggleFullscreen().catch(console.error);
@@ -2005,6 +2149,36 @@ export function SalesStationPage({
             <span className="hidden sm:inline">Borrar</span>
           </button>
 
+          {/* BOTÓN CONMUTADOR DE PRECIO MAYOREO (F9) */}
+          <button
+            type="button"
+            onClick={() => handleToggleWholesale()}
+            disabled={
+              selectedLineIndex < 0 ||
+              cartLines.length === 0 ||
+              !(cartLines[selectedLineIndex]?.wholesalePriceCents && cartLines[selectedLineIndex].wholesalePriceCents! > 0)
+            }
+            className={`px-2.5 sm:px-3.5 py-2 rounded-xl border font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-35 disabled:pointer-events-none ${
+              selectedLineIndex >= 0 && cartLines[selectedLineIndex]?.isWholesale
+                ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600 shadow-amber-500/20 ring-2 ring-amber-400/30"
+                : "bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700/60"
+            }`}
+            title="Alternar Precio de Mayoreo en la línea seleccionada (F9 o Alt+M)"
+          >
+            <span
+              className={`px-1 py-0.2 rounded text-[10px] font-mono font-bold border ${
+                selectedLineIndex >= 0 && cartLines[selectedLineIndex]?.isWholesale
+                  ? "bg-amber-700 text-white border-amber-400/40"
+                  : "bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-300 border-amber-400/40"
+              }`}
+            >
+              F9
+            </span>
+            <span className="hidden sm:inline">
+              {selectedLineIndex >= 0 && cartLines[selectedLineIndex]?.isWholesale ? "Mayoreo ON" : "Mayoreo"}
+            </span>
+          </button>
+
           <button
             type="button"
             onClick={handleToggleShowImages}
@@ -2202,7 +2376,48 @@ export function SalesStationPage({
                         </div>
                       </td>
                       <td className="py-2 px-2.5 text-right font-semibold text-slate-700 dark:text-slate-300 align-middle">
-                        {formatCents(line.unitPriceCents)}
+                        <div className="flex flex-col items-end gap-0.5">
+                          {line.isWholesale ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleWholesale(index);
+                                }}
+                                title="Precio de Mayoreo activo. Clic o presiona F9 para volver a Menudeo"
+                                className="text-[10px] bg-amber-500 hover:bg-amber-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider inline-flex items-center gap-1 shadow-2xs cursor-pointer transition-colors"
+                              >
+                                <span>📦 Mayoreo</span>
+                              </button>
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 line-through font-mono">
+                                {formatCents(line.regularPriceCents || line.unitPriceCents)}
+                              </span>
+                              <span className="font-mono font-black text-amber-600 dark:text-amber-400 text-xs sm:text-sm">
+                                {formatCents(line.unitPriceCents)}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-mono font-semibold text-xs sm:text-sm text-slate-800 dark:text-slate-200">
+                                {formatCents(line.unitPriceCents)}
+                              </span>
+                              {line.wholesalePriceCents && line.wholesalePriceCents > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleWholesale(index);
+                                  }}
+                                  title={`Mayoreo disponible: ${formatCents(line.wholesalePriceCents)}. Clic o presiona F9 para aplicar`}
+                                  className="text-[9px] text-slate-500 hover:text-amber-700 dark:text-slate-400 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/60 border border-dashed border-slate-300 dark:border-slate-700 hover:border-amber-400 px-1.5 py-0.5 rounded inline-flex items-center gap-1 font-mono cursor-pointer transition-colors"
+                                >
+                                  <span>Mayoreo: {formatCents(line.wholesalePriceCents)}</span>
+                                </button>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 px-2.5 text-center align-middle hidden xl:table-cell">
                         {line.taxRateBp > 0 || (line.taxFixedCents && line.taxFixedCents > 0) ? (
@@ -2470,7 +2685,7 @@ export function SalesStationPage({
         totalCents={totalCents}
         initialCustomer={currentTicket?.customer || null}
         onClose={handleCloseCobro}
-        onConfirm={(payments, customerId) => handleProcessSale(payments, customerId)}
+        onConfirm={(payments, customerId, shouldPrint) => handleProcessSale(payments, customerId, shouldPrint)}
       />
 
       <CustomerModal

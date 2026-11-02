@@ -45,8 +45,12 @@ pub async fn verify_and_reserve_stock(
     // 1. Verificación local inmediata: Si algún producto no tiene existencias suficientes en SQLite local
     let (erp_url, token, offline_policy, critical_items) = {
         let conn = db.conn()?;
-        let erp_url = get_setting(&conn, "erp_api_url").unwrap_or_else(|| "http://localhost:3000".into());
-        let token = get_setting(&conn, "erp_api_token").unwrap_or_default();
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_else(|| "https://metahabi.com".into());
+        let token = get_setting(&conn, "terminal_token")
+            .or_else(|| get_setting(&conn, "erp_api_token"))
+            .unwrap_or_default();
         let threshold = get_setting(&conn, "critical_stock_threshold")
             .and_then(|s| s.parse().ok())
             .unwrap_or(2.0);
@@ -1870,6 +1874,7 @@ mod tests {
                     amount_cents: 2500000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .unwrap();

@@ -9,9 +9,8 @@ interface CobroModalProps {
   isOpen: boolean;
   initialCustomer?: Customer | null;
   onClose: () => void;
-  onConfirm: (payments: PaymentInput[], customerId?: number) => Promise<void>;
+  onConfirm: (payments: PaymentInput[], customerId?: number, shouldPrint?: boolean) => Promise<void>;
 }
-
 
 export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onConfirm }: CobroModalProps) {
   const [availableMethods, setAvailableMethods] = useState<PaymentMethod[]>([]);
@@ -19,34 +18,72 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
   const [pagoInput, setPagoInput] = useState<string>("");
   const [refInput, setRefInput] = useState<string>("");
   const [isSplitMode, setIsSplitMode] = useState(false);
-  // Estado para la matriz del Cobro Mixto Directo (código del método -> { amountInput, reference })
   const [splitMap, setSplitMap] = useState<Record<string, { amountInput: string; reference: string }>>({});
   const [customer, setCustomer] = useState<Customer | null>(initialCustomer || null);
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Impresión opcional de ticket persistida
+  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("pos_print_sale_ticket");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const handleToggleAutoPrint = () => {
+    setAutoPrint((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("pos_print_sale_ticket", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
+
   const inputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
   const splitInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const isSubmittingRef = useRef(false);
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+
+  const availableMethodsRef = useRef<PaymentMethod[]>([]);
+  availableMethodsRef.current = availableMethods;
+
+  const selectedMethodCodeRef = useRef(selectedMethodCode);
+  selectedMethodCodeRef.current = selectedMethodCode;
+
+  const isSplitModeRef = useRef(isSplitMode);
+  isSplitModeRef.current = isSplitMode;
 
   // Sincronizar cliente inicial y reiniciar campos al abrir
   useEffect(() => {
     if (isOpen) {
+      isSubmittingRef.current = false;
       setCustomer(initialCustomer || null);
       setIsCustomerModalOpen(false);
       setPagoInput((totalCents / 100).toString());
       setRefInput("");
       setIsSplitMode(false);
+      isSplitModeRef.current = false;
       setSplitMap({});
       setError(null);
-      setTimeout(() => inputRef.current?.select(), 50);
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 50);
 
       api.sync
         .getPaymentMethods()
         .then((allMethods) => {
           const enabled = allMethods.filter((m) => m.active === 1 && m.terminalEnabled === 1);
           setAvailableMethods(enabled);
+          availableMethodsRef.current = enabled;
 
           const defaultMethod =
             enabled.find(
@@ -55,16 +92,19 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
 
           if (defaultMethod) {
             setSelectedMethodCode(defaultMethod.code);
+            selectedMethodCodeRef.current = defaultMethod.code;
           } else {
             setSelectedMethodCode("cash");
+            selectedMethodCodeRef.current = "cash";
           }
         })
         .catch((err) => {
           console.error("Error cargando medios de pago:", err);
           setSelectedMethodCode("cash");
+          selectedMethodCodeRef.current = "cash";
         });
     }
-  }, [isOpen, totalCents]);
+  }, [isOpen, totalCents, initialCustomer]);
 
   const selectedMethodObj = availableMethods.find((m) => m.code === selectedMethodCode);
   const isCashMethod =
@@ -76,7 +116,8 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     selectedMethodObj?.type === "CREDITO" ||
     selectedMethodCode.toLowerCase().includes("credito") ||
     selectedMethodCode.toLowerCase().includes("credit") ||
-    selectedMethodCode.toLowerCase().includes("fiar");
+    selectedMethodCode.toLowerCase().includes("fiar") ||
+    selectedMethodCode.toLowerCase().includes("cartera");
 
   // Verificar si algún método a crédito en modo mixto tiene asignado monto
   const hasCreditInSplit = Object.entries(splitMap).some(([code, data]) => {
@@ -87,23 +128,21 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       mObj?.type === "CREDITO" ||
       code.toLowerCase().includes("credit") ||
       code.toLowerCase().includes("credito") ||
-      code.toLowerCase().includes("fiar")
+      code.toLowerCase().includes("fiar") ||
+      code.toLowerCase().includes("cartera")
     );
   });
 
   const requiresCustomer = isCreditMethod || (isSplitMode && hasCreditInSplit);
 
   // Cálculos en modo mixto (Split Ledger)
-  // Suma total asignada
   const totalAsignadoMixtoCents = Object.values(splitMap).reduce(
     (acc, cur) => acc + toCents(cur.amountInput || 0),
     0
   );
 
-  // Saldo pendiente por asignar (no puede ser negativo para el cálculo de restante)
   const saldoPendienteCents = Math.max(0, totalCents - totalAsignadoMixtoCents);
 
-  // En efectivo se permite sobrepago para vuelto
   const efectivoEntry = Object.entries(splitMap).find(([code]) => {
     const m = availableMethods.find((x) => x.code === code);
     return m?.type === "EFECTIVO" || code.toLowerCase().includes("cash") || code.toLowerCase().includes("efectivo");
@@ -132,29 +171,104 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     .filter((v, idx, arr) => v >= montoReferencia / 100 && arr.indexOf(v) === idx && v > 0)
     .slice(0, 4);
 
-  // Alternar a modo mixto
-  const toggleSplitMode = () => {
+  // Activar un método simple
+  const activateSingleMethod = (methodCode: string) => {
+    isSplitModeRef.current = false;
+    selectedMethodCodeRef.current = methodCode;
+    setIsSplitMode(false);
+    setSelectedMethodCode(methodCode);
     setError(null);
-    if (!isSplitMode) {
-      setIsSplitMode(true);
-      // Inicializar el método actual o efectivo con el total
-      const initialSplit: Record<string, { amountInput: string; reference: string }> = {};
-      const cashMethod = availableMethods.find(
-        (m) => m.type === "EFECTIVO" || m.code.toLowerCase().includes("cash") || m.code.toLowerCase().includes("efectivo")
-      ) || availableMethods[0];
-
-      if (cashMethod) {
-        initialSplit[cashMethod.code] = {
-          amountInput: (totalCents / 100).toString(),
-          reference: "",
-        };
-      }
-      setSplitMap(initialSplit);
-    } else {
-      setIsSplitMode(false);
-      setSplitMap({});
+    const m = availableMethods.find((x) => x.code === methodCode);
+    const isCash = m?.type === "EFECTIVO" || methodCode.toLowerCase().includes("cash") || methodCode.toLowerCase().includes("efectivo");
+    if (!isCash) {
       setPagoInput((totalCents / 100).toString());
-      setTimeout(() => inputRef.current?.select(), 50);
+    }
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 40);
+  };
+
+  // Activar modo mixto
+  const activateSplitMode = () => {
+    setError(null);
+    isSplitModeRef.current = true;
+    setIsSplitMode(true);
+    const initialSplit: Record<string, { amountInput: string; reference: string }> = {};
+    const cashMethod = availableMethods.find(
+      (m) => m.type === "EFECTIVO" || m.code.toLowerCase().includes("cash") || m.code.toLowerCase().includes("efectivo")
+    ) || availableMethods[0];
+
+    if (cashMethod) {
+      initialSplit[cashMethod.code] = {
+        amountInput: (totalCents / 100).toString(),
+        reference: "",
+      };
+    }
+    setSplitMap(initialSplit);
+  };
+
+  // Obtener número de columnas reales de la cuadrícula de medios de pago
+  const getGridCols = () => {
+    if (gridContainerRef.current) {
+      const template = window.getComputedStyle(gridContainerRef.current).gridTemplateColumns;
+      if (template) {
+        const parts = template.split(" ").filter((s) => s.trim().length > 0);
+        if (parts.length > 0) return parts.length;
+      }
+    }
+    return 4;
+  };
+
+  // Navegación con flechas del teclado en cuadrícula 2D (arriba, abajo, izquierda, derecha)
+  const handleArrowNavigation = (directionKey: string) => {
+    const currentMethods = availableMethodsRef.current;
+    const codes = [...currentMethods.map((m) => m.code), "__split__"];
+    const N = codes.length;
+    if (N === 0) return;
+
+    const currentCode = isSplitModeRef.current ? "__split__" : selectedMethodCodeRef.current;
+    let curIdx = codes.indexOf(currentCode);
+    if (curIdx === -1) curIdx = 0;
+
+    const cols = getGridCols();
+    let nextIdx = curIdx;
+
+    if (directionKey === "ArrowRight") {
+      nextIdx = (curIdx + 1) % N;
+    } else if (directionKey === "ArrowLeft") {
+      nextIdx = (curIdx - 1 + N) % N;
+    } else if (directionKey === "ArrowDown") {
+      if (curIdx + cols < N) {
+        nextIdx = curIdx + cols;
+      } else {
+        const col = curIdx % cols;
+        const totalRows = Math.ceil(N / cols);
+        const currentRow = Math.floor(curIdx / cols);
+        if (currentRow < totalRows - 1) {
+          nextIdx = N - 1;
+        } else {
+          nextIdx = col < N ? col : 0;
+        }
+      }
+    } else if (directionKey === "ArrowUp") {
+      if (curIdx - cols >= 0) {
+        nextIdx = curIdx - cols;
+      } else {
+        const col = curIdx % cols;
+        const lastRow = Math.floor((N - 1) / cols);
+        const candidate = lastRow * cols + col;
+        nextIdx = candidate < N ? candidate : N - 1;
+      }
+    }
+
+    if (nextIdx === curIdx && N > 1) return;
+
+    const nextCode = codes[nextIdx];
+    if (nextCode === "__split__") {
+      activateSplitMode();
+    } else {
+      activateSingleMethod(nextCode);
     }
   };
 
@@ -181,10 +295,9 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     }));
   };
 
-  // Botón mágico: Asignar todo el saldo restante a este método
+  // Asignar saldo restante con 1 solo toque en modo mixto
   const handleAssignRemainingToMethod = (targetCode: string) => {
     setError(null);
-    // Calcular suma de los otros métodos
     const sumOthersCents = Object.entries(splitMap)
       .filter(([code]) => code !== targetCode)
       .reduce((acc, [, val]) => acc + toCents(val.amountInput || 0), 0);
@@ -198,7 +311,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       },
     }));
 
-    // Enfocar el input
     setTimeout(() => {
       splitInputRefs.current[targetCode]?.focus();
       splitInputRefs.current[targetCode]?.select();
@@ -216,14 +328,15 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     }));
   };
 
-  // Enviar confirmación de cobro
+  // Enviar confirmación de cobro con blindaje anti-duplicados
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (loading || isSubmittingRef.current) return;
     setError(null);
 
-    // Validación crítica de Venta a Crédito: Requiere Cliente Titular de la Cartera
+    // Validación de Venta a Crédito: Requiere Cliente Titular de la Cartera
     if (requiresCustomer && !customer) {
-      setError("⚠️ Esta venta incluye Crédito Comercial. Debes seleccionar o registrar el cliente titular de la cuenta por cobrar (CxC).");
+      setError("⚠️ Esta venta incluye Crédito Comercial. Debes asignar el cliente titular de la cuenta por cobrar (CxC).");
       setIsCustomerModalOpen(true);
       return;
     }
@@ -235,7 +348,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         return;
       }
 
-      // Validar que medios no efectivos no hayan recibido más del valor de la venta
       for (const [code, val] of Object.entries(splitMap)) {
         const cVal = toCents(val.amountInput || 0);
         if (cVal <= 0) continue;
@@ -260,30 +372,32 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         return;
       }
 
+      isSubmittingRef.current = true;
       setLoading(true);
       try {
-        await onConfirm(paymentsToSend, customer?.id);
+        await onConfirm(paymentsToSend, customer?.id, autoPrint);
         onClose();
       } catch (err: unknown) {
         setError(String(err));
       } finally {
+        isSubmittingRef.current = false;
         setLoading(false);
       }
       return;
     }
 
-    // Caso 2: Modo Simple (Cobro Rápido)
+    // Caso 2: Modo Simple
     if (pagoCents < totalCents) {
       setError(`Monto insuficiente. Faltan ${formatCents(faltaSimpleCents)}.`);
       return;
     }
 
-    // Validar que medios no efectivos no paguen de más
     if (!isCashMethod && pagoCents > totalCents) {
-      setError(`Los pagos electrónicos no generan cambio. Ingrese el monto exacto.`);
+      setError(`Los pagos electrónicos o a crédito no generan cambio. Ingrese el monto exacto.`);
       return;
     }
 
+    isSubmittingRef.current = true;
     setLoading(true);
     try {
       await onConfirm([
@@ -292,14 +406,21 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
           amountCents: pagoCents,
           reference: refInput.trim() || undefined,
         },
-      ], customer?.id);
+      ], customer?.id, autoPrint);
       onClose();
     } catch (err: unknown) {
       setError(String(err));
     } finally {
+      isSubmittingRef.current = false;
       setLoading(false);
     }
   };
+
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+
+  const handleToggleAutoPrintRef = useRef(handleToggleAutoPrint);
+  handleToggleAutoPrintRef.current = handleToggleAutoPrint;
 
   // Atajos de teclado
   useEffect(() => {
@@ -310,43 +431,54 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         return;
       }
 
-      // Atajo Enter para confirmar cobro e imprimir
+      // Atajo Enter para confirmar cobro
       if (e.key === "Enter") {
-        if (isCustomerModalOpen) return;
+        if (isCustomerModalOpen || loading || isSubmittingRef.current) return;
         e.preventDefault();
-        handleSubmit();
+        e.stopPropagation();
+        handleSubmitRef.current();
         return;
       }
 
-      // Atajo F2 para seleccionar o cambiar cliente
-      if (e.key === "F2") {
+      // Atajo Ctrl+P para alternar impresión
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
         e.preventDefault();
-        setIsCustomerModalOpen(true);
+        handleToggleAutoPrintRef.current();
         return;
       }
 
-      // Atajo F10 para alternar Modo Dividido / Mixto
-      if (e.key === "F10") {
-        e.preventDefault();
-        toggleSplitMode();
-        return;
-      }
+      // Navegación con flechas en la matriz de medios de pago
+      if (["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key)) {
+        const isEditingRef = document.activeElement === refInputRef.current;
+        const isEditingPago = document.activeElement === inputRef.current;
 
-      // En modo simple, atajos F1 - F8 para seleccionar medio de pago
-      if (!isSplitMode) {
-        const fKeyMatch = e.key.match(/^F([1-9])$/);
-        if (fKeyMatch) {
-          const index = parseInt(fKeyMatch[1], 10) - 1;
-          if (index < availableMethods.length) {
+        // Si está en el campo de referencia (texto), solo Up y Down navegan
+        if (isEditingRef) {
+          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
             e.preventDefault();
-            setSelectedMethodCode(availableMethods[index].code);
+            e.stopPropagation();
+            handleArrowNavigation(e.key);
           }
+          return;
         }
+
+        // Si está en pagoInput (número), prevenimos el spin nativo y navegamos
+        if (isEditingPago) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleArrowNavigation(e.key);
+          return;
+        }
+
+        // Cualquier otro foco en el modal
+        e.preventDefault();
+        e.stopPropagation();
+        handleArrowNavigation(e.key);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, availableMethods, isSplitMode, splitMap, pagoCents, customer, requiresCustomer]);
+  }, [isOpen, onClose, loading, isCustomerModalOpen]);
 
   if (!isOpen) return null;
 
@@ -354,10 +486,13 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     const t = (type || "").toUpperCase();
     const c = (code || "").toLowerCase();
     if (t === "EFECTIVO" || c.includes("cash") || c.includes("efectivo")) return "💵";
-    if (t === "TARJETA" || c.includes("card") || c.includes("tarjeta")) return "💳";
-    if (t === "CREDITO" || c.includes("credit") || c.includes("fiar")) return "📝";
-    if (c.includes("nequi") || c.includes("daviplata") || t === "DIGITAL") return "📱";
-    if (t === "BANCO" || c.includes("transfer")) return "🏦";
+    if (t === "TARJETA" || c.includes("card") || c.includes("tarjeta") || c.includes("datafono")) return "💳";
+    if (t === "CREDITO" || c.includes("credit") || c.includes("fiar") || c.includes("cartera")) return "📋";
+    if (c.includes("nequi")) return "📱";
+    if (c.includes("daviplata")) return "🟣";
+    if (t === "DIGITAL") return "📱";
+    if (t === "BANCO" || c.includes("transfer") || c.includes("bancolombia")) return "🏦";
+    if (code === "__split__") return "🔄";
     return "🏷️";
   };
 
@@ -375,49 +510,37 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       }}
     >
       <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-h-[92vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-all ${isSplitMode ? "max-w-4xl" : "max-w-2xl"}`}>
-        {/* HEADER */}
-        <div className="shrink-0 bg-gradient-to-r from-emerald-600 via-teal-700 to-slate-800 px-6 py-3.5 text-white flex items-center justify-between shadow">
+        {/* CABECERA MINIMALISTA Y SOBRIA */}
+        <div className="shrink-0 bg-gradient-to-r from-emerald-600 via-teal-700 to-slate-800 px-6 py-4 text-white flex items-center justify-between shadow">
           <div className="flex items-center gap-3">
-            <span className="bg-black/25 text-xs px-2.5 py-1 rounded font-mono font-bold tracking-wide">
-              F12
-            </span>
+            <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-lg shadow-inner">
+              {isSplitMode ? "🔄" : "💰"}
+            </div>
             <div>
               <h2 className="text-base font-bold flex items-center gap-2">
                 <span>{isSplitMode ? "Cobro Mixto / Múltiples Medios" : "Cobrar Venta"}</span>
                 {isSplitMode && (
                   <span className="text-[10px] bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 px-2 py-0.5 rounded-full font-mono uppercase font-bold">
-                    Matriz Directa
+                    Pago Dividido
                   </span>
                 )}
               </h2>
               <p className="text-[11px] text-emerald-100/80">
                 {isSplitMode
-                  ? "Asigna directamente el monto a cada medio de pago sin pasos adicionales"
-                  : "Cobro rápido con un solo medio de pago"}
+                  ? "Asigna el monto a cada medio de pago y confirma con Enter"
+                  : "Selecciona el método con las flechas [← ↑ → ↓] y confirma con Enter"}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={toggleSplitMode}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                isSplitMode
-                  ? "bg-amber-500/20 text-amber-200 border-amber-400/40 hover:bg-amber-500/30"
-                  : "bg-white/10 text-white hover:bg-white/20 border-white/20"
-              }`}
-              title="Alternar entre Cobro Rápido y Pago Mixto (F10)"
-            >
-              <span>{isSplitMode ? "⚡ Cambiar a Cobro Simple" : "➗ Dividir Pago (F10)"}</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="text-white/80 hover:text-white text-lg font-bold px-2 py-1 cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center font-bold text-sm cursor-pointer transition-colors"
+            title="Cerrar ventana [Esc]"
+          >
+            ✕
+          </button>
         </div>
 
         {/* ALERTA DE ERROR */}
@@ -431,85 +554,92 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         )}
 
         <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-          {/* BARRA DE CLIENTE (OBLIGATORIO PARA VENTA A CRÉDITO) */}
-          <div
-            className={`p-3 rounded-xl border transition-all flex items-center justify-between ${
-              requiresCustomer && !customer
-                ? "bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700/80 text-amber-900 dark:text-amber-200"
-                : customer
-                ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200"
-                : "bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <span className="text-base">{customer ? "👤" : requiresCustomer ? "⚠️" : "👤"}</span>
-              <div>
-                <div className="text-xs font-bold flex items-center gap-2">
-                  <span>
-                    {customer
-                      ? customer.name
-                      : requiresCustomer
-                      ? "Cliente Requerido para Venta a Crédito (CxC)"
-                      : "Cliente: Consumidor Final"}
-                  </span>
-                  {requiresCustomer && !customer && (
-                    <span className="text-[10px] bg-amber-200 dark:bg-amber-900/80 text-amber-900 dark:text-amber-100 font-bold px-1.5 py-0.5 rounded uppercase">
-                      Obligatorio
-                    </span>
-                  )}
-                </div>
-                <div className="text-[11px] opacity-80 mt-0.5 flex items-center gap-3">
-                  {customer ? (
-                    <>
-                      {customer.taxId && (
-                        <span>
-                          Doc: <b className="font-mono">{customer.taxId}</b>
-                        </span>
-                      )}
-                      {customer.phone && (
-                        <span>
-                          Tel: <b className="font-mono">{customer.phone}</b>
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span>
-                      {requiresCustomer
-                        ? "Debes asociar el titular al que se le cargará esta cuenta por cobrar."
-                        : "Asigna un cliente para registrar historial (Opcional)"}
-                    </span>
-                  )}
-                </div>
-              </div>
+          {/* CUADRÍCULA DINÁMICA DE MEDIOS DE PAGO */}
+          <div>
+            <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span>💳</span>
+                <span>Método de Pago</span>
+              </span>
+              <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                <span>[← ↑ → ↓]</span> Navegar medios
+              </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div
+              ref={gridContainerRef}
+              className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"
+            >
+              {availableMethods.map((pm) => {
+                const isSelected = !isSplitMode && selectedMethodCode === pm.code;
+                return (
+                  <button
+                    key={pm.id}
+                    type="button"
+                    onClick={() => activateSingleMethod(pm.code)}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 border cursor-pointer ${
+                      isSelected
+                        ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.02] ring-2 ring-emerald-400/40"
+                        : "bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+                    }`}
+                  >
+                    <span className="text-xl">{getMethodIcon(pm.type, pm.code)}</span>
+                    <span className="truncate max-w-[130px] text-center">{pm.name}</span>
+                  </button>
+                );
+              })}
+
+              {/* OPCIÓN PAGO MIXTO INTEGRADA EN LA CUADRÍCULA */}
               <button
                 type="button"
-                onClick={() => setIsCustomerModalOpen(true)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                  requiresCustomer && !customer
-                    ? "bg-amber-600 hover:bg-amber-500 text-white border-amber-500 shadow-sm"
-                    : "bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700"
+                onClick={() => (isSplitMode ? activateSingleMethod(availableMethods[0]?.code || "cash") : activateSplitMode())}
+                className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 border cursor-pointer ${
+                  isSplitMode
+                    ? "bg-amber-600 text-white border-amber-500 shadow-md shadow-amber-700/20 scale-[1.02] ring-2 ring-amber-400/40"
+                    : "bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
                 }`}
+                title="Dividir el total entre múltiples medios de pago"
               >
-                <span>{customer ? "Cambiar (F2)" : "Seleccionar Cliente (F2)"}</span>
+                <span className="text-xl">🔄</span>
+                <span className="truncate max-w-[130px] text-center">Pago Mixto</span>
               </button>
-              {customer && !requiresCustomer && (
-                <button
-                  type="button"
-                  onClick={() => setCustomer(null)}
-                  className="text-slate-400 hover:text-rose-500 text-sm px-1.5 py-1 rounded cursor-pointer transition-colors"
-                  title="Quitar cliente y volver a Consumidor Final"
-                >
-                  ✕
-                </button>
-              )}
             </div>
           </div>
 
+          {/* AVISO DINÁMICO EXCLUSIVO PARA CRÉDITO DE CLIENTES */}
+          {isCreditMethod && !isSplitMode && (
+            <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 flex items-center justify-between gap-3 animate-in fade-in duration-150">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="text-2xl shrink-0">📋</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-amber-900 dark:text-amber-200 truncate">
+                    {customer ? `Titular: ${customer.name}` : "Venta a Crédito: Requiere Cliente Titular (CxC)"}
+                  </div>
+                  <div className="text-[11px] text-amber-700 dark:text-amber-400 font-mono mt-0.5">
+                    {customer ? (
+                      <span>
+                        Cupo: <b>{formatCents(customer.creditLimitCents || 0)}</b> | Deuda actual:{" "}
+                        <b>{formatCents(customer.currentBalanceCents || 0)}</b>
+                      </span>
+                    ) : (
+                      "Asigna el cliente al que se le cargará esta cuenta por cobrar"
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsCustomerModalOpen(true)}
+                className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-sm cursor-pointer transition-colors"
+              >
+                {customer ? "Cambiar Cliente" : "Asignar Cliente"}
+              </button>
+            </div>
+          )}
+
           {/* ======================================================== */}
-          {/* MODO 1: MATRIZ DIRECTA DE COBRO MIXTO (SIN PASO EXTRA)   */}
+          {/* MODO 1: MATRIZ DIRECTA DE COBRO MIXTO                    */}
           {/* ======================================================== */}
           {isSplitMode ? (
             <div className="grid grid-cols-12 gap-5 items-start">
@@ -517,7 +647,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
               <div className="col-span-12 lg:col-span-7 space-y-2.5">
                 <div className="flex items-center justify-between pb-1">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>💳</span> Medios de Pago Habilitados
+                    <span>💳</span> Desglose por Medio
                   </span>
                   <span className="text-[11px] text-slate-400">
                     Escribe el monto en cada medio directamente
@@ -555,7 +685,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                           </div>
 
                           <div className="flex items-center gap-1.5">
-                            {/* Botón para asignar saldo restante con 1 solo toque */}
                             {saldoPendienteCents > 0 && currentCents === 0 && (
                               <button
                                 type="button"
@@ -597,6 +726,13 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                               step="any"
                               value={currentVal}
                               onChange={(e) => handleSplitAmountChange(pm.code, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleSubmit();
+                                }
+                              }}
                               placeholder="0.00"
                               className={`w-full pl-7 pr-3 py-1.5 rounded-xl border text-sm font-mono font-bold transition-all focus:outline-none ${
                                 isMethodActive
@@ -611,6 +747,13 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                               type="text"
                               value={currentRef}
                               onChange={(e) => handleSplitRefChange(pm.code, e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleSubmit();
+                                }
+                              }}
                               placeholder="Voucher / Ref (Opcional)"
                               className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-mono text-slate-700 dark:text-slate-300 focus:outline-none focus:border-emerald-500"
                             />
@@ -628,7 +771,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   📊 Balance de Pago Mixto
                 </span>
 
-                {/* 1. Total de la Venta */}
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-500 dark:text-slate-400">Total a Pagar:</span>
                   <span className="text-base font-black font-mono text-slate-900 dark:text-white">
@@ -636,7 +778,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   </span>
                 </div>
 
-                {/* 2. Total Asignado */}
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-semibold text-slate-500 dark:text-slate-400">Total Asignado:</span>
                   <span className="text-base font-black font-mono text-emerald-600 dark:text-emerald-400">
@@ -646,7 +787,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
 
                 <div className="h-px bg-slate-200 dark:bg-slate-800 my-1" />
 
-                {/* 3. Saldo Pendiente o Completo */}
                 <div
                   className={`p-3 rounded-xl border flex items-center justify-between ${
                     saldoPendienteCents === 0
@@ -665,7 +805,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   </span>
                 </div>
 
-                {/* 4. Cambio / Vuelto en Efectivo */}
                 <div className="flex items-center justify-between text-xs pt-1">
                   <span className="font-semibold text-slate-500 dark:text-slate-400">Cambio (Vuelto):</span>
                   <span className="text-base font-black font-mono text-emerald-700 dark:text-emerald-400">
@@ -673,7 +812,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   </span>
                 </div>
 
-                {/* Desglose Rápido de Abonos */}
                 <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px] text-slate-500 space-y-1">
                   <span className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
                     Medios con abono:
@@ -705,90 +843,56 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
             /* MODO 2: COBRO RÁPIDO CON UN SOLO MEDIO DE PAGO           */
             /* ======================================================== */
             <>
-              {/* BOTONERA DINÁMICA DE MEDIOS DE PAGO */}
-              <div>
-                <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                  <span>Selecciona Método de Cobro</span>
-                  <span className="text-[10px] font-mono text-slate-400">Atajos: F1 a F8</span>
+              {/* CINTA UNIFICADA DE BALANCE FINANCIERO (NO CLICKEABLE) */}
+              <div className="bg-slate-100 dark:bg-slate-900/90 rounded-2xl p-4 border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                  <span>📊</span>
+                  <span>Balance de Cobro</span>
                 </div>
+                <div className="grid grid-cols-3 divide-x divide-slate-200 dark:divide-slate-800 text-center">
+                  <div className="px-2">
+                    <span className="text-[11px] uppercase font-bold text-slate-500 dark:text-slate-400 block">
+                      Total a Pagar
+                    </span>
+                    <span className="text-xl lg:text-2xl font-black text-slate-900 dark:text-white font-mono block mt-0.5">
+                      {formatCents(totalCents)}
+                    </span>
+                  </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {availableMethods.length === 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMethodCode("cash")}
-                      className="py-2.5 px-2 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-1 border bg-emerald-600 text-white border-emerald-500 shadow-md"
+                  <div className="px-2">
+                    <span className="text-[11px] uppercase font-bold text-slate-500 dark:text-slate-400 block">
+                      Dinero Recibido
+                    </span>
+                    <span
+                      className={`text-xl lg:text-2xl font-black font-mono block mt-0.5 ${
+                        faltaSimpleCents > 0
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-emerald-600 dark:text-emerald-400"
+                      }`}
                     >
-                      <span className="text-base">💵</span>
-                      <span>[F1] Efectivo M/N</span>
-                    </button>
-                  ) : (
-                    availableMethods.map((pm, idx) => {
-                      const isSelected = selectedMethodCode === pm.code;
-                      return (
-                        <button
-                          key={pm.id}
-                          type="button"
-                          onClick={() => setSelectedMethodCode(pm.code)}
-                          className={`py-2.5 px-2 rounded-xl text-xs font-bold transition-all flex flex-col items-center gap-1 border cursor-pointer ${
-                            isSelected
-                              ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.02]"
-                              : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
-                          }`}
-                        >
-                          <span className="text-base">{getMethodIcon(pm.type, pm.code)}</span>
-                          <span className="truncate max-w-[120px] text-center">
-                            {idx < 8 ? `[F${idx + 1}] ` : ""}
-                            {pm.name}
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+                      {formatCents(pagoCents)}
+                    </span>
+                  </div>
 
-              {/* TARJETAS FINANCIERAS RESUMEN EN MODO SIMPLE */}
-              <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 grid grid-cols-3 gap-3 text-center">
-                {/* 1. Total */}
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
-                    Total Venta
-                  </div>
-                  <div className="text-lg font-black text-slate-900 dark:text-white font-mono mt-1">
-                    {formatCents(totalCents)}
-                  </div>
-                </div>
-
-                {/* 2. Saldo Pendiente o Recibido */}
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
-                    Pago Recibido
-                  </div>
-                  <div
-                    className={`text-lg font-black font-mono mt-1 ${
-                      faltaSimpleCents > 0
-                        ? "text-amber-600 dark:text-amber-400"
-                        : "text-emerald-600 dark:text-emerald-400"
-                    }`}
-                  >
-                    {formatCents(pagoCents)}
-                  </div>
-                </div>
-
-                {/* 3. Cambio (Vuelto) */}
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">
-                    Cambio (Vuelto)
-                  </div>
-                  <div className="text-lg font-black font-mono mt-1 text-emerald-700 dark:text-emerald-400">
-                    {formatCents(cambioSimpleCents)}
+                  <div className="px-2">
+                    <span className="text-[11px] uppercase font-bold text-slate-500 dark:text-slate-400 block">
+                      Cambio (Vuelto)
+                    </span>
+                    <span
+                      className={`text-xl lg:text-2xl font-black font-mono block mt-0.5 ${
+                        cambioSimpleCents > 0
+                          ? "text-emerald-600 dark:text-emerald-400 font-black"
+                          : "text-slate-400 dark:text-slate-500"
+                      }`}
+                    >
+                      {formatCents(cambioSimpleCents)}
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* INPUTS DE PAGO Y REFERENCIA EN MODO SIMPLE */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+              {/* INPUTS DE PAGO Y REFERENCIA */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
                     Importe Entregado ($)
@@ -800,7 +904,18 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                     value={pagoInput}
                     onChange={(e) => setPagoInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSubmit();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleSubmit();
+                        return;
+                      }
+                      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleArrowNavigation(e.key);
+                        return;
+                      }
                     }}
                     className="w-full bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-left text-slate-900 dark:text-white font-mono font-black text-xl focus:outline-none focus:ring-1 focus:ring-emerald-500"
                     placeholder="0.00"
@@ -818,7 +933,18 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                     value={refInput}
                     onChange={(e) => setRefInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSubmit();
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleSubmit();
+                        return;
+                      }
+                      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleArrowNavigation(e.key);
+                        return;
+                      }
                     }}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-xs text-slate-900 dark:text-white font-mono focus:outline-none"
                     placeholder="Ej: Aprobación #4829"
@@ -839,6 +965,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                       onClick={() => {
                         setPagoInput(s.toString());
                         inputRef.current?.focus();
+                        inputRef.current?.select();
                       }}
                       className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-mono text-xs font-bold transition-colors cursor-pointer"
                     >
@@ -852,33 +979,56 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         </div>
 
         {/* FOOTER DE ACCIONES */}
-        <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 flex gap-3 border-t border-slate-200 dark:border-slate-800">
+        <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 flex items-center justify-between gap-3 border-t border-slate-200 dark:border-slate-800">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
+            className="py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
           >
             [Esc] Cancelar
           </button>
 
-          <button
-            type="button"
-            onClick={() => handleSubmit()}
-            disabled={loading || !isFormValid}
-            className="flex-2 py-2.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
-          >
-            {loading
-              ? "Procesando…"
-              : requiresCustomer && !customer
-              ? "Asignar Cliente para Crédito"
-              : isSplitMode
-              ? "Confirmar Venta Mixta (Enter)"
-              : "Cobrar e Imprimir (Enter)"}
-          </button>
+          <div className="flex items-center gap-3">
+            {/* TOGGLE OPCIONAL DE IMPRESIÓN DE TICKET */}
+            <button
+              type="button"
+              onClick={handleToggleAutoPrint}
+              className={`py-2 px-3.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                autoPrint
+                  ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 shadow-xs"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-300 dark:border-slate-700"
+              }`}
+              title="Activar o desactivar la impresión física del ticket [Ctrl+P]"
+            >
+              <span className="text-sm">🖨️</span>
+              <span>Ticket: <strong className="font-mono uppercase">{autoPrint ? "Sí" : "No"}</strong></span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSubmit()}
+              disabled={loading || !isFormValid}
+              className="py-2.5 px-6 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-emerald-700/20 dark:shadow-emerald-950/40 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer flex items-center gap-2"
+            >
+              <span>
+                {loading
+                  ? "Procesando…"
+                  : requiresCustomer && !customer
+                  ? "Asignar Cliente para Crédito"
+                  : isSplitMode
+                  ? autoPrint
+                    ? "Confirmar e Imprimir (Enter)"
+                    : "Confirmar Venta Mixta (Enter)"
+                  : autoPrint
+                  ? "Cobrar e Imprimir (Enter)"
+                  : "Cobrar Venta (Enter)"}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* MODAL DE CLIENTES INLINE (F2) */}
+      {/* MODAL DE CLIENTES INLINE */}
       <CustomerModal
         isOpen={isCustomerModalOpen}
         currentCustomer={customer}

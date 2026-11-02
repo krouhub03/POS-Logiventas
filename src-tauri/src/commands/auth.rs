@@ -62,8 +62,63 @@ fn fetch_status_sync(conn: &rusqlite::Connection) -> TerminalStatus {
 }
 
 // ─────────────────────────────────────────────────────────────
-// HTTP Helpers (Async - Sin referencias a rusqlite::Connection)
+// HTTP Helpers & Factory Purge (SQLite & Settings)
 // ─────────────────────────────────────────────────────────────
+
+/// 🗑️ Purga transaccionalmente todas las tablas de negocio en SQLite para aislamiento multi-empresa limpio.
+pub fn purge_all_local_business_data(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "DELETE FROM sale_return_items;
+         DELETE FROM sale_returns;
+         DELETE FROM customer_payments;
+         DELETE FROM payments;
+         DELETE FROM sale_items;
+         DELETE FROM sales;
+         DELETE FROM inventory_movements;
+         DELETE FROM product_components;
+         DELETE FROM product_tags;
+         DELETE FROM products;
+         DELETE FROM categories;
+         DELETE FROM customers;
+         DELETE FROM sync_queue;
+         DELETE FROM user_permission_audit;
+         DELETE FROM cash_sessions;
+         DELETE FROM users;
+         DELETE FROM payment_methods;
+         DELETE FROM pos_profiles;"
+    )?;
+    Ok(())
+}
+
+/// 🔄 Restablece las configuraciones de identidad de la terminal a valores limpios de fábrica.
+pub fn reset_terminal_settings(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    set_setting(conn, "pairing_status", "unpaired")?;
+    set_setting(conn, "terminal_token", "")?;
+    set_setting(conn, "caja_id", "")?;
+    set_setting(conn, "caja_nombre", "")?;
+    set_setting(conn, "caja_codigo", "")?;
+    set_setting(conn, "empresa_id", "")?;
+    set_setting(conn, "empresa_nombre", "")?;
+    set_setting(conn, "empresa_nit", "")?;
+    set_setting(conn, "empresa_ciudad", "")?;
+    set_setting(conn, "empresa_regimen", "")?;
+    set_setting(conn, "empresa_logo_base64", "")?;
+    set_setting(conn, "bodega_id", "")?;
+    set_setting(conn, "bodega_nombre", "")?;
+    set_setting(conn, "last_caja_id", "")?;
+    set_setting(conn, "last_caja_codigo", "")?;
+    set_setting(conn, "last_caja_nombre", "")?;
+    set_setting(conn, "last_empresa_nombre", "")?;
+    set_setting(conn, "last_empresa_id", "")?;
+    set_setting(conn, "last_bodega_id", "")?;
+    set_setting(conn, "last_bodega_nombre", "")?;
+    set_setting(conn, "last_erp_url", "")?;
+    set_setting(conn, "erp_url", "https://metahabi.com")?;
+    set_setting(conn, "erp_api_url", "https://metahabi.com")?;
+    set_setting(conn, "is_disconnected", "0")?;
+    set_setting(conn, "last_sync_at", "")?;
+    Ok(())
+}
 
 fn internal_unpair(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     // Preservar la identidad de la caja antes de desvincular para permitir reconexión ágil
@@ -252,7 +307,7 @@ fn save_synced_users(conn: &rusqlite::Connection, json: &Value) -> AppResult<Vec
 pub fn sanitize_erp_url(raw_url: &str) -> String {
     let trimmed = raw_url.trim().trim_end_matches('/');
     if trimmed.is_empty() {
-        return "http://localhost:3000".to_string();
+        return "https://metahabi.com".to_string();
     }
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
         trimmed.to_string()
@@ -321,20 +376,15 @@ pub async fn pair_terminal_code(
     // Guardar configuración en SQLite y asegurar aislamiento Multi-Tenant
     {
         let conn = db.conn()?;
-        let prev_empresa = get_setting(&conn, "empresa_id");
-        if let Some(ref prev_id) = prev_empresa {
-            if !prev_id.is_empty() && prev_id != empresa_id {
-                // Purgar tablas de la empresa anterior para aislamiento estricto
-                let _ = conn.execute_batch(
-                    "DELETE FROM sale_items;
-                     DELETE FROM sales;
-                     DELETE FROM sync_queue;
-                     DELETE FROM products;
-                     DELETE FROM categories;
-                     DELETE FROM users;
-                     DELETE FROM cash_sessions;",
-                );
-            }
+        let prev_empresa = get_setting(&conn, "empresa_id").unwrap_or_default();
+        let prev_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let prev_caja = get_setting(&conn, "caja_id").unwrap_or_default();
+        if (!prev_empresa.is_empty() && prev_empresa != empresa_id)
+            || (!prev_url.is_empty() && prev_url != clean_url)
+            || (!prev_caja.is_empty() && prev_caja != caja_id)
+        {
+            // Purgar tablas de la empresa anterior para aislamiento estricto
+            let _ = purge_all_local_business_data(&conn);
         }
         set_setting(&conn, "erp_url", &clean_url)?;
         set_setting(&conn, "terminal_token", token)?;
@@ -439,19 +489,14 @@ pub async fn pair_terminal_login(
 
     {
         let conn = db.conn()?;
-        let prev_empresa = get_setting(&conn, "empresa_id");
-        if let Some(ref prev_id) = prev_empresa {
-            if !prev_id.is_empty() && prev_id != empresa_id {
-                let _ = conn.execute_batch(
-                    "DELETE FROM sale_items;
-                     DELETE FROM sales;
-                     DELETE FROM sync_queue;
-                     DELETE FROM products;
-                     DELETE FROM categories;
-                     DELETE FROM users;
-                     DELETE FROM cash_sessions;",
-                );
-            }
+        let prev_empresa = get_setting(&conn, "empresa_id").unwrap_or_default();
+        let prev_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let prev_caja = get_setting(&conn, "caja_id").unwrap_or_default();
+        if (!prev_empresa.is_empty() && prev_empresa != empresa_id)
+            || (!prev_url.is_empty() && prev_url != clean_url)
+            || (!prev_caja.is_empty() && prev_caja != caja_id)
+        {
+            let _ = purge_all_local_business_data(&conn);
         }
         set_setting(&conn, "erp_url", &clean_url)?;
         set_setting(&conn, "terminal_token", token)?;
@@ -833,11 +878,12 @@ pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     }
 
     let conn = db.conn()?;
-    internal_unpair(&conn)?;
+    purge_all_local_business_data(&conn)?;
+    reset_terminal_settings(&conn)?;
     Ok(fetch_status_sync(&conn))
 }
 
-/// 🗑️ Olvida por completo cualquier caja previamente recordada o desconectada.
+/// 🗑️ Olvida por completo cualquier caja previamente recordada o desconectada y restablece de fábrica.
 #[tauri::command]
 pub async fn forget_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     {
@@ -855,20 +901,8 @@ pub async fn forget_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     }
 
     let conn = db.conn()?;
-    set_setting(&conn, "last_caja_id", "")?;
-    set_setting(&conn, "last_caja_codigo", "")?;
-    set_setting(&conn, "last_caja_nombre", "")?;
-    set_setting(&conn, "last_empresa_nombre", "")?;
-    set_setting(&conn, "last_empresa_id", "")?;
-    set_setting(&conn, "last_bodega_id", "")?;
-    set_setting(&conn, "last_bodega_nombre", "")?;
-    set_setting(&conn, "last_erp_url", "")?;
-    set_setting(&conn, "is_disconnected", "0")?;
-    set_setting(&conn, "pairing_status", "unpaired")?;
-    set_setting(&conn, "terminal_token", "")?;
-    set_setting(&conn, "caja_id", "")?;
-    set_setting(&conn, "caja_nombre", "")?;
-    set_setting(&conn, "caja_codigo", "")?;
+    purge_all_local_business_data(&conn)?;
+    reset_terminal_settings(&conn)?;
     Ok(fetch_status_sync(&conn))
 }
 
@@ -885,7 +919,7 @@ pub async fn reconnect_terminal(
             .filter(|s| !s.trim().is_empty())
             .or_else(|| get_setting(&conn, "last_erp_url"))
             .or_else(|| get_setting(&conn, "erp_url"))
-            .unwrap_or_else(|| "http://localhost:3000".to_string());
+            .unwrap_or_else(|| "https://metahabi.com".to_string());
         let url = sanitize_erp_url(&raw_url);
 
         let cid = input
@@ -962,6 +996,15 @@ pub async fn reconnect_terminal(
 
     {
         let conn = db.conn()?;
+        let prev_empresa = get_setting(&conn, "empresa_id").unwrap_or_default();
+        let prev_url = get_setting(&conn, "erp_url").unwrap_or_default();
+        let prev_caja = get_setting(&conn, "caja_id").unwrap_or_default();
+        if (!prev_empresa.is_empty() && prev_empresa != new_empresa_id)
+            || (!prev_url.is_empty() && prev_url != clean_url)
+            || (!prev_caja.is_empty() && prev_caja != new_caja_id)
+        {
+            let _ = purge_all_local_business_data(&conn);
+        }
         set_setting(&conn, "erp_url", &clean_url)?;
         set_setting(&conn, "terminal_token", token)?;
         set_setting(&conn, "caja_id", new_caja_id)?;
@@ -1259,6 +1302,61 @@ pub async fn change_cashier_pin(
     }
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_purge_all_local_business_data_and_reset_settings() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        // 1. Insertar datos de prueba simulando caja en cmegalider.com
+        set_setting(&conn, "empresa_id", "empresa_old").unwrap();
+        set_setting(&conn, "empresa_nombre", "Megalider Tienda 1").unwrap();
+        set_setting(&conn, "caja_id", "caja_99").unwrap();
+        set_setting(&conn, "erp_url", "https://cmegalider.com").unwrap();
+        set_setting(&conn, "terminal_token", "secret_token_123").unwrap();
+
+        conn.execute(
+            "INSERT INTO categories (id, name, active) VALUES (1, 'Bebidas', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, price_cents, cost_cents, tax_rate_bp, active)
+             VALUES (100, 'BEB-001', 'Gaseosa', 300000, 200000, 1900, 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO customers (id, name, active) VALUES (50, 'Cliente A', 1)",
+            [],
+        ).unwrap();
+
+        // 2. Ejecutar purga de fábrica y reset
+        purge_all_local_business_data(&conn).unwrap();
+        reset_terminal_settings(&conn).unwrap();
+
+        // 3. Validar que las tablas de negocio estén vacías
+        let count_products: i64 = conn.query_row("SELECT COUNT(*) FROM products", [], |r| r.get(0)).unwrap();
+        let count_categories: i64 = conn.query_row("SELECT COUNT(*) FROM categories", [], |r| r.get(0)).unwrap();
+        let count_customers: i64 = conn.query_row("SELECT COUNT(*) FROM customers", [], |r| r.get(0)).unwrap();
+        let count_sales: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0)).unwrap();
+
+        assert_eq!(count_products, 0);
+        assert_eq!(count_categories, 0);
+        assert_eq!(count_customers, 0);
+        assert_eq!(count_sales, 0);
+
+        // 4. Validar que la configuración esté en blanco (None al filtrar vacíos) / URL por defecto metahabi.com
+        assert_eq!(get_setting(&conn, "empresa_id"), None);
+        assert_eq!(get_setting(&conn, "caja_id"), None);
+        assert_eq!(get_setting(&conn, "terminal_token"), None);
+        assert_eq!(get_setting(&conn, "erp_url").as_deref(), Some("https://metahabi.com"));
+        assert_eq!(get_setting(&conn, "pairing_status").as_deref(), Some("unpaired"));
+    }
 }
 
 

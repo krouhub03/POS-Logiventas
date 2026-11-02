@@ -12,7 +12,7 @@ interface PairingScreenProps {
 }
 
 export function PairingScreen({
-  initialErpUrl = "http://localhost:3000",
+  initialErpUrl = "https://metahabi.com",
   terminalStatus,
   onPaired,
   onUnpaired,
@@ -21,7 +21,11 @@ export function PairingScreen({
   const { confirm, alert: modalAlert } = useModals();
 
   const [tab, setTab] = useState<"code" | "login">("code");
-  const [erpUrl, setErpUrl] = useState(initialErpUrl);
+  const [erpUrl, setErpUrl] = useState(
+    terminalStatus?.erpUrl && !terminalStatus.erpUrl.includes("localhost") && !terminalStatus.erpUrl.includes("cmegalider.com")
+      ? terminalStatus.erpUrl
+      : initialErpUrl
+  );
   const [code, setCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,7 +48,7 @@ export function PairingScreen({
 
   const normalizeErpUrl = (url: string) => {
     const trimmed = url.trim().replace(/\/+$/, "");
-    if (!trimmed) return "http://localhost:3000";
+    if (!trimmed) return "https://metahabi.com";
     if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
       return trimmed;
     }
@@ -143,12 +147,17 @@ export function PairingScreen({
     setError(null);
     try {
       const newStatus = await api.auth.forgetTerminal();
+      localStorage.removeItem("pos_active_tickets");
+      localStorage.removeItem("pos_selected_customer");
+      localStorage.removeItem("pos_active_ticket_id");
+      window.dispatchEvent(new CustomEvent("pos:reset-tickets"));
+      setErpUrl("https://metahabi.com");
       if (onUnpaired) {
         onUnpaired(newStatus);
       }
       await modalAlert({
-        title: "Caja Desvinculada",
-        message: "Se han olvidado las credenciales de la caja con éxito. Ahora puedes vincular este equipo libremente.",
+        title: "Caja Desvinculada y Restablecida",
+        message: "Se han purgado la base de datos local y las credenciales con éxito. Ahora puedes vincular este equipo libremente.",
         variant: "success",
       });
     } catch (err: unknown) {
@@ -541,7 +550,7 @@ export function PairingScreen({
                         required
                         value={erpUrl}
                         onChange={(e) => setErpUrl(e.target.value)}
-                        placeholder="https://cmegalider.com o http://localhost:3000"
+                        placeholder="https://metahabi.com o http://localhost:3000"
                         className="w-full pl-3 pr-28 py-2.5 rounded-xl bg-[#070a10] border border-slate-700 text-slate-200 font-mono text-xs focus:outline-none focus:border-sky-500 transition-all placeholder:text-slate-600"
                       />
                       <button

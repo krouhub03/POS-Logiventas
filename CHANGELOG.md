@@ -5,6 +5,50 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.14] - 2026-11-02
+
+### Agregado
+- **Conmutador Manual de Precio de Mayoreo por Línea (`SalesStationPage.tsx`):**
+  - **Atajo Rápido de Teclado `F9` (o `Alt+M`):** Permite alternar instantáneamente entre precio menudeo y precio de mayoreo en el producto actualmente seleccionado o en el último artículo escaneado.
+  - **Botón Conmutador en Barra de Acciones Rápidas:** Botón dedicado `[F9] Mayoreo / Mayoreo ON` que se activa dinámicamente cuando el producto seleccionado cuenta con tarifa mayorista (`wholesalePriceCents > 0`).
+  - **Insignia e Interacción Directa en el Ticket:** Cada fila de producto con precio mayoreo disponible despliega una píldora interactiva `[Mayoreo: $X.XX]` o una insignia destacada `[📦 Mayoreo]` con el precio anterior tachado, permitiendo conmutar tarifas con un solo clic.
+  - **Recálculo Automático y Trazabilidad:** Al conmutar a mayoreo, el subtotal, impuestos proporcionales e importe total se recalculan en tiempo real, persistiendo el valor en la venta y enviándolo intacto a la impresora y al outbox de sincronización con el ERP.
+- **Rediseño Ergonómico de la Ventana de Cobro (`CobroModal.tsx`):**
+  - **Medios de Pago 100% Dinámicos:** Conexión completa con el catálogo sincronizado desde el ERP (`payment_methods`), soportando métodos nativos (Efectivo, Tarjetas, Crédito Clientes, Nequi, Daviplata, Bancos) y nuevos métodos personalizados.
+  - **Navegación con Flechas de Teclado `[←] [→] [↑] [↓]`:** Desplazamiento fluido entre opciones de pago sin prefijos ni atajos saturados `[F1]` a `[F8]`.
+  - **Integración de "Pago Mixto" en la Cuadrícula:** Eliminación del botón flotante en cabecera y unificación como opción interactiva dentro del panel de métodos.
+  - **Impresión de Ticket Opcional con Persistencia:** Toggle selector ergonómico `🖨️ Ticket: Sí / No` con atajo `Ctrl+P` y memoria local para permitir cobrar ventas rápidas sin imprimir papel cuando el cliente no lo solicita.
+  - **Gestión Inteligente de Tickets en Espera (`SalesStationPage.tsx`):** Al cerrar una venta, el POS verifica si todos los tickets restantes tienen productos cargados; si es así, abre y activa automáticamente un nuevo ticket limpio para atender al siguiente cliente en fila sin bloquear la caja.
+- **Purga Atómica y Transaccional de Base de Datos Local (`purge_all_local_business_data` en `auth.rs`):** Eliminación completa en orden inverso de claves foráneas de todas las tablas de negocio SQLite (`sale_return_items`, `sale_returns`, `customer_payments`, `payments`, `sale_items`, `sales`, `inventory_movements`, `product_components`, `product_tags`, `products`, `categories`, `customers`, `sync_queue`, `user_permission_audit`, `cash_sessions`, `users`, `payment_methods`, `pos_profiles`) al desvincular u olvidar la caja.
+- **Restablecimiento Limpio de Fábrica (`reset_terminal_settings`):** Reseteo integral de identificadores, tokens de terminal, credenciales y establecimiento del dominio oficial `https://metahabi.com` por defecto.
+- **Prueba Unitaria de Verificación de Purga:** Inclusión de `test_purge_all_local_business_data_and_reset_settings` asegurando 100% de aislamiento y tablas limpias en memoria.
+
+### Cambiado
+- **Cabecera y Separación Visual en Ventana de Cobro:** Eliminación de los badges `[F12]` y `[F10]`, remoción de la barra superior de cliente y transformación de los totales a una cinta informativa continua (*Total a Pagar | Dinero Recibido | Cambio*) con divisores verticales para que no se confundan con botones.
+- **Manejo Contextual de Crédito de Clientes:** Si se selecciona Crédito Comercial, se despliega una tarjeta dedicada que valida el cupo y titular de cartera de forma inmediata.
+- **Flujo Ergonómico de Desvinculación en Configuración F7 (`SettingsPage.tsx`):** Actualización del botón a *"Restablecer de Fábrica"* con modal de advertencia clara sobre la limpieza total de datos locales para traslado seguro de sucursal.
+- **Inicialización de Servidor Central en Pantalla de Emparejamiento (`PairingScreen.tsx`):** Configuración de `https://metahabi.com` como URL base por defecto y placeholder amigable.
+
+### Corregido
+- **Apertura Automática del Cajón Monedero al Cobrar (`printers.rs` y `SalesStationPage.tsx`):**
+  - **Sincronización de Parámetros de Hardware:** Unificación de las claves `drawer_open_on_print` y `drawer_open_on_sale` en Rust con lectura tolerante y valor por defecto activo (`true`), eliminando la discrepancia donde SQLite interpretaba falsamente que el cajón estaba deshabilitado.
+  - **Apertura sin Dependencia de Impresión Física:** Invocación automática del pulso de apertura directo (`test_open_drawer`) cuando la venta incluye pagos en efectivo o devolución de cambio, garantizando que el cajón se abra de inmediato incluso si el cajero desactiva la impresión de ticket (`Ticket: No`) o si la impresora se queda sin papel.
+- **Navegación Fluida con Flechas 2D en Medios de Pago (`CobroModal.tsx`):**
+  - **Resolución de Clausura Estancada (Stale Closure):** Sincronización inmediata mediante referencias reactivas (`availableMethodsRef`, `selectedMethodCodeRef`, `isSplitModeRef`, `handleSubmitRef`) que erradica el bloqueo donde la selección se quedaba quieta o fija en la segunda opción.
+  - **Matriz de Coordenadas 2D Bidireccional (`[←] [→] [↑] [↓]`):** Cálculo geométrico en tiempo real según el número exacto de columnas de la cuadrícula (`getComputedStyle`), permitiendo que `ArrowDown` y `ArrowUp` se desplacen verticalmente entre filas y que `ArrowLeft` y `ArrowRight` naveguen horizontalmente respetando el orden natural de lectura.
+  - **Supresión de Incremento Numérico Nativo HTML5:** Intercepción con `preventDefault()` y `stopPropagation()` en el input de importe entregado (`type="number"`), impidiendo que presionar flechas arriba/abajo altere los números del monto mientras se cambia de medio de pago.
+- **Erradicación de Ventas Duplicadas en el Historial del POS (Blindaje Anti-Replay en 3 Capas):**
+  - **Capa 1 (Detención de Doble Evento Enter en `CobroModal.tsx`):** Corrección del problema de propagación de eventos donde presionar `Enter` en el input de monto o referencia disparaba `handleSubmit()` localmente y además burbujeaba hacia el listener global de ventana (`window.addEventListener("keydown")`), invocando la confirmación de la venta dos veces en el mismo ciclo de eventos. Se añadieron `e.preventDefault()` y `e.stopPropagation()` tanto en inputs simples como en modo mixto.
+  - **Capa 2 (Bloqueo Síncrono por Referencias en Frontend):** Implementación de `isSubmittingRef` en `CobroModal.tsx` y de `isProcessingSaleRef` en `SalesStationPage.tsx`. Dado que el estado `loading` de React es asíncrono y se procesa por lotes, las referencias síncronas bloquean de inmediato cualquier segunda invocación accidental mientras la transacción está en curso.
+  - **Capa 3 (Idempotencia Transaccional y Clave de Transacción en SQLite - Migración 0032):** Creación de la migración `0032_sales_client_tx_id.sql` con columna `client_tx_id` e índice único condicional `idx_sales_client_tx_id`. Si por alguna causa externa llega una solicitud duplicada con el mismo identificador, el motor de SQLite y la lógica de `sales.rs` retornan de inmediato el recibo ya generado sin crear un nuevo folio, sin registrar pagos duplicados y sin descontar doble stock de los productos.
+  - **Prueba Unitaria de Idempotencia:** Adición de `test_duplicate_sale_replay_prevention` en `sales.rs` garantizando que múltiples llamadas con el mismo `client_tx_id` retornan el mismo ID de venta sin registrar dobles filas ni descontar stock adicional.
+- **Blindaje Multi-Tenant en Cambio de Dominios / Empresas (`pair_terminal_code`, `pair_terminal_login` y `reconnect_terminal`):** Detección automática de cambio de `erp_url`, `empresa_id` o `caja_id` que ejecuta la purga de fábrica previa, erradicando el problema donde productos y ventas de `cmegalider.com` persistían en la terminal al conectarse a `https://metahabi.com`.
+- **Eliminación de Carritos y Tickets Huérfanos en Frontend:** Vaciado estricto de `localStorage` (`pos_active_tickets`, `pos_selected_customer`, `pos_active_ticket_id`) y disparo de `pos:reset-tickets` para no dejar artículos del negocio anterior en la estación de ventas.
+
+### Seguridad
+- **Aislamiento Cero-Contaminación:** Protección contra fugas de datos de clientes (`customers`), historial de créditos y movimientos de kardex entre diferentes empresas o entornos.
+
+---
 ## [0.1.13] - 2026-11-01
 ### Agregado
 - Sincronizacion bidireccional completa POS-ERP, remocion de limite de 2000 productos y soporte para stock inicial en 0

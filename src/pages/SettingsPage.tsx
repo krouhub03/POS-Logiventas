@@ -1215,10 +1215,10 @@ export function SettingsPage({
                   <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200/80 dark:border-rose-900/30 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="space-y-0.5">
                       <div className="text-xs font-bold text-rose-800 dark:text-rose-300 flex items-center gap-2">
-                        <span>⚠️ Desvincular Terminal (Restablecer)</span>
+                        <span>⚠️ Desvincular y Restablecer Terminal (Fábrica)</span>
                       </div>
                       <p className="text-[11px] text-rose-600/80 dark:text-rose-400/80 max-w-xl">
-                        Elimina la credencial vinculada para trasladar el software a otra sucursal o asignar una nueva caja.
+                        Elimina credenciales y purga la base de datos local para trasladar el software de forma segura a otra empresa o dominio.
                       </p>
                     </div>
 
@@ -1226,16 +1226,20 @@ export function SettingsPage({
                       type="button"
                       onClick={async () => {
                           const ok = await confirm({
-                            title: "Desvincular Permanentemente",
+                            title: "Desvincular y Restablecer de Fábrica",
                             message:
-                              "¿Está seguro de desvincular esta terminal? Se eliminará la credencial activa en este equipo.",
+                              "¿Está seguro de desvincular y restablecer esta terminal a valores de fábrica? Se eliminarán todas las credenciales, el catálogo y las ventas locales en este equipo para trasladarlo limpiamente a otra empresa o dominio.",
                             variant: "danger",
-                            confirmText: "Sí, Desvincular Permanentemente",
+                            confirmText: "Sí, Restablecer de Fábrica",
                             cancelText: "Cancelar",
                           });
                           if (ok) {
                             try {
                               await api.auth.unpair();
+                              localStorage.removeItem("pos_active_tickets");
+                              localStorage.removeItem("pos_selected_customer");
+                              localStorage.removeItem("pos_active_ticket_id");
+                              window.dispatchEvent(new CustomEvent("pos:reset-tickets"));
                               onUnpaired();
                             } catch (e) {
                               modalAlert({
@@ -1248,7 +1252,7 @@ export function SettingsPage({
                         }}
                         className="px-4 py-2 rounded-xl bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0"
                       >
-                        Desvincular
+                        Restablecer de Fábrica
                       </button>
                     </div>
                   </div>

@@ -2838,7 +2838,7 @@ dependencies = [
 
 [[package]]
 name = "pos-logiventa"
-version = "0.1.12"
+version = "0.1.14"
 dependencies = [
  "base64 0.22.1",
  "bcrypt",

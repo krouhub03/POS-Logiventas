@@ -259,8 +259,9 @@ pub fn test_print_ticket(db: State<'_, Db>) -> AppResult<String> {
 
     let drawer_on_print = conn
         .query_row("SELECT value FROM settings WHERE key = 'drawer_open_on_print'", [], |r| r.get::<_, String>(0))
-        .map(|v| v == "true")
-        .unwrap_or(false);
+        .or_else(|_| conn.query_row("SELECT value FROM settings WHERE key = 'drawer_open_on_sale'", [], |r| r.get::<_, String>(0)))
+        .map(|v| v != "false")
+        .unwrap_or(true);
 
     let drawer_enabled = conn
         .query_row("SELECT value FROM settings WHERE key = 'drawer_enabled'", [], |r| r.get::<_, String>(0))
@@ -517,8 +518,9 @@ pub fn print_sale_ticket(db: State<'_, Db>, sale_id: i64) -> AppResult<String> {
 
     let drawer_on_print = conn
         .query_row("SELECT value FROM settings WHERE key = 'drawer_open_on_print'", [], |r| r.get::<_, String>(0))
-        .map(|v| v == "true")
-        .unwrap_or(false);
+        .or_else(|_| conn.query_row("SELECT value FROM settings WHERE key = 'drawer_open_on_sale'", [], |r| r.get::<_, String>(0)))
+        .map(|v| v != "false")
+        .unwrap_or(true);
 
     let drawer_enabled = conn
         .query_row("SELECT value FROM settings WHERE key = 'drawer_enabled'", [], |r| r.get::<_, String>(0))
@@ -1070,6 +1072,7 @@ mod tests {
                     amount_cents: 1500000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .unwrap();

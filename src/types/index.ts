@@ -230,6 +230,7 @@ export interface CreateSaleInput {
   customerId?: number;
   items: CartItemInput[];
   payments: PaymentInput[];
+  clientTxId?: string;
 }
 
 export interface SaleItemDto {

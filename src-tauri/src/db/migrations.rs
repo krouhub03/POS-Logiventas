@@ -36,6 +36,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0029_fix_user_permission_audit_trigger.sql"),
     include_str!("../../migrations/0030_optimize_sync_and_inventory_indexes.sql"),
     include_str!("../../migrations/0031_enqueue_unlinked_products_for_erp_upload.sql"),
+    include_str!("../../migrations/0032_sales_client_tx_id.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
@@ -113,9 +114,27 @@ fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
         );
     }
 
+    if !column_exists(conn, "sales", "client_tx_id") {
+        let _ = conn.execute("ALTER TABLE sales ADD COLUMN client_tx_id TEXT", []);
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_tx_id ON sales(client_tx_id) WHERE client_tx_id IS NOT NULL",
+            [],
+        );
+    }
+
     // Saneamiento automático de registros en sync_queue estancados (>= 10 intentos)
     let _ = conn.execute(
         "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 10",
+        [],
+    );
+
+    // Saneamiento y coherencia de configuración de apertura automática de cajón monedero
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('drawer_open_on_print', 'true')",
+        [],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('drawer_open_on_sale', 'true')",
         [],
     );
 

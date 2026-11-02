@@ -322,8 +322,26 @@ function App() {
               onBackToSales={() => setCurrentView("sales")}
               onStatusUpdated={(status) => setTerminalStatus(status)}
               onUnpaired={() => {
-                setTerminalStatus((prev) => (prev ? { ...prev, isPaired: false } : null));
+                localStorage.removeItem("pos_active_tickets");
+                localStorage.removeItem("pos_selected_customer");
+                localStorage.removeItem("pos_active_ticket_id");
+                window.dispatchEvent(new CustomEvent("pos:reset-tickets"));
+                setTerminalStatus((prev) => (prev ? {
+                  ...prev,
+                  isPaired: false,
+                  erpUrl: "https://metahabi.com",
+                  lastCajaId: undefined,
+                  lastCajaCodigo: undefined,
+                  lastCajaNombre: undefined,
+                  lastEmpresaNombre: undefined,
+                  cajaId: "",
+                  cajaCodigo: "",
+                  cajaNombre: "",
+                  empresaId: "",
+                  empresaNombre: ""
+                } : null));
                 handleSetCashier(null);
+                setCurrentView("sales");
               }}
             />
           </div>

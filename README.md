@@ -112,7 +112,7 @@ El sistema utiliza una separación estricta de responsabilidades entre el fronte
 - **Cajón Portamonedas**: Apertura automática al cobrar en efectivo y botón de pulso de prueba RJ11.
 - **Escáner**: Configuración de prefijos/sufijos y captura global.
 - **Medios de Pago**: Sincronización de canales de cobro desde el servidor y switches individuales (`terminal_enabled`) para habilitar o deshabilitar medios específicos en esta caja física.
-- **Terminal y General**: Estado de vinculación M2M, sincronización de cajeros, tema visual (Claro/Oscuro) y buscador manual de actualizaciones de software.
+- **Terminal y General**: Estado de vinculación M2M, sincronización de cajeros, tema visual (Claro/Oscuro), buscador manual de actualizaciones de software y **Restablecimiento Limpio de Fábrica** (purga atómica transaccional de SQLite y `localStorage` para traslado seguro de terminal entre distintas sucursales, empresas o dominios ERP sin contaminación cruzada).
 
 ---
 

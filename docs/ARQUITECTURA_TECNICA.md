@@ -100,9 +100,22 @@ $$\text{Cambio} = \sum \text{Pagos} - \text{Total}$$
   - El manejador de teclado valida que no haya texto en el campo de escaneo antes de ejecutar `+` o `-`, evitando disparar modificaciones de cantidad cuando el cajero digita códigos que contienen guiones.
 - **Confirmación Obligatoria para Producto #1**: Intentar eliminar la primera línea del ticket (o la única existente) mediante `-` o `Supr` (`Delete`) despliega una ventana de confirmación obligatoria `confirm(...)` para evitar la pérdida involuntaria de tickets con un solo ítem.
 
+### 3.5. Mecanismo de Blindaje Anti-Replay e Idempotencia de Ventas (3 Capas)
+Para erradicar por completo la duplicación accidental de ventas por rebotes de teclado, dobles clics o latencia de red:
+1. **Capa 1 — Detención Estricta de Eventos (`CobroModal.tsx`)**:
+   - Presionar `Enter` en cualquier input (`pagoInput`, `refInput` o inputs de modo mixto) ejecuta `e.preventDefault()` y `e.stopPropagation()`.
+   - Se evita que el evento se procese en el input y además burbujee al escuchador global de ventana (`window.addEventListener('keydown')`), el cual solía invocar `handleSubmit()` una segunda vez en el mismo milisegundo.
+2. **Capa 2 — Mutex Síncrono por Referencias en Memoria**:
+   - Se implementan referencias atómicas síncronas (`isSubmittingRef` en `CobroModal` e `isProcessingSaleRef` en `SalesStationPage`).
+   - Dado que el estado `loading` de React es asíncrono y se resuelve por lotes (*batching*), una referencia mutable bloquea inmediatamente cualquier segunda ejecución concurrente antes de que React renderice de nuevo.
+3. **Capa 3 — Idempotencia Criptográfica en Base de Datos (Migración `0032_sales_client_tx_id.sql`)**:
+   - Cada intento de venta genera un identificador único en frontend (`client_tx_id: crypto.randomUUID()`).
+   - SQLite almacena `client_tx_id TEXT` con un índice único condicional `CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_client_tx_id ON sales(client_tx_id) WHERE client_tx_id IS NOT NULL;`.
+   - Si por alguna eventualidad extrema entra un comando duplicado con el mismo `client_tx_id`, `commands/sales.rs` detecta la colisión mediante `SELECT id, folio FROM sales WHERE client_tx_id = ?`, retornando el recibo ya consolidado sin crear un nuevo folio, sin duplicar pagos y sin descontar doble inventario.
+
 ---
 
-## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0022`)
+## 🗄️ 4. Esquema de Base de Datos Local y Migraciones (`0001` a `0032`)
 
 La base de datos SQLite se almacena en `%APPDATA%\com.briankrou.pos-logiventa\logiventa.db`.
 
@@ -301,6 +314,9 @@ El runner aplica secuencialmente las 22 migraciones dentro de transacciones indi
 27. `0027_eleventa_fields.sql`: Columnas `wholesale_price_cents` (precio mayoreo) y `max_stock` (inventario máximo) en `products`.
 28. `0028_sales_paid_and_change_cents.sql`: Columnas `paid_cents` y `change_cents` en `sales` para separar el monto entregado por el cliente del efectivo neto retenido en `payments`.
 29. `0029_fix_user_permission_audit_trigger.sql`: Reparación de la columna `last_modified_by` en `users` y trigger `trg_user_permissions_audit` junto con saneamiento idempotente `ensure_critical_schema` en cada arranque.
+30. `0030_optimize_sync_and_inventory_indexes.sql`: Índices compuestos de alto rendimiento para acelerar deltas de inventario y despacho de la cola Outbox.
+31. `0031_enqueue_unlinked_products_for_erp_upload.sql`: Encolado y reconciliación de productos creados localmente sin enlace previo en el ERP.
+32. `0032_sales_client_tx_id.sql`: Columna `client_tx_id` e índice único condicional `idx_sales_client_tx_id` sobre la tabla `sales` para garantizar idempotencia anti-duplicados y reintentos seguros.
 
 ---
 
@@ -373,6 +389,12 @@ stateDiagram-v2
     - 🍱 *Combo / Kit / Receta*: Ícono púrpura con bandeja y cubiertos de combo.
   - **Visor Lightbox Modal (`ImageLightboxModal`)**: Las imágenes en miniatura del catálogo (`ProductsPage`) y de las líneas del ticket de venta (`SalesStationPage`) admiten **doble clic** para expandirse a pantalla completa en alta resolución. El lightbox se cierra al hacer clic en el backdrop o presionando `Escape` / `Enter`.
   - **Visibilidad Opcional de Miniaturas en Venta**: La cabecera de la estación de cobro incluye un interruptor visual para ocultar o mostrar las miniaturas de productos en el ticket, adaptando la densidad de información a pantallas compactas o táctiles.
+- **Arquitectura Ergonómica de la Ventana de Cobro (`CobroModal.tsx`)**:
+  - **Navegación Matricial 2D por Flechas (`handleArrowNavigation`)**: La selección de medios de pago se realiza mediante las 4 flechas del teclado (`[←] [→] [↑] [↓]`). Para adaptarse a cualquier resolución, el componente consulta las columnas reales (`window.getComputedStyle(gridContainerRef.current).gridTemplateColumns`) y calcula el salto vertical (`curIdx ± cols`) u horizontal (`curIdx ± 1`), permitiendo recorrer los métodos sin saltos irregulares ni congelamientos.
+  - **Prevención de Stale Closures**: El listener global de teclado y los manejadores de inputs acceden al estado síncrono mediante referencias reactivas (`availableMethodsRef`, `selectedMethodCodeRef`, `isSplitModeRef`, `handleSubmitRef`), evitando bloqueos por retrasos en el ciclo de renderizado de React.
+  - **Supresión de Comportamiento Numérico Nativo**: En el campo de importe entregado (`type="number"`), las teclas de dirección ejecutan `preventDefault()` y `stopPropagation()`, impidiendo que el navegador altere los números del monto mientras el cajero navega entre medios de pago.
+  - **Persistencia de Preferencia de Impresión de Ticket**: Un interruptor persistido en `localStorage` (`pos_print_sale_ticket`) con atajo `Ctrl+P` permite alternar la impresión física del comprobante, reduciendo el consumo de papel en ventas rápidas.
+  - **Apertura Inteligente de Tickets al Finalizar Venta (`SalesStationPage.tsx`)**: Tras consolidar el cobro, el sistema verifica si existen otros tickets abiertos en espera; si todos los restantes tienen productos cargados, abre y activa automáticamente un nuevo ticket limpio para atender al cliente siguiente sin demoras.
 
 ---
 

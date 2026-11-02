@@ -297,9 +297,6 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         )
         .unwrap_or_else(|_| "CAJA-01".into());
 
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0))?;
-    let folio = format!("{}-{:06}", caja_codigo, count + 1);
-
     // 2. Calcular importes con precisión en centavos conforme a AGENTS.md
     let mut subtotal_cents: i64 = 0;
     let mut tax_cents: i64 = 0;
@@ -347,6 +344,28 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
     }
 
     let total_cents = subtotal_cents + tax_cents - discount_cents;
+
+    // 2.5 Idempotencia estricta mediante client_tx_id (prevención de doble envío / anti-replay)
+    if let Some(ref tx_id) = input.client_tx_id {
+        let existing_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM sales WHERE client_tx_id = ?1",
+                params![tx_id],
+                |r| r.get(0),
+            )
+            .ok();
+
+        if let Some(existing_id) = existing_id {
+            eprintln!(
+                "[create_sale] Idempotencia activada: venta existente id={} para client_tx_id={}",
+                existing_id, tx_id
+            );
+            return build_sale_receipt(conn, existing_id);
+        }
+    }
+
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0))?;
+    let folio = format!("{}-{:06}", caja_codigo, count + 1);
 
     // 3. Validar pagos
     let paid_cents: i64 = input.payments.iter().map(|p| p.amount_cents).sum();
@@ -401,8 +420,8 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         .ok();
 
     tx.execute(
-        "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, paid_cents, change_cents, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'completed')",
+        "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, paid_cents, change_cents, client_tx_id, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'completed')",
         params![
             folio,
             input.customer_id,
@@ -413,7 +432,8 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
             tax_cents,
             total_cents,
             paid_cents,
-            change_cents
+            change_cents,
+            input.client_tx_id
         ],
     )?;
 
@@ -787,6 +807,7 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         "totalCents": total_cents,
         "paidCents": paid_cents,
         "changeCents": change_cents,
+        "clientTxId": input.client_tx_id,
         "status": "completed",
         "createdAt": &created_at,
         "items": payload_items,
@@ -1564,6 +1585,7 @@ mod tests {
                     amount_cents: 11880000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .expect("Debe registrar la venta con impuestos exactos");
@@ -1620,6 +1642,7 @@ mod tests {
                     amount_cents: 5000000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .expect("Venta con vuelto debe procesarse");
@@ -1677,6 +1700,7 @@ mod tests {
                     amount_cents: 750000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .expect("Venta de 3 unidades con stock 5 debe pasar");
@@ -1708,6 +1732,7 @@ mod tests {
                     amount_cents: 750000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         );
         assert!(err.is_err(), "Debe bloquear venta que dejaría el stock en negativo");
@@ -1776,6 +1801,7 @@ mod tests {
                     amount_cents: 3550000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         );
         assert!(
@@ -1818,6 +1844,7 @@ mod tests {
                     amount_cents: 2500000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .expect("Venta compartida dentro del stock debe procesarse");
@@ -1876,6 +1903,7 @@ mod tests {
                     amount_cents: 2000000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         );
         assert!(over_limit.is_err(), "Debe rechazar venta que excede el cupo de crédito");
@@ -1909,6 +1937,7 @@ mod tests {
                         reference: None,
                     },
                 ],
+                client_tx_id: None,
             },
         )
         .expect("Venta mixta dentro del cupo de crédito debe aprobarse");
@@ -1955,6 +1984,7 @@ mod tests {
                     amount_cents: 1600000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .unwrap();
@@ -2070,6 +2100,7 @@ mod tests {
                     amount_cents: 1800000,
                     reference: None,
                 }],
+                client_tx_id: None,
             },
         )
         .unwrap();
@@ -2096,5 +2127,59 @@ mod tests {
             .query_row("SELECT current_balance_cents FROM customers WHERE id = 2", [], |r| r.get(0))
             .unwrap();
         assert_eq!(updated_balance, 900000);
+    }
+
+    #[test]
+    fn test_duplicate_sale_replay_prevention() {
+        let mut conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (99, 'ARROZ-1K', 'Arroz 1Kg', 'UND', 500000, 350000, 20.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let input = CreateSaleInput {
+            user_id: Some(1),
+            customer_id: None,
+            client_tx_id: Some("tx-anti-dup-12345".into()),
+            items: vec![CartItemInput {
+                product_id: Some(99),
+                sku: None,
+                barcode: None,
+                description: "Arroz 1Kg".into(),
+                quantity: 2.0,
+                unit_price_cents: 500000,
+                tax_rate_bp: Some(0),
+                tax_fixed_cents: Some(0),
+                discount_cents: Some(0),
+            }],
+            payments: vec![PaymentInput {
+                method: "cash".into(),
+                amount_cents: 1000000,
+                reference: None,
+            }],
+        };
+
+        // Primera llamada: crea la venta normalmente
+        let sale1 = create_sale_in_conn(&mut conn, input.clone()).expect("La primera venta debe ser exitosa");
+        assert_eq!(sale1.total_cents, 1000000);
+
+        // Segunda llamada inmediata (dentro de los 2s): debe detectar replay y retornar la misma venta
+        let sale2 = create_sale_in_conn(&mut conn, input).expect("El replay debe retornar la venta existente sin error");
+        assert_eq!(sale1.id, sale2.id, "Debe retornar el mismo ID de venta");
+        assert_eq!(sale1.folio, sale2.folio, "Debe retornar el mismo folio");
+
+        // Verificar que en la base de datos solo exista 1 venta registrada
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sales", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "No debe registrarse una segunda venta duplicada");
+
+        // Verificar que el stock solo se haya descontado una vez (20 - 2 = 18)
+        let stock: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 99", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stock, 18.0, "El stock solo debe descontarse una vez");
     }
 }
