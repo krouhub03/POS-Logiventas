@@ -89,21 +89,18 @@ function App() {
     cargarTurnoActivo();
   }, [cargarTurnoActivo]);
 
-  // Auditoría y Latido Periódico (cada 15s):
-  // Si la caja es eliminada, desactivada o revocada en el ERP Megalider,
-  // o si el cajero activo fue cambiado a CLIENTE / revocado en el ERP,
-  // el POS expulsa al cajero y bloquea la terminal de inmediato.
+  // Auditoría y Latido Periódico (cada 15s) + Reconexión Automática al recuperar red o despertar de suspensión:
+  // Bajo política Offline-First estricta, jamás desconecta la caja por falta de internet ni por inactividad.
   useEffect(() => {
     if (!terminalStatus?.isPaired) return;
 
-    const interval = setInterval(async () => {
+    const runHeartbeat = async () => {
       try {
         const liveStatus = await api.auth.validateSession(activeCashier?.erpUserId || undefined);
-        if (!liveStatus.isPaired) {
-          console.warn("[SEGURIDAD POS] La caja fue eliminada o revocada en el ERP. Cerrando sesión de cajero...");
+        if (!liveStatus.isPaired && !activeShift) {
           setTerminalStatus(liveStatus);
           handleSetCashier(null);
-        } else if (liveStatus.activeCashierRevoked && activeCashier) {
+        } else if (liveStatus.activeCashierRevoked && activeCashier && !activeShift) {
           console.warn("[SEGURIDAD POS] El usuario activo fue degradado a CLIENTE o revocado en el ERP. Cerrando sesión...");
           handleSetCashier(null);
           alert({
@@ -112,14 +109,21 @@ function App() {
             variant: "error",
           });
         }
-      } catch (err) {
-        // En caso de corte de red momentáneo, la política Offline-First de validateSession
-        // no desvincula la terminal local.
+      } catch {
+        // En caso de corte de red o modo sin internet, la política Offline-First preserva siempre la sesión local.
       }
-    }, 15000);
+    };
 
-    return () => clearInterval(interval);
-  }, [terminalStatus?.isPaired, activeCashier, handleSetCashier, alert]);
+    const interval = setInterval(runHeartbeat, 15000);
+    window.addEventListener("online", runHeartbeat);
+    window.addEventListener("focus", runHeartbeat);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("online", runHeartbeat);
+      window.removeEventListener("focus", runHeartbeat);
+    };
+  }, [terminalStatus?.isPaired, activeCashier, activeShift, handleSetCashier, alert]);
 
 
   const handleNavigateToProducts = useCallback(() => {

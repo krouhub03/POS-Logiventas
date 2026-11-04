@@ -214,18 +214,13 @@ export function SalesStationPage({
   const [barcodeInput, setBarcodeInput] = useState("");
   const [selectedLineIndex, setSelectedLineIndex] = useState<number>(-1);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  const lastScanKeyTimeRef = useRef<number>(0);
+  const scanBurstBufferRef = useRef<string>("");
+  const isScannerBurstRef = useRef<boolean>(false);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const tableHeadRef = useRef<HTMLTableSectionElement>(null);
   const tableRowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
   const isProcessingSaleRef = useRef(false);
-
-  // Desplazar automáticamente la fila seleccionada a la vista visible
-  useEffect(() => {
-    if (selectedLineIndex >= 0 && tableRowRefs.current[selectedLineIndex]) {
-      tableRowRefs.current[selectedLineIndex]?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
-    }
-  }, [selectedLineIndex]);
 
   // Edición de nombre de ticket por doble clic
   const [editingTicketId, setEditingTicketId] = useState<number | null>(null);
@@ -419,6 +414,23 @@ export function SalesStationPage({
     }
   };
 
+  // Cargar la última venta registrada al montar la estación
+  useEffect(() => {
+    let isMounted = true;
+    api.sales.getLast()
+      .then((last) => {
+        if (isMounted && last) {
+          setLastReceipt(last);
+        }
+      })
+      .catch((err) => {
+        console.error("Error al cargar última venta inicial:", err);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleManualOpenDrawer = async () => {
     try {
       await api.settings.testOpenDrawer();
@@ -465,6 +477,31 @@ export function SalesStationPage({
   const currentTicket = tickets.find((t) => t.id === activeTicketId) || tickets[0];
   const cartLines = currentTicket.lines;
 
+  // Desplazar automáticamente la fila seleccionada a la vista visible descontando la cabecera sticky (thead)
+  useEffect(() => {
+    if (selectedLineIndex < 0) return;
+    const container = tableContainerRef.current;
+    const row = tableRowRefs.current[selectedLineIndex];
+    if (!container || !row) return;
+
+    if (selectedLineIndex === 0) {
+      container.scrollTop = 0;
+      return;
+    }
+
+    const theadHeight = tableHeadRef.current?.offsetHeight ?? 38;
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const visibleTop = container.scrollTop + theadHeight;
+    const visibleBottom = container.scrollTop + container.clientHeight;
+
+    if (rowTop < visibleTop) {
+      container.scrollTop = Math.max(0, rowTop - theadHeight);
+    } else if (rowBottom > visibleBottom) {
+      container.scrollTop = rowBottom - container.clientHeight;
+    }
+  }, [selectedLineIndex, cartLines.length]);
+
   // Totales del ticket activo
   const subtotalCents = cartLines.reduce((acc, l) => acc + l.subtotalCents, 0);
   const taxCents = cartLines.reduce((acc, l) => acc + l.taxCents, 0);
@@ -494,7 +531,13 @@ export function SalesStationPage({
       editingTicketId === null &&
       editingQtyLineId === null
     ) {
-      barcodeInputRef.current?.focus();
+      const input = barcodeInputRef.current;
+      if (input) {
+        input.focus();
+        if (input.value.length > 0) {
+          input.select();
+        }
+      }
     }
   }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId]);
 
@@ -868,6 +911,11 @@ export function SalesStationPage({
     const raw = barcodeInput.trim();
     if (!raw) return;
 
+    // Limpieza inmediata para que el siguiente escaneo comience siempre desde un campo limpio
+    setBarcodeInput("");
+    scanBurstBufferRef.current = "";
+    isScannerBurstRef.current = false;
+
     let qty = 1;
     let queryCode = raw;
 
@@ -918,7 +966,6 @@ export function SalesStationPage({
       const direct = await api.products.findByBarcode(queryCode);
       if (direct) {
         handleProductScanned(direct, qty);
-        setBarcodeInput("");
         return;
       }
 
@@ -932,7 +979,6 @@ export function SalesStationPage({
 
       if (match) {
         handleProductScanned(match, qty);
-        setBarcodeInput("");
       } else if (products.length > 1) {
         setIsSearchOpen(true);
       } else {
@@ -1364,10 +1410,10 @@ export function SalesStationPage({
           const prodName = check.productName ? `"${check.productName}"` : "este producto";
           const disp = check.stockDisponible ?? 0;
 
-          if (check.motivo === "PRODUCTO_AGOTADO" || disp <= 0) {
+          if (check.motivo === "RESERVADO_OTRA_CAJA") {
             const ok = await confirm({
-              title: "⚠️ Producto Agotado en Mostrador",
-              message: `No quedan existencias físicas de ${prodName} (fueron cobradas por otro cliente o están agotadas).\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
+              title: "⚠️ Reservado en Otra Caja",
+              message: `La última unidad física de ${prodName} está en proceso de cobro en otra caja.\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
               variant: "warning",
               confirmText: "Sí, Remover y Cobrar",
               cancelText: "Cerrar y Revisar Ticket",
@@ -1383,10 +1429,10 @@ export function SalesStationPage({
             return;
           }
 
-          if (check.motivo === "RESERVADO_OTRA_CAJA") {
+          if (check.motivo === "PRODUCTO_AGOTADO" || disp <= 0) {
             const ok = await confirm({
-              title: "⚠️ Vendido en Otra Caja",
-              message: `La última unidad física de ${prodName} acaba de ser cobrada en otra caja.\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
+              title: "⚠️ Producto Agotado en Mostrador",
+              message: `No quedan existencias físicas de ${prodName} (fueron cobradas por otro cliente o están agotadas).\n\n¿Desea remover este artículo del ticket automáticamente para continuar con el cobro?`,
               variant: "warning",
               confirmText: "Sí, Remover y Cobrar",
               cancelText: "Cerrar y Revisar Ticket",
@@ -1417,7 +1463,8 @@ export function SalesStationPage({
                 if (l.productId === check.productId) {
                   const newQty = disp;
                   const newSubtotal = Math.round(l.unitPriceCents * newQty);
-                  const newTax = calculateTaxCents(newSubtotal, l.taxRateBp);
+                  const fixedTax = Math.round((l.taxFixedCents || 0) * newQty);
+                  const newTax = calculateTaxCents(newSubtotal, l.taxRateBp) + fixedTax;
                   return {
                     ...l,
                     quantity: newQty,
@@ -1592,10 +1639,38 @@ export function SalesStationPage({
       ) {
         // CAPTURA GLOBAL DE ESCÁNER: Si el foco no está en el input, capturar el dígito/carácter y enfocar
         e.preventDefault();
+        const now = performance.now();
+        const interval = now - lastScanKeyTimeRef.current;
+        lastScanKeyTimeRef.current = now;
+
         barcodeInputRef.current?.focus();
-        setBarcodeInput((prev) => prev + e.key);
+
+        if (interval <= 55) {
+          // Ráfaga rápida de escáner HID
+          scanBurstBufferRef.current += e.key;
+          if (!isScannerBurstRef.current && scanBurstBufferRef.current.length >= 2) {
+            isScannerBurstRef.current = true;
+            // Si había un código previo antes de esta ráfaga de escáner, reemplazarlo limpiamente
+            setBarcodeInput(scanBurstBufferRef.current);
+          } else {
+            setBarcodeInput((prev) => prev + e.key);
+          }
+        } else {
+          // Inicio de nueva secuencia tras una pausa
+          scanBurstBufferRef.current = e.key;
+          isScannerBurstRef.current = false;
+          // Si ya había contenido previo y transcurrió una pausa (>120ms), descartar lo anterior
+          if (barcodeInput.length > 0 && interval > 120) {
+            setBarcodeInput(e.key);
+          } else {
+            setBarcodeInput((prev) => prev + e.key);
+          }
+        }
       } else if (e.key === "Enter" && document.activeElement !== barcodeInputRef.current) {
         e.preventDefault();
+        lastScanKeyTimeRef.current = performance.now();
+        scanBurstBufferRef.current = "";
+        isScannerBurstRef.current = false;
         handleBarcodeSubmit();
       }
     };
@@ -1922,10 +1997,10 @@ export function SalesStationPage({
         </div>
       </nav>
 
-      {/* 3. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (TICKETS + SCANNER + ACCIONES) */}
-      <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-2 flex flex-wrap items-center gap-2 sm:gap-3 transition-colors duration-150">
-        {/* Pestañas de Tickets (Mínimo 1 ticket siempre) */}
-        <div className="flex items-center gap-1.5 mr-2">
+      {/* 3. BARRA DE ENTRADA Y ACCIONES RÁPIDAS (TICKETS ARRIBA + SCANNER Y ACCIONES ABAJO) */}
+      <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-2 flex flex-col gap-2 transition-colors duration-150">
+        {/* FILA SUPERIOR: Pestañas de Tickets (Siempre en su propia fila arriba) */}
+        <div className="flex flex-wrap items-center gap-1.5 w-full">
           {tickets.map((t) => {
             const isEditing = editingTicketId === t.id;
             const isActiveTab = activeTicketId === t.id;
@@ -2055,8 +2130,10 @@ export function SalesStationPage({
           </button>
         </div>
 
-        {/* Input Principal de Código de Barras */}
-        <form onSubmit={handleBarcodeSubmit} className="flex-1 min-w-[280px] flex items-center gap-2">
+        {/* FILA INFERIOR: Input Principal de Código de Barras + Botones de Acción Rápida */}
+        <div className="flex items-center gap-2 sm:gap-3 w-full">
+          {/* Input Principal de Código de Barras */}
+          <form onSubmit={handleBarcodeSubmit} className="flex-1 min-w-[260px] flex items-center gap-2">
           <div className="relative flex-1">
             <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
               <BarcodeScannerIcon />
@@ -2071,6 +2148,40 @@ export function SalesStationPage({
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
               onKeyDown={(e) => {
+                const now = performance.now();
+                const interval = now - lastScanKeyTimeRef.current;
+                lastScanKeyTimeRef.current = now;
+
+                if (e.key === "Enter") {
+                  scanBurstBufferRef.current = "";
+                  isScannerBurstRef.current = false;
+                  return;
+                }
+
+                // Detección de ráfaga de escáner HID en el input principal
+                if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                  if (interval <= 55) {
+                    scanBurstBufferRef.current += e.key;
+                    // Si se detecta ráfaga ultrarrápida del lector y el input ya tenía un código viejo anterior:
+                    if (!isScannerBurstRef.current && scanBurstBufferRef.current.length >= 2) {
+                      isScannerBurstRef.current = true;
+                      if (barcodeInput.length > scanBurstBufferRef.current.length) {
+                        e.preventDefault();
+                        setBarcodeInput(scanBurstBufferRef.current);
+                        return;
+                      }
+                    }
+                  } else {
+                    scanBurstBufferRef.current = e.key;
+                    isScannerBurstRef.current = false;
+                    // Si hubo una pausa (>120ms) y el input ya tiene un código,
+                    // seleccionar todo el texto para que el nuevo escaneo reemplace limpiamente al anterior
+                    if (barcodeInput.length > 0 && interval > 120) {
+                      barcodeInputRef.current?.select();
+                    }
+                  }
+                }
+
                 // Atajo directo + y - cuando el input está vacío
                 if (!barcodeInput && cartLines.length > 0) {
                   if (e.key === "+" || e.key === "Add" || e.code === "NumpadAdd") {
@@ -2191,6 +2302,7 @@ export function SalesStationPage({
           >
             <PhotoToggleIcon active={showProductImages} />
           </button>
+          </div>
         </div>
       </div>
 
@@ -2230,9 +2342,15 @@ export function SalesStationPage({
 
       {/* 3. TABLA PRINCIPAL DE VENTAS ESTILO ELEVENTA */}
       <main className="flex-1 min-h-0 p-2 sm:p-3 flex flex-col overflow-hidden">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex-1 min-h-0 overflow-auto transition-colors duration-150">
+        <div
+          ref={tableContainerRef}
+          className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm flex-1 min-h-0 overflow-auto transition-colors duration-150"
+        >
           <table className="w-full text-left border-collapse">
-            <thead className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10">
+            <thead
+              ref={tableHeadRef}
+              className="border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold sticky top-0 bg-slate-100 dark:bg-slate-900 z-10"
+            >
               <tr>
                 <th className="py-2 px-2.5 w-10 text-center">#</th>
                 {showProductImages && (
@@ -2570,77 +2688,113 @@ export function SalesStationPage({
       </main>
 
       {/* 4. FOOTER RESUMEN CON VISOR GIGANTE */}
-      <footer className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-3 sm:px-5 py-2 sm:py-2.5 flex flex-wrap items-center justify-between gap-2 sm:gap-4 shadow-xs transition-colors duration-150">
-        {/* Atajos Inferiores & Resumen de Piezas */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          <div className="bg-white dark:bg-slate-800/90 px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-3 sm:gap-4 shadow-2xs">
-            <div>
-              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-tight">Artículos</div>
-              <div className="text-sm sm:text-base font-black text-slate-800 dark:text-white font-mono leading-tight">{totalItemsCount}</div>
+      <footer className="shrink-0 bg-white dark:bg-slate-900 border-t border-slate-200/90 dark:border-slate-800 px-3 sm:px-5 py-2 sm:py-2.5 flex flex-col gap-2 sm:gap-2.5 shadow-xs transition-colors duration-150">
+        {/* FILA SUPERIOR: CONTADORES/BOTONES TICKET (IZQ) Y TOTAL A PAGAR (DER) */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {/* Widget Artículos y Piezas */}
+            <div className="h-9 px-3 bg-white dark:bg-slate-800/90 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center gap-3 shadow-2xs">
+              <div>
+                <div className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-none">Artículos</div>
+                <div className="text-xs sm:text-sm font-black text-slate-800 dark:text-white font-mono leading-tight mt-0.5">{totalItemsCount}</div>
+              </div>
+              <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+              <div>
+                <div className="text-[8px] sm:text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-none">Piezas</div>
+                <div className="text-xs sm:text-sm font-black text-emerald-600 dark:text-emerald-400 font-mono leading-tight mt-0.5">{totalPieces}</div>
+              </div>
             </div>
-            <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-700" />
-            <div>
-              <div className="text-[9px] sm:text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 tracking-wider leading-tight">Piezas</div>
-              <div className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 font-mono leading-tight">{totalPieces}</div>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Botón Pendiente */}
             <button
               onClick={handleHoldTicket}
-              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 sm:gap-2 transition-colors cursor-pointer shadow-2xs"
+              className="h-9 px-3 rounded-xl bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 font-semibold text-xs border border-sky-200 dark:border-sky-800/60 flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
               title="Poner ticket en espera y abrir uno nuevo (F6)"
             >
-              <span>⏸</span>
-              <span className="hidden sm:inline">Pendiente</span>
+              <span className="text-sky-600 dark:text-sky-400 font-bold">⏸</span>
+              <span>Pendiente</span>
+              <span className="text-[9px] bg-sky-200/70 dark:bg-sky-800 text-sky-900 dark:text-sky-200 font-mono font-black px-1.5 py-0.5 rounded">F6</span>
             </button>
+
+            {/* Botón Cancelar */}
             <button
               onClick={() => handleCancelOrDeleteTicket()}
-              className="px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              className="h-9 px-3 rounded-xl bg-white hover:bg-rose-50 dark:bg-slate-800 dark:hover:bg-rose-950/40 text-slate-600 hover:text-rose-600 dark:text-slate-300 dark:hover:text-rose-300 font-semibold text-xs border border-slate-200 hover:border-rose-200 dark:border-slate-700 dark:hover:border-rose-800/60 flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
               title={tickets.length > 1 ? `Eliminar ${currentTicket.name}` : `Vaciar ${currentTicket.name}`}
             >
-              <span>✕</span>
-              <span className="hidden sm:inline">Cancelar Ticket</span>
+              <span className="text-rose-500 font-black">✕</span>
+              <span>Cancelar</span>
             </button>
           </div>
-        </div>
 
-        {/* VISOR GIGANTE DEL TOTAL, BOTÓN REIMPRIMIR Y BOTÓN COBRAR (F12) */}
-        <div className="flex items-center gap-3 sm:gap-4 ml-auto shrink-0">
-          <button
-            type="button"
-            onClick={handleReprintLastSale}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
-            title="Reimprimir el último ticket cobrado (Alt+R)"
-          >
-            <span>🖨️</span>
-            <span>Ticket</span>
-            <span className="text-[10px] bg-emerald-200/70 dark:bg-emerald-900 px-1.5 py-0.5 rounded font-mono">
-              Alt+R
-            </span>
-          </button>
-
+          {/* Visor Total a Pagar (Superior Derecha) */}
           <div className="text-right">
-            <div className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono leading-tight">
+            <div className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono leading-none">
               Subtotal: {formatCents(subtotalCents)} {taxCents > 0 && `• IVA: ${formatCents(taxCents)}`}
             </div>
-            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500 leading-tight">
+            <div className="text-[9px] sm:text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500 leading-none mt-1">
               TOTAL A PAGAR
             </div>
-            <div className="text-2xl sm:text-3xl xl:text-4xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight leading-none mt-0.5">
+            <div className="text-3xl sm:text-4xl xl:text-5xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight leading-none mt-1">
               {formatCents(totalCents)}
             </div>
           </div>
+        </div>
 
+        {/* FILA INFERIOR: ÚLTIMA VENTA / RECIBIÓ / CAMBIO (IZQ) Y BOTÓN COBRAR (DER) */}
+        <div className="flex items-center justify-between gap-3">
+          {/* Tarjeta Unificada 2C */}
+          <div className="flex items-center gap-2">
+            <div className="h-10 bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 sm:px-3 shadow-2xs flex items-center gap-2.5 sm:gap-3 text-xs">
+              <span className="bg-slate-100 dark:bg-slate-700/80 text-slate-600 dark:text-slate-200 border border-slate-200/80 dark:border-slate-600 text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-lg">
+                Última Venta
+              </span>
+
+              <div className="font-mono font-black text-slate-900 dark:text-white text-xs sm:text-sm">
+                {lastReceipt ? formatCents(lastReceipt.totalCents) : "$ 0"}
+              </div>
+
+              <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+
+              <div className="flex items-center gap-1 text-slate-600 dark:text-slate-300">
+                <span className="text-slate-400 dark:text-slate-500 font-bold text-[10px] sm:text-xs">Recibió:</span>
+                <span className="font-mono font-black text-slate-800 dark:text-slate-100 text-xs sm:text-sm">
+                  {lastReceipt ? formatCents(lastReceipt.paidCents) : "$ 0"}
+                </span>
+              </div>
+
+              <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+
+              <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                <span className="font-bold text-[10px] sm:text-xs">Cambio:</span>
+                <span className="font-mono font-black text-emerald-600 dark:text-emerald-300 text-xs sm:text-base">
+                  {lastReceipt ? formatCents(lastReceipt.changeCents) : "$ 0"}
+                </span>
+              </div>
+            </div>
+
+            {/* Botón Reimpresión Ticket */}
+            <button
+              type="button"
+              onClick={handleReprintLastSale}
+              disabled={!lastReceipt}
+              className="h-10 w-10 rounded-xl bg-white hover:bg-slate-50 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white border border-slate-200 dark:border-slate-700 shadow-2xs flex items-center justify-center cursor-pointer transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              title="Reimprimir el último ticket cobrado (Alt+R)"
+            >
+              <span className="text-sm">🖨️</span>
+            </button>
+          </div>
+
+          {/* Botón Cobrar F12 (Inferior Derecha) */}
           <button
             onClick={handleOpenCobro}
             disabled={cartLines.length === 0}
-            className="px-4 sm:px-7 py-2 sm:py-3 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-white font-black text-sm sm:text-base uppercase tracking-wider flex items-center gap-2 shadow-md shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+            className="h-11 px-7 sm:px-9 rounded-2xl bg-[#6ee7b7] hover:bg-[#34d399] dark:bg-emerald-500 dark:hover:bg-emerald-600 text-emerald-950 dark:text-slate-950 font-black text-sm uppercase tracking-wider flex items-center gap-2 shadow-sm active:scale-95 transition-all disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
           >
-            <span className="bg-white/25 dark:bg-emerald-700/60 px-1.5 sm:px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
+            <span className="bg-white/40 dark:bg-emerald-700/50 px-2 py-0.5 rounded-lg text-xs font-mono font-bold tracking-wide">
               F12
             </span>
-            <span>Cobrar</span>
+            <span>COBRAR</span>
           </button>
         </div>
       </footer>

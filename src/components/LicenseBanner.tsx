@@ -23,7 +23,11 @@ export const LicenseBanner: React.FC = () => {
         if (isMounted) setPlan(info);
 
         const isValid = await api.licensing.validateLicense();
-        if (isMounted) setValid(isValid);
+        const refreshedInfo = await api.licensing.getPlanInfo();
+        if (isMounted) {
+          setValid(isValid);
+          setPlan(refreshedInfo);
+        }
       } catch (e) {
         console.error('[LicenseBanner] error cargando licencia:', e);
       } finally {
@@ -38,7 +42,9 @@ export const LicenseBanner: React.FC = () => {
     };
   }, []);
 
-  if (loading) {
+  const isFreePlan = (plan?.plan_type || 'free').trim().toLowerCase() === 'free';
+
+  if (loading || !isFreePlan) {
     return null;
   }
 

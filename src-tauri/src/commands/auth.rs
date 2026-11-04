@@ -120,6 +120,7 @@ pub fn reset_terminal_settings(conn: &rusqlite::Connection) -> rusqlite::Result<
     Ok(())
 }
 
+#[allow(dead_code)]
 fn internal_unpair(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     // Preservar la identidad de la caja antes de desvincular para permitir reconexión ágil
     if let Some(cid) = get_setting(conn, "caja_id") {
@@ -326,6 +327,43 @@ pub fn sanitize_erp_url(raw_url: &str) -> String {
 #[tauri::command]
 pub fn get_terminal_status(db: State<'_, Db>) -> AppResult<TerminalStatus> {
     let conn = db.conn()?;
+    // Auto-recuperación Offline-First: si la caja quedó marcada como desconectada temporalmente
+    // pero conserva identidad previa (last_caja_id / last_caja_codigo), restaurar su estado vinculado
+    // para que nunca bloquee la operación local aunque inicie sin internet.
+    let pairing_status = get_setting(&conn, "pairing_status").unwrap_or_else(|| "unpaired".into());
+    let is_disconnected = get_setting(&conn, "is_disconnected").as_deref() == Some("1");
+    let has_last_identity = get_setting(&conn, "last_caja_id").is_some()
+        || get_setting(&conn, "last_caja_codigo").is_some();
+
+    if pairing_status != "linked" && is_disconnected && has_last_identity {
+        if let Some(cid) = get_setting(&conn, "last_caja_id") {
+            let _ = set_setting(&conn, "caja_id", &cid);
+        }
+        if let Some(ccod) = get_setting(&conn, "last_caja_codigo") {
+            let _ = set_setting(&conn, "caja_codigo", &ccod);
+        }
+        if let Some(cnom) = get_setting(&conn, "last_caja_nombre") {
+            let _ = set_setting(&conn, "caja_nombre", &cnom);
+        }
+        if let Some(eid) = get_setting(&conn, "last_empresa_id") {
+            let _ = set_setting(&conn, "empresa_id", &eid);
+        }
+        if let Some(enom) = get_setting(&conn, "last_empresa_nombre") {
+            let _ = set_setting(&conn, "empresa_nombre", &enom);
+        }
+        if let Some(bid) = get_setting(&conn, "last_bodega_id") {
+            let _ = set_setting(&conn, "bodega_id", &bid);
+        }
+        if let Some(bnom) = get_setting(&conn, "last_bodega_nombre") {
+            let _ = set_setting(&conn, "bodega_nombre", &bnom);
+        }
+        if let Some(url) = get_setting(&conn, "last_erp_url") {
+            let _ = set_setting(&conn, "erp_url", &url);
+        }
+        let _ = set_setting(&conn, "pairing_status", "linked");
+        let _ = set_setting(&conn, "is_disconnected", "0");
+    }
+
     Ok(fetch_status_sync(&conn))
 }
 
@@ -1089,49 +1127,127 @@ pub async fn disconnect_terminal_temporarily(db: State<'_, Db>) -> AppResult<Ter
     Ok(fetch_status_sync(&conn))
 }
 
-/// Envía una señal rápida al ERP cuando la ventana del POS se cierra para marcar la caja como desconectada.
-pub async fn notify_terminal_shutdown(db: &Db) {
-    let (erp_url, token) = {
-        let Ok(conn) = db.conn() else { return };
-        let erp_url = get_setting(&conn, "erp_url").unwrap_or_default();
-        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
-        (erp_url, token)
+/// 🔄 Intenta reconectar silenciosamente la terminal en segundo plano cuando el token expiró
+/// o cuando la caja fue reactivada en el ERP, sin interrumpir jamás al cajero.
+pub async fn try_silent_reconnect(db: &Db) -> bool {
+    let (clean_url, caja_id, caja_codigo, empresa_id) = {
+        let Ok(conn) = db.conn() else { return false };
+        let raw_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "last_erp_url"))
+            .unwrap_or_else(|| "https://metahabi.com".to_string());
+        let url = sanitize_erp_url(&raw_url);
+        let cid = get_setting(&conn, "caja_id").or_else(|| get_setting(&conn, "last_caja_id"));
+        let ccod = get_setting(&conn, "caja_codigo").or_else(|| get_setting(&conn, "last_caja_codigo"));
+        let eid = get_setting(&conn, "empresa_id").or_else(|| get_setting(&conn, "last_empresa_id"));
+        (url, cid, ccod, eid)
     };
 
-    if !erp_url.is_empty() && !token.is_empty() {
-        if let Ok(client) = reqwest::Client::builder()
-            .timeout(Duration::from_millis(1500))
-            .build()
-        {
-            let url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
-            let _ = client
-                .post(&url)
-                .header("Authorization", format!("Bearer {token}"))
-                .json(&serde_json::json!({ "accion": "DESCONECTAR_SESION" }))
-                .send()
-                .await;
-        }
+    if caja_id.is_none() && caja_codigo.is_none() {
+        return false;
     }
+
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    else {
+        return false;
+    };
+
+    let url = format!("{}/api/pos/v1/terminal/reconectar", clean_url);
+    let mut payload = serde_json::json!({});
+    if let Some(ref cid) = caja_id {
+        payload["cajaId"] = serde_json::json!(cid);
+    }
+    if let Some(ref ccod) = caja_codigo {
+        payload["cajaCodigo"] = serde_json::json!(ccod);
+    }
+    if let Some(ref eid) = empresa_id {
+        payload["empresaId"] = serde_json::json!(eid);
+    }
+
+    let Ok(res) = client.post(&url).json(&payload).send().await else {
+        return false;
+    };
+
+    if !res.status().is_success() {
+        return false;
+    }
+
+    let Ok(json) = res.json::<Value>().await else {
+        return false;
+    };
+    let data = &json["data"];
+    let Some(token) = data["terminalToken"].as_str().filter(|s| !s.is_empty()) else {
+        return false;
+    };
+
+    if let Ok(conn) = db.conn() {
+        let _ = set_setting(&conn, "terminal_token", token);
+        if let Some(cid) = data["caja"]["id"].as_str().filter(|s| !s.is_empty()) {
+            let _ = set_setting(&conn, "caja_id", cid);
+            let _ = set_setting(&conn, "last_caja_id", cid);
+        }
+        if let Some(cnom) = data["caja"]["nombre"].as_str().filter(|s| !s.is_empty()) {
+            let _ = set_setting(&conn, "caja_nombre", cnom);
+            let _ = set_setting(&conn, "last_caja_nombre", cnom);
+        }
+        if let Some(ccod) = data["caja"]["codigo"].as_str().filter(|s| !s.is_empty()) {
+            let _ = set_setting(&conn, "caja_codigo", ccod);
+            let _ = set_setting(&conn, "last_caja_codigo", ccod);
+        }
+        if let Some(eid) = data["empresa"]["id"].as_str().filter(|s| !s.is_empty()) {
+            let _ = set_setting(&conn, "empresa_id", eid);
+            let _ = set_setting(&conn, "last_empresa_id", eid);
+        }
+        if let Some(enom) = data["empresa"]["nombre"].as_str().filter(|s| !s.is_empty()) {
+            let _ = set_setting(&conn, "empresa_nombre", enom);
+            let _ = set_setting(&conn, "last_empresa_nombre", enom);
+        }
+        let _ = set_setting(&conn, "pairing_status", "linked");
+        let _ = set_setting(&conn, "is_disconnected", "0");
+    }
+
+    true
 }
 
-/// Valida periódicamente con el ERP si la caja sigue activa.
-/// Si la caja fue eliminada o revocada en el ERP (401, 403, 404),
-/// la terminal se auto-desvincula localmente de inmediato para prevenir uso indebido.
+/// Envía una señal rápida al ERP cuando la ventana del POS se cierra.
+/// Nota: No desconecta ni invalida la sesión para que la caja permanezca siempre activa.
+pub async fn notify_terminal_shutdown(_db: &Db) {
+    // Política Offline-First / Always-On: No enviar DESCONECTAR_SESION al cerrar o reiniciar
+    // para evitar que la caja aparezca como desconectada por inactividad o cierre de ventana.
+}
+
+/// Valida periódicamente con el ERP si la caja sigue activa y renueva la conexión automáticamente.
+/// Bajo política Offline-First estricta, NUNCA desvincula la caja por inactividad, cortes de internet
+/// ni errores HTTP transitorios. Si el token requiere renovación (401), se auto-reconecta en silencio.
 #[tauri::command]
 pub async fn validate_terminal_session(
     db: State<'_, Db>,
     active_erp_user_id: Option<String>,
 ) -> AppResult<TerminalStatus> {
-    let (erp_url, token, is_paired) = {
+    let (erp_url, mut token, is_paired) = {
         let conn = db.conn()?;
         let status = fetch_status_sync(&conn);
         let token = get_setting(&conn, "terminal_token").unwrap_or_default();
         (status.erp_url, token, status.is_paired)
     };
 
-    if !is_paired || token.is_empty() {
+    if !is_paired {
         let conn = db.conn()?;
         return Ok(fetch_status_sync(&conn));
+    }
+
+    // Si está vinculada pero no tiene token (ej. restaurada offline), intentar obtenerlo en silencio
+    if token.is_empty() {
+        if try_silent_reconnect(&db).await {
+            if let Ok(conn) = db.conn() {
+                token = get_setting(&conn, "terminal_token").unwrap_or_default();
+            }
+        }
+        if token.is_empty() {
+            let conn = db.conn()?;
+            return Ok(fetch_status_sync(&conn));
+        }
     }
 
     let client = reqwest::Client::builder()
@@ -1148,48 +1264,59 @@ pub async fn validate_terminal_session(
     match res_opt {
         Ok(res) => {
             let status_code = res.status();
-            // 401 (no autorizada/revocada), 403, 404 (caja eliminada)
-            if status_code == reqwest::StatusCode::UNAUTHORIZED
-                || status_code == reqwest::StatusCode::FORBIDDEN
-                || status_code == reqwest::StatusCode::NOT_FOUND
-            {
-                let conn = db.conn()?;
-                internal_unpair(&conn)?;
-                return Ok(fetch_status_sync(&conn));
-            }
-
-            if status_code.is_success() {
+            if status_code == reqwest::StatusCode::UNAUTHORIZED {
+                // Intentar auto-reconexión transparente en segundo plano sin desconectar al cajero
+                let _ = try_silent_reconnect(&db).await;
+            } else if status_code.is_success() {
                 if let Ok(json) = res.json::<Value>().await {
                     let is_active = json["data"]["activo"].as_bool().unwrap_or(true);
                     let caja_estado = json["data"]["caja"]["estado"].as_str().unwrap_or("ACTIVA");
                     if !is_active || caja_estado != "ACTIVA" {
-                        let conn = db.conn()?;
-                        internal_unpair(&conn)?;
-                        return Ok(fetch_status_sync(&conn));
+                        let _ = try_silent_reconnect(&db).await;
                     }
                 }
             }
         }
         Err(e) => {
-            // Falla de red transitoria: NO desvincular para mantener la política Offline-First
-            // pero logueamos advertencia.
-            eprintln!("[WARN POS] Error temporal al contactar ERP: {e}");
+            // Falla de red o sin internet: preservar siempre la sesión local (Offline-First)
+            eprintln!("[WARN POS] Operando en modo Offline-First (sin respuesta del ERP): {e}");
         }
     }
 
-    // Si hay un cajero activo en pantalla, auditar su vigencia en tiempo real
+    // Si hay un cajero activo en pantalla, auditar su vigencia en tiempo real (solo si no tiene turno abierto)
     let mut cashier_revoked = false;
     if let Some(ref erp_id) = active_erp_user_id {
         if !erp_id.is_empty() {
-            if let Ok(verify_res) = http_verify_user(&erp_url, &token, erp_id).await {
-                let autorizado = verify_res["data"]["autorizado"].as_bool().unwrap_or(false);
-                if !autorizado {
-                    cashier_revoked = true;
-                    let conn = db.conn()?;
-                    let _ = conn.execute(
-                        "UPDATE users SET active = 0, erp_role_code = 'CLIENTE' WHERE erp_user_id = ?1",
-                        params![erp_id],
-                    );
+            let has_open_shift = db
+                .conn()
+                .ok()
+                .and_then(|c| {
+                    c.query_row(
+                        "SELECT COUNT(*) FROM cash_sessions WHERE status = 'open'",
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or(0)
+                > 0;
+
+            if !has_open_shift {
+                if let Ok(verify_res) = http_verify_user(&erp_url, &token, erp_id).await {
+                    let autorizado_explicit = verify_res["data"]["autorizado"].as_bool();
+                    let motivo = verify_res["data"]["motivo"].as_str().unwrap_or_default();
+                    if autorizado_explicit == Some(false)
+                        && (motivo == "ROL_CLIENTE_NO_AUTORIZADO"
+                            || motivo == "USUARIO_INEXISTENTE_O_INACTIVO"
+                            || motivo == "SIN_PERMISOS_POS")
+                    {
+                        cashier_revoked = true;
+                        let conn = db.conn()?;
+                        let _ = conn.execute(
+                            "UPDATE users SET active = 0, erp_role_code = 'CLIENTE' WHERE erp_user_id = ?1",
+                            params![erp_id],
+                        );
+                    }
                 }
             }
         }

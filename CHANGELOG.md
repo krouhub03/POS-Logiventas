@@ -5,6 +5,28 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.1.15] - 2026-11-03
+
+### Agregado
+- **Confirmación y Notificación de Resultado en Devoluciones (`SaleReturnModal.tsx` y `ModalRoot.tsx`):**
+  - **Diálogo de Confirmación Previa (`ConfirmModal`):** Antes de emitir una Nota Crédito / Devolución, el POS despliega un resumen claro con el folio original, cantidad de artículos y unidades, medio de reembolso, motivo y monto total a reembolsar, permitiendo confirmar (`Sí, Confirmar Devolución`) o cancelar (`No, Cancelar`).
+  - **Notificación de Resultado (`AlertModal`):** Al completarse la devolución, se presenta una confirmación visual con el folio generado y el valor reembolsado, o un aviso detallado en caso de error.
+  - **Prioridad de Capas en Modales (`z-[100]`):** Elevación de jerarquía visual en `ModalRoot.tsx` para asegurar que los diálogos de confirmación y alerta se muestren siempre sobre el historial de ventas y el formulario de devoluciones.
+- **Prueba Unitaria de Venta de Última Unidad en Stock Crítico (`sync.rs`):** Inclusión de `test_sale_of_last_single_unit_when_low_stock_succeeds` verificando que productos con `stock = 1.0` se facturen y descuenten a `0.0` sin bloqueos por políticas offline o ajustes locales pendientes.
+- **Reconexión Silenciosa y Auto-Recuperación Offline-First (`try_silent_reconnect` en `auth.rs` y `App.tsx`):** Renovación transparente de sesión al recuperar internet o despertar de suspensión sin cerrar turnos abiertos (`cash_sessions`) ni interrumpir la operación en caja.
+
+### Cambiado
+- **Ocultación Automática de Barra de Plan para Licencias Pagas (`LicenseBanner.tsx`):** La barra superior de versión y licencia ahora se muestra únicamente cuando la terminal opera bajo el plan `FREE`, ocultándose automáticamente en planes `PRO` y `ENTERPRISE` tras sincronizar el estado con el ERP.
+- **Política Offline-First Permisiva por Defecto (`0033_permissive_offline_stock_policy.sql` y `migrations.rs`):** Actualización de `offline_stock_policy` a `'permissive'` para garantizar que intermitencias de red nunca bloqueen el cobro de productos con bajas existencias (`<= 2` unidades).
+
+### Corregido
+- **Desbloqueo de Venta Cuando Queda 1 Unidad en Existencia (`verify_and_reserve_stock` en `sync.rs` y `SalesStationPage.tsx`):**
+  - **Validación Local Prioritaria y Respeto a Ajustes Pendientes:** Verificación primaria contra el stock físico de SQLite y omisión de la consulta remota de reserva cuando el producto tiene ajustes locales pendientes de sincronizar (`needs_erp_upload = 1`), carece de `erp_id` o tiene movimientos en la cola `sync_queue`.
+  - **Eliminación de Sobrescritura Destructiva a Cero (`stock = 0`):** Corrección del fallo donde respuestas de desincronización del ERP (`PRODUCTO_NO_EXISTE` o `SIN_BODEGA`) ponían en `0` la última unidad local del producto en SQLite. Ahora solo se bloquea remotamente si existe una reserva activa real en otra caja (`RESERVADO_OTRA_CAJA`).
+  - **Identificadores Completos en Verificación de Reserva:** Envío de `erpProductId`, `sku` y `barcode` en el payload de reserva y preservación del impuesto nominal fijo (`taxFixedCents`) al ajustar cantidades en caja.
+
+---
+
 ## [0.1.14] - 2026-11-02
 
 ### Agregado

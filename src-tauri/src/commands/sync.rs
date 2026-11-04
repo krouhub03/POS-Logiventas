@@ -29,9 +29,10 @@ fn set_setting(conn: &rusqlite::Connection, key: &str, value: &str) -> rusqlite:
 
 struct CriticalItemLocal {
     product_id: i64,
+    sku: String,
+    barcode: Option<String>,
     name: String,
     quantity: f64,
-    stock: f64,
     erp_id: Option<String>,
 }
 
@@ -43,7 +44,7 @@ pub async fn verify_and_reserve_stock(
     items: Vec<CheckStockItemInput>,
 ) -> AppResult<VerifyStockResult> {
     // 1. Verificación local inmediata: Si algún producto no tiene existencias suficientes en SQLite local
-    let (erp_url, token, offline_policy, critical_items) = {
+    let (erp_url, token, critical_items) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url")
             .or_else(|| get_setting(&conn, "erp_api_url"))
@@ -54,7 +55,6 @@ pub async fn verify_and_reserve_stock(
         let threshold = get_setting(&conn, "critical_stock_threshold")
             .and_then(|s| s.parse().ok())
             .unwrap_or(2.0);
-        let offline_policy = get_setting(&conn, "offline_stock_policy").unwrap_or_else(|| "permissive".into());
 
         // Desglosar combos/kits en sus productos hijos físicos y acumular la demanda física total del ticket
         let mut required_by_product: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
@@ -95,16 +95,40 @@ pub async fn verify_and_reserve_stock(
             }
         }
 
+        let pending_deltas_map = compute_all_pending_stock_deltas(&conn);
+
         // Primero verificamos si hay algún producto físico que localmente ya esté agotado o insuficiente
         let mut critical_items = Vec::new();
         for (&prod_id, &req_qty) in &required_by_product {
-            let (stock, name, is_service, controls_stock, _allow_neg, erp_id): (f64, String, i64, i64, i64, Option<String>) = conn
+            let (stock, name, is_service, controls_stock, _allow_neg, erp_id, sku, barcode, needs_erp_upload): (
+                f64,
+                String,
+                i64,
+                i64,
+                i64,
+                Option<String>,
+                String,
+                Option<String>,
+                i64,
+            ) = conn
                 .query_row(
-                    "SELECT stock, name, is_service, controls_stock, allow_negative_stock, erp_id FROM products WHERE id = ?1",
+                    "SELECT stock, name, is_service, controls_stock, allow_negative_stock, erp_id, sku, barcode, COALESCE(needs_erp_upload, 0) FROM products WHERE id = ?1",
                     params![prod_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                            r.get(7)?,
+                            r.get(8)?,
+                        ))
+                    },
                 )
-                .unwrap_or((999.0, "Producto".into(), 0, 1, 0, None));
+                .unwrap_or((999.0, "Producto".into(), 0, 1, 0, None, String::new(), None, 0));
 
             if is_service == 0 && (stock <= 0.0 || stock + 1e-9 < req_qty) {
                 return Ok(VerifyStockResult {
@@ -121,20 +145,27 @@ pub async fn verify_and_reserve_stock(
                 });
             }
 
-            if is_service == 0 && controls_stock != 0 && stock <= threshold {
+            let pending_delta = pending_deltas_map.get(&prod_id).copied().unwrap_or(0.0);
+            let is_synced_with_erp = erp_id.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+                && needs_erp_upload == 0
+                && pending_delta.abs() < 1e-9;
+
+            // Solo consultar reserva multi-caja en el ERP si el producto ya está sincronizado y sin cambios locales pendientes
+            if is_service == 0 && controls_stock != 0 && stock <= threshold && is_synced_with_erp {
                 critical_items.push(CriticalItemLocal {
                     product_id: prod_id,
+                    sku,
+                    barcode,
                     name,
                     quantity: req_qty,
-                    stock,
                     erp_id,
                 });
             }
         }
-        (erp_url, token, offline_policy, critical_items)
+        (erp_url, token, critical_items)
     };
 
-    // Si ningún ítem tiene stock crítico, aprobamos de inmediato en local sin latencia de red
+    // Si ningún ítem requiere consulta de reserva remota, aprobamos de inmediato en local sin latencia de red
     if critical_items.is_empty() {
         return Ok(VerifyStockResult {
             ok: true,
@@ -158,13 +189,16 @@ pub async fn verify_and_reserve_stock(
         });
     }
 
-    // 2. Consulta de reserva atómica en tiempo real contra el ERP para stock crítico
+    // 2. Consulta de reserva atómica en tiempo real contra el ERP para evitar colisiones entre cajas
     let payload_items: Vec<serde_json::Value> = critical_items
         .iter()
         .map(|it| {
             let p_id_str = it.erp_id.clone().unwrap_or_else(|| it.product_id.to_string());
             serde_json::json!({
                 "productId": p_id_str,
+                "erpProductId": it.erp_id,
+                "sku": it.sku,
+                "barcode": it.barcode,
                 "quantity": it.quantity
             })
         })
@@ -201,50 +235,63 @@ pub async fn verify_and_reserve_stock(
                 let motivo = data["motivo"].as_str().unwrap_or("STOCK_INSUFICIENTE").to_string();
                 let p_nombre = data["productoNombre"].as_str().map(|s| s.to_string());
                 let disp = data["stockDisponible"].as_f64();
+                let p_id_str = data["productoId"].as_str().unwrap_or_default();
 
-                // Actualizar el stock local con la realidad del ERP para evitar futuros intentos
-                if let Some(p_id_str) = data["productoId"].as_str() {
-                    let disp_val = disp.unwrap_or(0.0);
-                    let conn = db.conn()?;
-                    let _ = conn.execute(
-                        "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE erp_id = ?2 OR id = ?2",
-                        params![disp_val, p_id_str],
-                    );
+                let matched_item = critical_items
+                    .iter()
+                    .find(|it| {
+                        it.erp_id.as_deref() == Some(p_id_str)
+                            || it.product_id.to_string() == p_id_str
+                            || (!p_id_str.is_empty() && it.sku == p_id_str)
+                    })
+                    .or_else(|| critical_items.first());
+
+                let resolved_local_id = matched_item.map(|it| it.product_id);
+                let resolved_name = p_nombre.or_else(|| matched_item.map(|it| it.name.clone()));
+
+                // Únicamente bloquear si otra caja física tiene reservada activamente la última unidad en este instante.
+                // Si el ERP aún no tiene el stock local sincronizado (PRODUCTO_NO_EXISTE, SIN_BODEGA o desfase pendiente),
+                // encolamos el producto para subida y permitimos la venta bajo política Offline-First sin pisar el stock local.
+                if motivo == "RESERVADO_OTRA_CAJA" {
+                    Ok(VerifyStockResult {
+                        ok: false,
+                        motivo: Some(motivo),
+                        product_id: resolved_local_id,
+                        product_name: resolved_name,
+                        stock_disponible: disp,
+                        offline_warning: Some(false),
+                    })
+                } else {
+                    if let Some(local_id) = resolved_local_id {
+                        if let Ok(conn) = db.conn() {
+                            let _ = conn.execute(
+                                "UPDATE products SET needs_erp_upload = 1 WHERE id = ?1",
+                                params![local_id],
+                            );
+                        }
+                    }
+                    Ok(VerifyStockResult {
+                        ok: true,
+                        motivo: None,
+                        product_id: None,
+                        product_name: None,
+                        stock_disponible: None,
+                        offline_warning: Some(true),
+                    })
                 }
-
-                Ok(VerifyStockResult {
-                    ok: false,
-                    motivo: Some(motivo),
-                    product_id: None,
-                    product_name: p_nombre,
-                    stock_disponible: disp,
-                    offline_warning: Some(false),
-                })
             }
         }
         _ => {
-            // Conexión no disponible: en modo Offline-First, si hay stock local permitimos la venta.
-            // Si la política es estrictamente restrictiva por configuración administrativa:
-            if offline_policy == "strict" {
-                let first_item = &critical_items[0];
-                Ok(VerifyStockResult {
-                    ok: false,
-                    motivo: Some("STOCK_NO_DISPONIBLE".into()),
-                    product_id: Some(first_item.product_id),
-                    product_name: Some(first_item.name.clone()),
-                    stock_disponible: Some(first_item.stock),
-                    offline_warning: Some(true),
-                })
-            } else {
-                Ok(VerifyStockResult {
-                    ok: true,
-                    motivo: None,
-                    product_id: None,
-                    product_name: None,
-                    stock_disponible: None,
-                    offline_warning: Some(true),
-                })
-            }
+            // Conexión no disponible o error de red: bajo arquitectura Offline-First,
+            // habiendo validado que existe stock local suficiente en SQLite, siempre permitimos la venta.
+            Ok(VerifyStockResult {
+                ok: true,
+                motivo: None,
+                product_id: None,
+                product_name: None,
+                stock_disponible: None,
+                offline_warning: Some(true),
+            })
         }
     }
 }
@@ -1595,7 +1642,7 @@ pub async fn get_sync_status_internal(db: &Db) -> AppResult<SyncStatusDto> {
         let pending_count = pending_sales_count + pending_products_count;
 
         let last_sync_at = get_setting(&conn, "last_sync_timestamp");
-        let offline_policy = get_setting(&conn, "offline_stock_policy").unwrap_or_else(|| "strict".into());
+        let offline_policy = get_setting(&conn, "offline_stock_policy").unwrap_or_else(|| "permissive".into());
         let critical_threshold: f64 = get_setting(&conn, "critical_stock_threshold")
             .and_then(|s| s.parse().ok())
             .unwrap_or(2.0);
@@ -1604,18 +1651,35 @@ pub async fn get_sync_status_internal(db: &Db) -> AppResult<SyncStatusDto> {
     };
 
     let mut is_online = false;
-    if is_paired && !token.is_empty() {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(1500))
-            .build()?;
-        let check_url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
-        if let Ok(res) = client
-            .get(&check_url)
-            .header("Authorization", format!("Bearer {token}"))
-            .send()
-            .await
-        {
-            is_online = res.status().is_success();
+    if is_paired {
+        let mut active_token = token;
+        if active_token.is_empty() {
+            if crate::commands::auth::try_silent_reconnect(db).await {
+                if let Ok(conn) = db.conn() {
+                    active_token = get_setting(&conn, "terminal_token").unwrap_or_default();
+                }
+            }
+        }
+
+        if !active_token.is_empty() {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_millis(4000))
+                .build()?;
+            let check_url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));
+            if let Ok(res) = client
+                .get(&check_url)
+                .header("Authorization", format!("Bearer {active_token}"))
+                .send()
+                .await
+            {
+                if res.status().is_success() {
+                    is_online = true;
+                } else if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+                    if crate::commands::auth::try_silent_reconnect(db).await {
+                        is_online = true;
+                    }
+                }
+            }
         }
     }
 
@@ -1906,6 +1970,66 @@ mod tests {
         let erp_reported_stock = 20.0;
         let effective_stock = (erp_reported_stock + pending_delta).max(0.0);
         assert!((effective_stock - 17.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sale_of_last_single_unit_when_low_stock_succeeds() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        let policy = get_setting(&conn, "offline_stock_policy").unwrap_or_default();
+        assert_eq!(policy, "permissive");
+
+        conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, full_name, role, active) VALUES (1, 'cajero1', 'Cajero Uno', 'cashier', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cash_sessions (id, folio, user_id, opening_cents, status, opened_at) VALUES (1, 'T-LOW-01', 1, 5000000, 'open', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        // Producto bajo de existencias (min_stock = 5.0, stock actual = 1.0 unidad)
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, min_stock, is_service, controls_stock, needs_erp_upload, active)
+             VALUES (88, 'LOW-88', 'Producto Última Unidad', 'UND', 250000, 150000, 1.0, 5.0, 0, 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let sale = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: None,
+                items: vec![CartItemInput {
+                    product_id: Some(88),
+                    sku: Some("LOW-88".into()),
+                    barcode: None,
+                    description: "Producto Última Unidad".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 250000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "cash".into(),
+                    amount_cents: 250000,
+                    reference: None,
+                }],
+                client_tx_id: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(sale.total_cents, 250000);
+        let remaining_stock: f64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 88", [], |r| r.get(0))
+            .unwrap();
+        assert!(remaining_stock.abs() < 1e-6);
     }
 }
 

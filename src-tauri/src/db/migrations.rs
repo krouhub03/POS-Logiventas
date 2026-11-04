@@ -37,6 +37,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0030_optimize_sync_and_inventory_indexes.sql"),
     include_str!("../../migrations/0031_enqueue_unlinked_products_for_erp_upload.sql"),
     include_str!("../../migrations/0032_sales_client_tx_id.sql"),
+    include_str!("../../migrations/0033_permissive_offline_stock_policy.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
@@ -135,6 +136,16 @@ fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
     );
     let _ = conn.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('drawer_open_on_sale', 'true')",
+        [],
+    );
+
+    // Alinear política de stock crítico con arquitectura Offline-First para no bloquear venta de última unidad
+    let _ = conn.execute(
+        "UPDATE settings SET value = 'permissive' WHERE key = 'offline_stock_policy' AND value = 'strict'",
+        [],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('offline_stock_policy', 'permissive')",
         [],
     );
 

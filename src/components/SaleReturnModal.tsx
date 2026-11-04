@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { formatCents } from "../lib/money";
 import { api } from "../services/api";
+import { useModals } from "../contexts/ModalContext";
 import type { SaleReceipt, SaleReturnDto } from "../types";
 
 interface SaleReturnModalProps {
@@ -29,6 +30,8 @@ export function SaleReturnModal({
   onClose,
   onSuccess,
 }: SaleReturnModalProps) {
+  const { confirm, alert } = useModals();
+
   if (!isOpen || !sale) return null;
 
   // Inicializar estado de las líneas con cantidad disponible
@@ -120,6 +123,60 @@ export function SaleReturnModal({
       return;
     }
 
+    const refundMethodLabel =
+      refundMethod === "cash"
+        ? "Efectivo de Caja"
+        : refundMethod === "credit_balance"
+        ? "Cruce de Cartera (CxC)"
+        : "Transferencia Bancaria";
+
+    const totalUnits = activeLines.reduce((acc, l) => acc + l.quantityToReturn, 0);
+
+    const confirmed = await confirm({
+      title: "¿Confirmar Devolución / Nota Crédito?",
+      message: (
+        <div className="space-y-2.5 text-xs">
+          <p className="text-slate-600 dark:text-slate-300">
+            ¿Está seguro de emitir la devolución para el ticket{" "}
+            <strong className="font-mono text-slate-900 dark:text-white">{sale.folio}</strong>?
+          </p>
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-slate-500">Artículos / Unidades:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                {activeLines.length} ítem(s) ({totalUnits} und)
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Medio de Reembolso:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                {refundMethodLabel}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-500">Motivo:</span>
+              <span className="font-semibold text-slate-700 dark:text-slate-300 text-right max-w-[200px] truncate">
+                {reason.trim()}
+              </span>
+            </div>
+            <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+              <span className="font-bold text-slate-700 dark:text-slate-300">Total a Reembolsar:</span>
+              <span className="font-mono font-black text-sm text-rose-600 dark:text-rose-400">
+                {formatCents(totalRefundCents)}
+              </span>
+            </div>
+          </div>
+        </div>
+      ),
+      confirmText: "Sí, Confirmar Devolución",
+      cancelText: "No, Cancelar",
+      variant: "danger",
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
     setLoading(true);
     try {
       const result = await api.sales.createReturn({
@@ -137,10 +194,49 @@ export function SaleReturnModal({
 
       onSuccess(result);
       onClose();
+
+      await alert({
+        title: "Devolución Procesada Exitosamente",
+        message: (
+          <div className="space-y-2 text-xs">
+            <p className="text-slate-600 dark:text-slate-300">
+              La Nota Crédito / Devolución ha sido registrada correctamente en caja e inventario.
+            </p>
+            <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Folio Devolución:</span>
+                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                  {result.folio}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Ticket Original:</span>
+                <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                  {sale.folio}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Reembolso ({refundMethodLabel}):</span>
+                <span className="font-mono font-black text-emerald-700 dark:text-emerald-400">
+                  {formatCents(result.totalCents)}
+                </span>
+              </div>
+            </div>
+          </div>
+        ),
+        confirmText: "Aceptar",
+        variant: "success",
+      });
     } catch (err: unknown) {
       console.error("Error al procesar devolución:", err);
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
+      await alert({
+        title: "No se pudo realizar la devolución",
+        message: msg,
+        confirmText: "Entendido",
+        variant: "error",
+      });
     } finally {
       setLoading(false);
     }
