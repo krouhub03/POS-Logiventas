@@ -5,6 +5,23 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.0] - 2026-11-05
+
+### Agregado
+- **Módulo de Inteligencia y Reportes de Ventas (`SalesReportsPage.tsx` y `reports.rs`):**
+  - **Atajo Dedicado `F8` y Control de Acceso RBAC:** Nuevo acceso directo a analítica comercial protegido por permisos (`reportes:ver`, `pos:reportes` o `inventario:costos`), preservando el cajón monedero mediante `Shift+F8` y manteniendo los tickets activos intactos al conmutar entre vistas.
+  - **Filtros de Período Dinámicos:** Consultas conmutables para *Hoy*, *Ayer*, *Día específico*, *Mes Actual*, *Mes Anterior* y *Rango Personalizado*, combinables con filtros adicionales por *Cajero* y *Categoría*.
+  - **Tarjetas KPI Comerciales:** Resumen instantáneo de *Ventas Netas* (con porcentaje de crecimiento versus período previo), *Ganancia Estimada y Margen %* (respetando permisos de costos), *Tickets Emitidos* y *Ticket Promedio*.
+  - **Detector de Hora Pico Comercial:** Identificación automática de la franja horaria de mayor facturación y afluencia de clientes en el período consultado.
+  - **Gráficos SVG Interactivos Dinámicos:**
+    - Gráfico de barras y curva suavizada del flujo horario (24 horas) con tooltip flotante detallado por franja.
+    - Conmutador de evolución temporal *Día por Día* para rangos multifecha.
+    - Gráfico de dona y barras progresivas de participación para *Categorías Más Vendidas*.
+    - Anillos de distribución y recaudo por *Medios de Pago* y resumen de rendimiento por *Cajero*.
+  - **Tabla de Productos Más Vendidos:** Visualización con miniaturas, búsqueda instantánea en vivo y ordenamiento configurable por *Total $*, *Unidades vendidas* y *Margen de utilidad*.
+  - **Tarjeta de Proyección del Siguiente Período:** Motor estadístico de estimación con nivel y tendencia ponderados (Holt) sobre los últimos períodos, cálculo de rango esperado (conservador y optimista), utilidad proyectada, tickets estimados, meta operativa diaria/horaria e indicador de confianza según historial disponible.
+- **Optimización de Índices de Base de Datos Local (`0034_sales_analytics_indexes.sql`):** Creación de índices compuestos sobre `sales(status, created_at)`, `sales(user_id, created_at)` y `payments(sale_id, method)` para responder consultas analíticas en milisegundos bajo arquitectura Offline-First.
+---
 ## [0.1.15] - 2026-11-03
 
 ### Agregado

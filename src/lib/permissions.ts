@@ -24,6 +24,8 @@ export type PosPermission =
   | "inventario:costos"
   | "inventario:ajustar"
   | "clientes:ver"
+  | "reportes:ver"
+  | "pos:reportes"
   | "pos:configuracion"
   | string;
 
@@ -80,7 +82,9 @@ export function hasPermission(user: CashierUser | null, permission: PosPermissio
       permission === "inventario:ajustar" ||
       permission === "inventario:costos" ||
       permission === "clientes:ver" ||
-      permission === "caja:cuadre"
+      permission === "caja:cuadre" ||
+      permission === "reportes:ver" ||
+      permission === "pos:reportes"
     ) {
       return true;
     }

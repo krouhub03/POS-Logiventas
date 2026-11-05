@@ -171,6 +171,7 @@ pub async fn open_shift(
             "folioTurno": shift.folio,
             "baseInicial": (input.opening_cents as f64) / 100.0,
             "erpUserId": uid,
+            "fechaApertura": shift.opened_at,
         });
 
         if let Ok(res) = client
@@ -522,7 +523,10 @@ pub fn close_shift_in_conn(
         "folioTurno": folio,
         "erpUserId": erp_user_id,
         "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
-        "observaciones": input.notes
+        "baseInicial": (opening_cents as f64) / 100.0,
+        "fechaApertura": opened_at,
+        "fechaCierre": closed_at,
+        "observaciones": input.notes.clone().unwrap_or_default()
     });
 
     conn.execute(
@@ -580,6 +584,9 @@ pub async fn close_shift(
             "folioTurno": closed_shift.folio,
             "erpUserId": uid,
             "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
+            "baseInicial": (closed_shift.opening_cents as f64) / 100.0,
+            "fechaApertura": closed_shift.opened_at,
+            "fechaCierre": closed_shift.closed_at.clone().unwrap_or_default(),
             "observaciones": input.notes.clone().unwrap_or_default()
         });
 

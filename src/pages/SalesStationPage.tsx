@@ -109,6 +109,7 @@ interface SalesStationPageProps {
   onNavigateToProducts?: () => void;
   onNavigateToInventory?: () => void;
   onNavigateToSettings?: () => void;
+  onNavigateToReports?: () => void;
 }
 
 const STORAGE_KEY_TICKETS = "pos_active_tickets";
@@ -177,6 +178,7 @@ export function SalesStationPage({
   onNavigateToProducts,
   onNavigateToInventory,
   onNavigateToSettings,
+  onNavigateToReports,
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
   const { confirm, alert: modalAlert } = useModals();
@@ -1570,9 +1572,12 @@ export function SalesStationPage({
       } else if (e.key === "F7") {
         e.preventDefault();
         onNavigateToSettings?.();
-      } else if (e.key === "F8") {
+      } else if (e.key === "F8" && e.shiftKey) {
         e.preventDefault();
         handleManualOpenDrawer();
+      } else if (e.key === "F8" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        onNavigateToReports?.();
       } else if (e.key === "F9" || ((e.altKey || e.ctrlKey) && (e.key === "m" || e.key === "M"))) {
         e.preventDefault();
         handleToggleWholesale();
@@ -1677,7 +1682,7 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, onNavigateToReports, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
@@ -1968,6 +1973,22 @@ export function SalesStationPage({
             <span className="hidden md:inline">Historial</span>
           </button>
 
+          {/* F8 Inteligencia y Reportes de Ventas */}
+          {(hasPermission(cashier, "reportes:ver") ||
+            hasPermission(cashier, "pos:reportes") ||
+            hasPermission(cashier, "inventario:costos")) && (
+            <button
+              type="button"
+              onClick={onNavigateToReports}
+              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+              title="Inteligencia y Reportes de Ventas (F8)"
+            >
+              <span className="text-slate-400 font-mono text-[10px]">F8</span>
+              <span>📊</span>
+              <span className="hidden md:inline">Reportes</span>
+            </button>
+          )}
+
           {/* F7 Configuración */}
           {hasPermission(cashier, "pos:configuracion") && (
             <button
@@ -1988,11 +2009,11 @@ export function SalesStationPage({
             type="button"
             onClick={handleManualOpenDrawer}
             className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-300 text-xs font-bold transition-colors cursor-pointer shadow-2xs"
-            title="Abrir cajón monedero manualmente vía pulso de la impresora (F8)"
+            title="Abrir cajón monedero manualmente vía pulso de la impresora (Shift+F8)"
           >
             <span>💵</span>
             <span className="hidden lg:inline">Cajón</span>
-            <span className="text-[10px] bg-amber-200/70 dark:bg-amber-900 px-1 py-0.2 rounded font-mono">F8</span>
+            <span className="text-[10px] bg-amber-200/70 dark:bg-amber-900 px-1 py-0.2 rounded font-mono">Shift+F8</span>
           </button>
         </div>
       </nav>

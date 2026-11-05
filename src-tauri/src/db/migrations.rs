@@ -38,6 +38,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0031_enqueue_unlinked_products_for_erp_upload.sql"),
     include_str!("../../migrations/0032_sales_client_tx_id.sql"),
     include_str!("../../migrations/0033_permissive_offline_stock_policy.sql"),
+    include_str!("../../migrations/0034_sales_analytics_indexes.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {

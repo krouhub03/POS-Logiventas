@@ -622,3 +622,133 @@ export interface ExportFileResult {
   savedPath?: string | null;
   totalExported: number;
 }
+
+/* ==============================================================
+   Inteligencia y Reportes de Ventas (BI Local Offline-First)
+   ============================================================== */
+
+export interface SalesReportFilterInput {
+  startDate: string;
+  endDate: string;
+  prevStartDate?: string;
+  prevEndDate?: string;
+  prev2StartDate?: string;
+  prev2EndDate?: string;
+  cashierId?: number;
+  categoryName?: string;
+}
+
+export interface SalesKpiSummary {
+  grossSalesCents: number;
+  returnsCents: number;
+  netSalesCents: number;
+  prevNetSalesCents: number;
+  netSalesGrowthBp: number;
+  totalCostCents: number;
+  estimatedProfitCents: number;
+  prevProfitCents: number;
+  profitMarginBp: number;
+  ticketsCount: number;
+  prevTicketsCount: number;
+  avgTicketCents: number;
+  totalUnitsSold: number;
+  returnsCount: number;
+  peakHour: number | null;
+  peakHourLabel: string;
+  peakHourSalesCents: number;
+  peakHourTicketsCount: number;
+}
+
+export interface HourlySalesBucket {
+  hour: number;
+  label: string;
+  ticketsCount: number;
+  totalCents: number;
+  profitCents: number;
+  unitsSold: number;
+}
+
+export interface DailySalesPoint {
+  date: string;
+  label: string;
+  ticketsCount: number;
+  totalCents: number;
+  profitCents: number;
+  returnsCents: number;
+}
+
+export interface TopProductStat {
+  productId: number | null;
+  sku?: string | null;
+  barcode?: string | null;
+  name: string;
+  categoryName: string;
+  unit: string;
+  imageUrl?: string | null;
+  imageLocalPath?: string | null;
+  unitsSold: number;
+  revenueCents: number;
+  costCents: number;
+  profitCents: number;
+  marginBp: number;
+  shareBp: number;
+}
+
+export interface CategorySalesStat {
+  categoryName: string;
+  unitsSold: number;
+  ticketsCount: number;
+  revenueCents: number;
+  profitCents: number;
+  shareBp: number;
+}
+
+export interface PaymentMethodStat {
+  methodCode: string;
+  methodName: string;
+  transactionsCount: number;
+  totalCents: number;
+  shareBp: number;
+}
+
+export interface CashierSalesStat {
+  userId: number | null;
+  cashierName: string;
+  ticketsCount: number;
+  netSalesCents: number;
+  avgTicketCents: number;
+  shareBp: number;
+}
+
+export interface ForecastSeriesPoint {
+  label: string;
+  salesCents: number;
+  isProjected: boolean;
+}
+
+export interface SalesForecastSummary {
+  projectedSalesCents: number;
+  conservativeSalesCents: number;
+  optimisticSalesCents: number;
+  projectedProfitCents: number;
+  projectedTicketsCount: number;
+  targetRateCents: number;
+  targetRateLabel: string;
+  expectedGrowthBp: number;
+  confidenceLabel: "Alta" | "Media" | "En aprendizaje" | string;
+  series: ForecastSeriesPoint[];
+}
+
+export interface SalesAnalyticsReport {
+  startDate: string;
+  endDate: string;
+  kpis: SalesKpiSummary;
+  forecast: SalesForecastSummary;
+  hourlyDistribution: HourlySalesBucket[];
+  dailyTrend: DailySalesPoint[];
+  topProducts: TopProductStat[];
+  topCategories: CategorySalesStat[];
+  paymentMethods: PaymentMethodStat[];
+  cashierBreakdown: CashierSalesStat[];
+}
+

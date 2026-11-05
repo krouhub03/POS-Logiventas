@@ -115,6 +115,7 @@ pub fn run() {
             commands::sales::get_sale_detail,
             commands::sales::register_sale_reprint,
             commands::sales::create_sale_return,
+            commands::reports::get_sales_analytics,
             commands::settings::get_all_settings,
             commands::settings::update_settings,
             commands::printers::list_system_printers,

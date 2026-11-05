@@ -1435,11 +1435,26 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     // ── 5. Despacho de Cierres de Turno ('cash_session') ────
     let pending_sessions = {
         let conn = db.conn()?;
+        // Auto-recuperar cierres de turno que hayan quedado en 'failed' con pocos intentos
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'pending' WHERE entity_type = 'cash_session' AND status = 'failed' AND attempts < 10",
+            [],
+        );
         let mut stmt = conn.prepare(
-            "SELECT id, payload FROM sync_queue WHERE entity_type = 'cash_session' AND status = 'pending' ORDER BY id ASC LIMIT 20"
+            "SELECT sq.id, sq.payload, cs.opening_cents, cs.opened_at, cs.closed_at
+             FROM sync_queue sq
+             LEFT JOIN cash_sessions cs ON cs.id = sq.entity_id
+             WHERE sq.entity_type = 'cash_session' AND sq.status = 'pending'
+             ORDER BY sq.id ASC LIMIT 20"
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
         })?;
         let mut list = Vec::new();
         for r in rows {
@@ -1452,8 +1467,27 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         total_dispatched += pending_sessions.len();
         let url = format!("{}/api/pos/v1/sync/cierre-turno", erp_url.trim_end_matches('/'));
 
-        for (id, payload_str) in pending_sessions {
-            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+        for (id, payload_str, opening_cents_opt, opened_at_opt, closed_at_opt) in pending_sessions {
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
+                if parsed.get("observaciones").map(|v| v.is_null()).unwrap_or(false) {
+                    parsed["observaciones"] = serde_json::json!("");
+                }
+                if parsed.get("baseInicial").is_none() {
+                    if let Some(oc) = opening_cents_opt {
+                        parsed["baseInicial"] = serde_json::json!((oc as f64) / 100.0);
+                    }
+                }
+                if parsed.get("fechaApertura").is_none() {
+                    if let Some(oa) = opened_at_opt {
+                        parsed["fechaApertura"] = serde_json::json!(oa);
+                    }
+                }
+                if parsed.get("fechaCierre").is_none() {
+                    if let Some(ca) = closed_at_opt {
+                        parsed["fechaCierre"] = serde_json::json!(ca);
+                    }
+                }
+
                 let resp = client
                     .post(&url)
                     .header("Authorization", format!("Bearer {token}"))
@@ -1464,12 +1498,16 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                 let (is_synced, is_permanent, error_msg) = match resp {
                     Ok(res) => {
                         let status_code = res.status().as_u16();
-                        if res.status().is_success() || status_code == 404 || status_code == 409 {
+                        if res.status().is_success() || status_code == 409 {
                             (true, false, None)
                         } else {
                             let err_text = res.text().await.unwrap_or_default();
-                            let perm = status_code == 400 || status_code == 422 || err_text.contains("cerrado") || err_text.contains("no encontrad");
-                            (false, perm, Some(err_text))
+                            let perm = err_text.contains("ya se encuentra CERRADO") || err_text.contains("ya se encuentra CONTABILIZADO");
+                            if perm {
+                                (true, false, None)
+                            } else {
+                                (false, false, Some(err_text))
+                            }
                         }
                     }
                     Err(e) => (false, false, Some(e.to_string())),
@@ -1499,6 +1537,59 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                     "UPDATE sync_queue SET status = 'failed', last_error = 'Payload JSON inválido' WHERE id = ?1",
                     params![id],
                 );
+            }
+        }
+    }
+
+    // ── 5b. Sincronizar turno abierto actual si aún no está registrado en el ERP ──
+    let active_open_shift = {
+        let conn = db.conn()?;
+        conn.query_row(
+            "SELECT cs.id, cs.folio, cs.opening_cents, cs.opened_at, u.erp_user_id
+             FROM cash_sessions cs
+             LEFT JOIN users u ON u.id = cs.user_id
+             WHERE cs.status = 'open'
+             ORDER BY cs.opened_at DESC LIMIT 1",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .ok()
+    };
+
+    if let Some((shift_id, folio, opening_cents, opened_at, erp_uid)) = active_open_shift {
+        let url = format!("{}/api/pos/v1/sync/turno", erp_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "folioTurno": folio,
+            "baseInicial": (opening_cents as f64) / 100.0,
+            "erpUserId": erp_uid,
+            "fechaApertura": opened_at,
+        });
+        if let Ok(res) = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&body)
+            .send()
+            .await
+        {
+            if res.status().is_success() {
+                if let Ok(json_res) = res.json::<Value>().await {
+                    if let Some(tid) = json_res["data"]["turno"]["id"].as_str() {
+                        if let Ok(conn) = db.conn() {
+                            let _ = conn.execute(
+                                "UPDATE cash_sessions SET erp_turno_id = ?1 WHERE id = ?2",
+                                params![tid, shift_id],
+                            );
+                        }
+                    }
+                }
             }
         }
     }

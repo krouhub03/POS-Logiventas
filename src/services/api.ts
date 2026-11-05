@@ -42,6 +42,8 @@ import type {
   ImportOptionsInput,
   ImportExecutionResult,
   ExportFileResult,
+  SalesReportFilterInput,
+  SalesAnalyticsReport,
 } from "../types";
 
 /**
@@ -156,6 +158,11 @@ export const api = {
       invoke<SaleReceipt>("register_sale_reprint", { saleId }),
     createReturn: (input: CreateSaleReturnInput) =>
       invoke<SaleReturnDto>("create_sale_return", { input }),
+  },
+
+  reports: {
+    getSalesAnalytics: (filter: SalesReportFilterInput) =>
+      invoke<SalesAnalyticsReport>("get_sales_analytics", { filter }),
   },
 
   settings: {

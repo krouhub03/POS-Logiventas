@@ -3,6 +3,7 @@ import { api } from "./services/api";
 import { ProductsPage } from "./pages/ProductsPage";
 import { SalesStationPage } from "./pages/SalesStationPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SalesReportsPage } from "./pages/SalesReportsPage";
 import { PairingScreen } from "./components/PairingScreen";
 import { CashierLockScreen } from "./components/CashierLockScreen";
 import { OpenShiftModal } from "./components/OpenShiftModal";
@@ -30,7 +31,7 @@ function App() {
   const [loadingShift, setLoadingShift] = useState(false);
   const [showCloseShiftModal, setShowCloseShiftModal] = useState(false);
   const [exitActionPending, setExitActionPending] = useState(false);
-  const [currentView, setCurrentView] = useState<"sales" | "products" | "inventory" | "settings">("sales");
+  const [currentView, setCurrentView] = useState<"sales" | "products" | "inventory" | "settings" | "reports">("sales");
   const [loading, setLoading] = useState(true);
 
   const handleSetCashier = (cashier: CashierUser | null) => {
@@ -162,7 +163,23 @@ function App() {
     setCurrentView("settings");
   }, [activeCashier, alert]);
 
-  // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F4 = Inventario, F7 = Configuración)
+  const handleNavigateToReports = useCallback(() => {
+    if (
+      !hasPermission(activeCashier, "reportes:ver") &&
+      !hasPermission(activeCashier, "pos:reportes") &&
+      !hasPermission(activeCashier, "inventario:costos")
+    ) {
+      alert({
+        title: "Acceso Denegado",
+        message: "Tu perfil de usuario en el ERP no cuenta con permisos para consultar el módulo de Inteligencia y Reportes de Ventas ('reportes:ver' o 'inventario:costos').",
+        variant: "warning",
+      });
+      return;
+    }
+    setCurrentView("reports");
+  }, [activeCashier, alert]);
+
+  // Atajos globales para cambiar de vista (F1 = Ventas, F3 = Productos, F4 = Inventario, F7 = Configuración, F8 = Reportes)
   useEffect(() => {
     const handleGlobalKey = (e: KeyboardEvent) => {
       if (!activeCashier) return;
@@ -178,6 +195,9 @@ function App() {
       } else if (e.key === "F7") {
         e.preventDefault();
         handleNavigateToSettings();
+      } else if (e.key === "F8" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        handleNavigateToReports();
       } else if (e.key === "F11") {
         e.preventDefault();
         api.system.toggleFullscreen().catch(console.error);
@@ -185,7 +205,7 @@ function App() {
     };
     window.addEventListener("keydown", handleGlobalKey);
     return () => window.removeEventListener("keydown", handleGlobalKey);
-  }, [activeCashier, handleNavigateToProducts, handleNavigateToInventory, handleNavigateToSettings]);
+  }, [activeCashier, handleNavigateToProducts, handleNavigateToInventory, handleNavigateToSettings, handleNavigateToReports]);
 
   const handleRequestCloseApp = useCallback(async () => {
     try {
@@ -315,8 +335,19 @@ function App() {
             onNavigateToProducts={handleNavigateToProducts}
             onNavigateToInventory={handleNavigateToInventory}
             onNavigateToSettings={handleNavigateToSettings}
+            onNavigateToReports={handleNavigateToReports}
           />
         </div>
+
+        {/* VISTA DE INTELIGENCIA Y REPORTES DE VENTAS (F8) */}
+        {currentView === "reports" && (
+          <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950 overflow-hidden">
+            <SalesReportsPage
+              cashier={activeCashier}
+              onBackToSales={() => setCurrentView("sales")}
+            />
+          </div>
+        )}
 
         {/* VISTA DE CONFIGURACIÓN (F7) */}
         {currentView === "settings" && (
