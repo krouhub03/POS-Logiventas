@@ -9,6 +9,7 @@ import type {
   CreateCustomerInput,
   CreateSaleInput,
   Customer,
+  CustomerCreditSale,
   CustomerPayment,
   InventoryMovement,
   NewProduct,
@@ -223,5 +224,9 @@ export const api = {
       invoke<CustomerPayment>("record_customer_payment", { input }),
     getPayments: (customerId: number) =>
       invoke<CustomerPayment[]>("get_customer_payments", { customerId }),
+    getCreditSales: (customerId: number, limit?: number) =>
+      invoke<CustomerCreditSale[]>("get_customer_credit_sales", { customerId, limit }),
+    printStatement: (customerId: number) =>
+      invoke<string>("print_customer_statement", { customerId }),
   },
 };

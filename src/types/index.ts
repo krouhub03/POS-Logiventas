@@ -538,6 +538,37 @@ export interface CustomerPayment {
   createdAt: string;
 }
 
+export interface CustomerSaleItem {
+  id: number;
+  productId?: number | null;
+  sku?: string | null;
+  barcode?: string | null;
+  unit?: string | null;
+  description: string;
+  quantity: number;
+  unitPriceCents: number;
+  discountCents: number;
+  totalCents: number;
+}
+
+export interface CustomerCreditSale {
+  id: number;
+  folio: string;
+  customerId: number;
+  cashierName?: string | null;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  totalCents: number;
+  creditAmountCents: number;
+  otherPaymentsCents: number;
+  returnStatus: "none" | "partial" | "total" | string;
+  returnedCents: number;
+  createdAt: string;
+  itemsCount: number;
+  items: CustomerSaleItem[];
+}
+
 /** Componente integrante de un combo/kit (receta local). */
 export interface ProductComponent {
   id: number;

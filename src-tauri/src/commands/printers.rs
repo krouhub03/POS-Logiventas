@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use rusqlite::params;
 use tauri::State;
 use crate::db::Db;
 use crate::error::AppResult;
@@ -971,6 +972,193 @@ pub fn print_shift_ticket(db: State<'_, Db>, shift_id: i64) -> AppResult<String>
     }
 
     Ok(format!("Comprobante Z ({}) enviado con éxito a '{}'", folio, printer_target))
+}
+
+/// Imprime el Estado de Cuenta / Extracto de Cartera de un Cliente en la impresora térmica configurada (ESC/POS)
+#[tauri::command]
+pub fn print_customer_statement(db: State<'_, Db>, customer_id: i64) -> AppResult<String> {
+    let conn = db.conn()?;
+
+    let (customer_name, tax_id, phone, credit_limit_cents, current_balance_cents, credit_days): (
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+        i64,
+        i32,
+    ) = conn
+        .query_row(
+            "SELECT name, tax_id, phone, credit_limit_cents, current_balance_cents, credit_days FROM customers WHERE id = ?1",
+            params![customer_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .map_err(|_| crate::error::AppError::Validation(format!("Cliente con ID {} no encontrado", customer_id)))?;
+
+    let printer_enabled = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_enabled'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    if !printer_enabled {
+        return Err(crate::error::AppError::Validation(
+            "La impresión de tickets está deshabilitada en la configuración del POS.".into(),
+        ));
+    }
+
+    let printer_target: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_target'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "POS-58".into());
+
+    let paper_width: String = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_paper_width'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "58mm".into());
+
+    let auto_cut = conn
+        .query_row("SELECT value FROM settings WHERE key = 'printer_auto_cut'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let col_width = if paper_width.contains("80") { 48 } else { 32 };
+    let separator = "-".repeat(col_width);
+
+    let empresa_nombre: String = conn.query_row("SELECT value FROM settings WHERE key = 'business_name'", [], |r| r.get(0)).unwrap_or_else(|_| "METAHABI POS".into());
+    let empresa_nit: String = conn.query_row("SELECT value FROM settings WHERE key = 'empresa_nit'", [], |r| r.get(0)).unwrap_or_default();
+    let empresa_telefono: String = conn.query_row("SELECT value FROM settings WHERE key = 'empresa_telefono'", [], |r| r.get(0)).unwrap_or_default();
+
+    let now_str: String = conn
+        .query_row("SELECT datetime('now', 'localtime')", [], |r| r.get(0))
+        .unwrap_or_else(|_| chrono_or_fallback_time());
+
+    let mut payload: Vec<u8> = Vec::with_capacity(2048);
+
+    // Inicializar impresora y CP437
+    payload.extend_from_slice(b"\x1B\x40");
+    payload.extend_from_slice(b"\x1B\x74\x00");
+
+    // Encabezado
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
+    payload.extend_from_slice(b"\x1B\x45\x01"); // Negrita
+    payload.extend_from_slice(&encode_escpos_text(empresa_nombre.trim()));
+    payload.push(b'\n');
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    if !empresa_nit.trim().is_empty() {
+        payload.extend_from_slice(&encode_escpos_text(&format!("NIT: {}\n", empresa_nit.trim())));
+    }
+    if !empresa_telefono.trim().is_empty() {
+        payload.extend_from_slice(&encode_escpos_text(&format!("Tel: {}\n", empresa_telefono.trim())));
+    }
+
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text("*** ESTADO DE CUENTA CARTERA ***\n"));
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    // Datos del cliente
+    payload.extend_from_slice(b"\x1B\x61\x00"); // Izquierda
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    payload.extend_from_slice(&encode_escpos_text(&format!("Cliente: {}\n", customer_name)));
+    if let Some(ref tid) = tax_id {
+        payload.extend_from_slice(&encode_escpos_text(&format!("C.C./NIT: {}\n", tid)));
+    }
+    if let Some(ref ph) = phone {
+        payload.extend_from_slice(&encode_escpos_text(&format!("Tel: {}\n", ph)));
+    }
+    payload.extend_from_slice(&encode_escpos_text(&format!("Fecha: {}\n", now_str)));
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // Resumen de Cartera
+    payload.extend_from_slice(b"\x1B\x45\x01");
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("SALDO DEUDOR:", &format_money(current_balance_cents), col_width))));
+    payload.extend_from_slice(b"\x1B\x45\x00");
+
+    if credit_limit_cents > 0 {
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Cupo Autorizado:", &format_money(credit_limit_cents), col_width))));
+        let cupo_disp = (credit_limit_cents - current_balance_cents).max(0);
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Cupo Disponible:", &format_money(cupo_disp), col_width))));
+    }
+    payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols("Plazo Autorizado:", &format!("{} dias", credit_days), col_width))));
+    payload.extend_from_slice(separator.as_bytes());
+    payload.push(b'\n');
+
+    // Compras a crédito recientes
+    let credit_sales = crate::commands::customers::get_customer_credit_sales_in_conn(&conn, customer_id, Some(5))
+        .unwrap_or_default();
+
+    if !credit_sales.is_empty() {
+        payload.extend_from_slice(b"\x1B\x45\x01");
+        payload.extend_from_slice(&encode_escpos_text("ULTIMAS COMPRAS FIADAS:\n"));
+        payload.extend_from_slice(b"\x1B\x45\x00");
+
+        for cs in &credit_sales {
+            let date_part = cs.created_at.split(' ').next().unwrap_or("");
+            let left = format!("{} {}", cs.folio, date_part);
+            let right = format_money(cs.credit_amount_cents);
+            payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols(&left, &right, col_width))));
+            for item in cs.items.iter().take(3) {
+                let desc = if item.description.len() > 18 {
+                    format!("{:.18}...", item.description)
+                } else {
+                    item.description.clone()
+                };
+                let it_str = format!("  {:.1}x {}", item.quantity, desc);
+                let it_pr = format_money(item.total_cents);
+                payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols(&it_str, &it_pr, col_width))));
+            }
+            if cs.items.len() > 3 {
+                payload.extend_from_slice(&encode_escpos_text(&format!("  (+{} productos mas)\n", cs.items.len() - 3)));
+            }
+        }
+        payload.extend_from_slice(separator.as_bytes());
+        payload.push(b'\n');
+    }
+
+    // Abonos recientes
+    let mut pay_stmt = conn.prepare(
+        "SELECT folio, amount_cents, created_at FROM customer_payments WHERE customer_id = ?1 ORDER BY id DESC LIMIT 5"
+    )?;
+    let pay_rows = pay_stmt.query_map(params![customer_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+    })?;
+
+    let mut has_pays = false;
+    for pr in pay_rows.flatten() {
+        if !has_pays {
+            payload.extend_from_slice(b"\x1B\x45\x01");
+            payload.extend_from_slice(&encode_escpos_text("ULTIMOS ABONOS RECIBIDOS:\n"));
+            payload.extend_from_slice(b"\x1B\x45\x00");
+            has_pays = true;
+        }
+        let date_part = pr.2.split(' ').next().unwrap_or("");
+        let left = format!("{} {}", pr.0, date_part);
+        let right = format!("-{}", format_money(pr.1));
+        payload.extend_from_slice(&encode_escpos_text(&format!("{}\n", pad_cols(&left, &right, col_width))));
+    }
+    if has_pays {
+        payload.extend_from_slice(separator.as_bytes());
+        payload.push(b'\n');
+    }
+
+    // Firma de conformidad
+    payload.extend_from_slice(&encode_escpos_text("\n\nFirma Cliente: _________________\nC.C.:\n"));
+    payload.extend_from_slice(b"\x1B\x61\x01"); // Centrado
+    payload.extend_from_slice(&encode_escpos_text("Comprobante de Cartera y Fiado\n\n"));
+
+    // Alimentar y cortar
+    payload.extend_from_slice(b"\n\n\n\n");
+    if auto_cut {
+        payload.extend_from_slice(b"\x1D\x56\x42\x00");
+    }
+
+    #[cfg(windows)]
+    {
+        send_raw_to_printer_spooler(&printer_target, &payload, &format!("Extracto {}", customer_name))
+            .map_err(|e| crate::error::AppError::Validation(e))?;
+    }
+
+    Ok(format!("Estado de cuenta de '{}' enviado a '{}'", customer_name, printer_target))
 }
 
 /// Envía el pulso directo de apertura de gaveta (RJ11 ESC/POS) a la impresora configurada

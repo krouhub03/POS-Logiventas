@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
-import type { Customer, CreateCustomerInput, RecordCustomerPaymentInput, PaymentMethod } from "../types";
+import type {
+  Customer,
+  CreateCustomerInput,
+  RecordCustomerPaymentInput,
+  PaymentMethod,
+  CustomerCreditSale,
+  CustomerPayment,
+} from "../types";
 
 interface CustomerModalProps {
   isOpen: boolean;
@@ -28,18 +35,13 @@ export function CustomerModal({
 
   // Estado de vista de detalles del cliente
   const [detailCustomer, setDetailCustomer] = useState<Customer | null>(null);
-  const [customerPayments, setCustomerPayments] = useState<
-    Array<{
-      id: number;
-      folio: string;
-      amountCents: number;
-      previousBalanceCents: number;
-      newBalanceCents: number;
-      method?: string | null;
-      reference?: string | null;
-      createdAt: string;
-    }>
-  >([]);
+  const [activeTab, setActiveTab] = useState<"creditSales" | "payments" | "kardex">("creditSales");
+  const [creditSales, setCreditSales] = useState<CustomerCreditSale[]>([]);
+  const [loadingSales, setLoadingSales] = useState(false);
+  const [expandedSaleId, setExpandedSaleId] = useState<number | null>(null);
+  const [printingTicketId, setPrintingTicketId] = useState<number | null>(null);
+  const [printingStatement, setPrintingStatement] = useState(false);
+  const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
 
   // Formulario nuevo cliente
@@ -96,6 +98,26 @@ export function CustomerModal({
     setError(null);
     setSuccessMsg(null);
     setMode("details");
+    setActiveTab("creditSales");
+    setExpandedSaleId(null);
+
+    // Cargar compras anotadas al crédito
+    setLoadingSales(true);
+    api.customers
+      .getCreditSales(customer.id)
+      .then((list) => {
+        setCreditSales(list);
+        if (list.length > 0) {
+          setExpandedSaleId(list[0].id);
+        }
+      })
+      .catch((err) => {
+        console.warn("Error cargando compras a crédito del cliente:", err);
+        setCreditSales([]);
+      })
+      .finally(() => setLoadingSales(false));
+
+    // Cargar historial de abonos
     setLoadingPayments(true);
     api.customers
       .getPayments(customer.id)
@@ -107,11 +129,42 @@ export function CustomerModal({
       .finally(() => setLoadingPayments(false));
   };
 
+  const handleReprintSaleTicket = async (saleId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPrintingTicketId(saleId);
+    setError(null);
+    try {
+      await api.printers.printSaleTicket(saleId);
+      setSuccessMsg(`✓ Ticket de compra fiada enviado con éxito a la impresora térmica.`);
+    } catch (err: unknown) {
+      setError(`Error reimprimiendo ticket: ${String(err)}`);
+    } finally {
+      setPrintingTicketId(null);
+    }
+  };
+
+  const handlePrintCustomerStatement = async () => {
+    if (!detailCustomer) return;
+    setPrintingStatement(true);
+    setError(null);
+    try {
+      const res = await api.customers.printStatement(detailCustomer.id);
+      setSuccessMsg(`✓ ${res}`);
+    } catch (err: unknown) {
+      setError(`Error imprimiendo estado de cuenta: ${String(err)}`);
+    } finally {
+      setPrintingStatement(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       setMode("search");
       setDetailCustomer(null);
       setCustomerPayments([]);
+      setCreditSales([]);
+      setExpandedSaleId(null);
+      setActiveTab("creditSales");
       setSearch("");
       setError(null);
       setSuccessMsg(null);
@@ -709,94 +762,366 @@ export function CustomerModal({
               </div>
             </div>
 
-            {/* HISTORIAL RECIENTE DE ABONOS */}
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-              <div className="bg-slate-100 dark:bg-slate-800/70 px-3.5 py-2 flex items-center justify-between">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                  Últimos Abonos en Caja
+            {/* TABS DE CONSULTA DE CARTERA */}
+            <div className="flex border-b border-slate-200 dark:border-slate-800 gap-1 pt-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab("creditSales")}
+                className={`px-3 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === "creditSales"
+                    ? "border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <span>🛍️ Compras Anotadas</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                  {creditSales.length}
                 </span>
-                <span className="text-[10px] font-mono text-slate-400">
-                  {customerPayments.length} registro(s)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab("payments")}
+                className={`px-3 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === "payments"
+                    ? "border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <span>💵 Historial de Abonos</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                  {customerPayments.length}
                 </span>
-              </div>
-              <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                {loadingPayments ? (
-                  <div className="py-4 text-center text-slate-400">
-                    Cargando historial de abonos...
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab("kardex")}
+                className={`px-3 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === "kardex"
+                    ? "border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/30"
+                    : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                <span>⚖️ Extracto Kardex</span>
+              </button>
+            </div>
+
+            {/* CONTENIDO SEGÚN PESTAÑA */}
+            {activeTab === "creditSales" ? (
+              <div className="space-y-2">
+                {loadingSales ? (
+                  <div className="py-8 text-center text-xs text-slate-400">
+                    Cargando compras anotadas al crédito...
                   </div>
-                ) : customerPayments.length === 0 ? (
-                  <div className="py-4 text-center text-slate-400">
-                    No hay abonos registrados recientemente en esta terminal.
+                ) : creditSales.length === 0 ? (
+                  <div className="py-8 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-4">
+                    <span className="text-2xl block mb-1">🛒</span>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                      El cliente no tiene compras anotadas al crédito registradas en esta terminal.
+                    </p>
                   </div>
                 ) : (
-                  customerPayments.slice(0, 5).map((pay) => (
-                    <div
-                      key={pay.id}
-                      className="px-3.5 py-2 flex items-center justify-between bg-white dark:bg-slate-900"
-                    >
-                      <div>
-                        <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                          {pay.folio}
-                        </span>
-                        <span className="text-slate-400 ml-2 text-[11px]">
-                          {pay.method || "Efectivo"} • {pay.createdAt}
-                        </span>
+                  creditSales.map((sale) => {
+                    const isExpanded = expandedSaleId === sale.id;
+                    return (
+                      <div
+                        key={sale.id}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden shadow-2xs transition-all"
+                      >
+                        {/* CABECERA DE LA COMPRA */}
+                        <div
+                          onClick={() => setExpandedSaleId(isExpanded ? null : sale.id)}
+                          className="px-3.5 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-xs text-slate-400 font-mono">
+                              {isExpanded ? "▼" : "►"}
+                            </span>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-xs text-slate-900 dark:text-white">
+                                  {sale.folio}
+                                </span>
+                                <span className="text-[11px] text-slate-400">
+                                  {sale.createdAt}
+                                </span>
+                                {sale.cashierName && (
+                                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.2 rounded font-mono">
+                                    Cajero: {sale.cashierName}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500 mt-0.5">
+                                {sale.itemsCount} producto(s)
+                                {sale.otherPaymentsCents > 0 && (
+                                  <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-mono">
+                                    (Pagó {formatCents(sale.otherPaymentsCents)} de contado)
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-xs font-mono font-black text-amber-600 dark:text-amber-400 block">
+                              Fiado: {formatCents(sale.creditAmountCents)}
+                            </span>
+                            {sale.totalCents !== sale.creditAmountCents && (
+                              <span className="text-[10px] font-mono text-slate-400 block">
+                                Total ticket: {formatCents(sale.totalCents)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* DETALLE EXPANDIBLE DE PRODUCTOS COMPRADOS */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 p-3 space-y-2">
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-[11px]">
+                                <thead>
+                                  <tr className="text-slate-400 uppercase text-[9px] border-b border-slate-200 dark:border-slate-800">
+                                    <th className="pb-1 font-semibold">Cant.</th>
+                                    <th className="pb-1 font-semibold">Descripción del Producto</th>
+                                    <th className="pb-1 font-semibold text-right">P. Unit</th>
+                                    <th className="pb-1 font-semibold text-right">Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono">
+                                  {sale.items.map((item) => (
+                                    <tr key={item.id}>
+                                      <td className="py-1 text-slate-600 dark:text-slate-300 font-bold">
+                                        {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(2)} {item.unit || "und"}
+                                      </td>
+                                      <td className="py-1 text-slate-800 dark:text-slate-200 font-sans font-medium">
+                                        {item.description}
+                                      </td>
+                                      <td className="py-1 text-right text-slate-500">
+                                        {formatCents(item.unitPriceCents)}
+                                      </td>
+                                      <td className="py-1 text-right font-bold text-slate-900 dark:text-slate-100">
+                                        {formatCents(item.totalCents)}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                              <span className="text-slate-500">
+                                Folio Ticket: <strong className="font-mono text-slate-800 dark:text-slate-200">{sale.folio}</strong>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => handleReprintSaleTicket(sale.id, e)}
+                                disabled={printingTicketId === sale.id}
+                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                              >
+                                <span>🖨️</span>
+                                <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right font-mono">
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                          +{formatCents(pay.amountCents)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 ml-2">
-                          (Saldo: {formatCents(pay.newBalanceCents)})
-                        </span>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
-            </div>
+            ) : null}
+
+            {activeTab === "payments" ? (
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  {loadingPayments ? (
+                    <div className="py-6 text-center text-slate-400">
+                      Cargando historial de abonos...
+                    </div>
+                  ) : customerPayments.length === 0 ? (
+                    <div className="py-6 text-center text-slate-400">
+                      No hay abonos registrados para este cliente.
+                    </div>
+                  ) : (
+                    customerPayments.map((pay) => (
+                      <div
+                        key={pay.id}
+                        className="px-3.5 py-2.5 flex items-center justify-between bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {pay.folio}
+                            </span>
+                            <span className="text-[10px] bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.2 rounded font-semibold">
+                              {pay.method || "Efectivo"}
+                            </span>
+                          </div>
+                          <span className="text-slate-400 text-[11px] block mt-0.5">
+                            {pay.createdAt} {pay.reference ? `• Ref: ${pay.reference}` : ""} {pay.notes ? `• ${pay.notes}` : ""}
+                          </span>
+                        </div>
+                        <div className="text-right font-mono">
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400 block">
+                            +{formatCents(pay.amountCents)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            Saldo: {formatCents(pay.newBalanceCents)}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {activeTab === "kardex" ? (
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                  {(() => {
+                    const movements = [
+                      ...creditSales.map((s) => ({
+                        id: `sale-${s.id}`,
+                        type: "DEBITO" as const,
+                        folio: s.folio,
+                        date: s.createdAt,
+                        description: `Compra a crédito (${s.itemsCount} productos)`,
+                        amountCents: s.creditAmountCents,
+                      })),
+                      ...customerPayments.map((p) => ({
+                        id: `pay-${p.id}`,
+                        type: "CREDITO" as const,
+                        folio: p.folio,
+                        date: p.createdAt,
+                        description: `Abono en caja (${p.method || "Efectivo"})`,
+                        amountCents: p.amountCents,
+                      })),
+                    ].sort((a, b) => b.date.localeCompare(a.date));
+
+                    if (movements.length === 0) {
+                      return (
+                        <div className="py-6 text-center text-slate-400">
+                          No hay movimientos registrados en la cuenta del cliente.
+                        </div>
+                      );
+                    }
+
+                    return movements.map((mov) => (
+                      <div
+                        key={mov.id}
+                        className="px-3.5 py-2.5 flex items-center justify-between bg-white dark:bg-slate-900"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold ${
+                              mov.type === "DEBITO"
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                                : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                            }`}
+                          >
+                            {mov.type === "DEBITO" ? "+" : "-"}
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                                {mov.folio}
+                              </span>
+                              <span className="text-[11px] text-slate-500 font-sans">
+                                {mov.description}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {mov.date}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right font-mono font-bold">
+                          <span
+                            className={
+                              mov.type === "DEBITO"
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-emerald-600 dark:text-emerald-400"
+                            }
+                          >
+                            {mov.type === "DEBITO" ? "+" : "-"}
+                            {formatCents(mov.amountCents)}
+                          </span>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            ) : null}
             </div>
 
             {/* BOTONES DE ACCIÓN EN EL PIE DE DETALLES */}
-            <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("search");
-                  setTimeout(() => searchInputRef.current?.focus(), 50);
-                }}
-                className="py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
-              >
-                ← Volver a la Lista (Esc)
-              </button>
+            <div className="shrink-0 px-6 py-3.5 bg-slate-50 dark:bg-slate-950/80 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("search");
+                    setTimeout(() => searchInputRef.current?.focus(), 50);
+                  }}
+                  className="py-2.5 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  ← Volver (Esc)
+                </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  onSelect(detailCustomer);
-                  onClose();
-                }}
-                className={`flex-1 py-2.5 px-5 rounded-xl font-bold text-xs uppercase tracking-wide shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 ${
-                  currentCustomer?.id === detailCustomer.id
-                    ? "bg-emerald-100 dark:bg-emerald-900/70 text-emerald-800 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-600"
-                    : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                }`}
-              >
-                <span>
-                  {currentCustomer?.id === detailCustomer.id
-                    ? "✓ Seleccionado en el Ticket"
-                    : "✓ Seleccionar Cliente para el Ticket"}
-                </span>
-                <kbd
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                <button
+                  type="button"
+                  onClick={handlePrintCustomerStatement}
+                  disabled={printingStatement}
+                  title="Imprimir extracto térmico de estado de cuenta para el cliente"
+                  className="py-2.5 px-3.5 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>🖨️</span>
+                  <span>{printingStatement ? "Imprimiendo..." : "Imprimir Extracto"}</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 flex-1 max-w-md">
+                <button
+                  type="button"
+                  onClick={(e) => handleOpenPayment(detailCustomer, e)}
+                  className="py-2.5 px-4 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/70 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <span>💵</span>
+                  <span>Abonar</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelect(detailCustomer);
+                    onClose();
+                  }}
+                  className={`flex-1 py-2.5 px-5 rounded-xl font-bold text-xs uppercase tracking-wide shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 ${
                     currentCustomer?.id === detailCustomer.id
-                      ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100"
-                      : "bg-emerald-800/60 text-emerald-100"
+                      ? "bg-emerald-100 dark:bg-emerald-900/70 text-emerald-800 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-600"
+                      : "bg-emerald-600 hover:bg-emerald-500 text-white"
                   }`}
                 >
-                  Enter
-                </kbd>
-              </button>
+                  <span>
+                    {currentCustomer?.id === detailCustomer.id
+                      ? "✓ Seleccionado en el Ticket"
+                      : "✓ Seleccionar Cliente"}
+                  </span>
+                  <kbd
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                      currentCustomer?.id === detailCustomer.id
+                        ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100"
+                        : "bg-emerald-800/60 text-emerald-100"
+                    }`}
+                  >
+                    Enter
+                  </kbd>
+                </button>
+              </div>
             </div>
           </div>
         ) : mode === "payment" && paymentCustomer ? (

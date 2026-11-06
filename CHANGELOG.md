@@ -5,6 +5,21 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.1] - 2026-11-06
+
+### Agregado
+- **Gestión Integral de Compras a Crédito y Cartera de Clientes (`CustomerModal.tsx` y `customers.rs`):**
+  - **Pestaña Dedicada de Compras Anotadas (Fiados):** Visualización inmediata de todos los tickets y facturas cargadas a la cuenta de crédito del cliente, con fecha/hora, cajero, desglose de pagos de contado en compras mixtas y monto total fiado.
+  - **Acordeón Desplegable de Productos:** Consulta detallada en 1 clic de los productos específicos adquiridos en cada compra fiada (cantidades, unidades, precios unitarios y subtotales por renglón).
+  - **Reimpresión Rápida de Comprobantes:** Botón directo para reimprimir el ticket térmico de cualquier compra a crédito (`printSaleTicket`) para resolver dudas con el cliente en mostrador.
+  - **Pestaña de Historial de Abonos:** Lista cronológica de recibos de caja emitidos (`REC-...`) con medio de pago, referencias y nuevo saldo resultante.
+  - **Pestaña de Extracto Kardex Unificado:** Vista combinada cronológica de cargos (+) por compras fiadas y abonos (-) en caja con balance continuo.
+- **Extracto Térmico de Cartera ESC/POS (`print_customer_statement` en `printers.rs`):**
+  - Impresión física en tirilla térmica de 80mm/58mm del estado de cuenta del cliente, detallando saldo deudor, cupo autorizado y disponible, últimas compras fiadas con productos, últimos abonos recibidos y línea para firma de conformidad.
+- **Optimización de Índices de Base de Datos Local (`0035_customer_sales_indexes.sql`):** Índice compuesto `idx_sales_customer_created` sobre `sales(customer_id, created_at DESC)` para consultas instantáneas en arquitectura Offline-First.
+
+---
+
 ## [0.2.0] - 2026-11-05
 
 ### Agregado

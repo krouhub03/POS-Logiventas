@@ -165,13 +165,19 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     Ok(products)
 }
 
-/// Busca un producto por código de barras exacto (flujo de escáner).
+/// Busca un producto por código de barras o SKU exacto (flujo de escáner o tipeo de código rápido).
 #[tauri::command]
 pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<Option<Product>> {
     let conn = db.conn()?;
-    let sql = format!("SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} WHERE p.active = 1 AND p.barcode = ?1");
+    let code = barcode.trim();
+    let sql = format!(
+        "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
+         WHERE p.active = 1 AND (p.barcode = ?1 COLLATE NOCASE OR p.sku = ?1 COLLATE NOCASE) \
+         ORDER BY CASE WHEN p.barcode = ?1 COLLATE NOCASE THEN 0 ELSE 1 END \
+         LIMIT 1"
+    );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query_map(params![barcode.trim()], map_product)?;
+    let mut rows = stmt.query_map(params![code], map_product)?;
     let mut product = rows.next().transpose()?;
     if let Some(ref mut p) = product {
         enrich_bundle_product(&conn, p);

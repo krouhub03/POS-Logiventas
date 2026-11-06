@@ -2195,11 +2195,6 @@ export function SalesStationPage({
                   } else {
                     scanBurstBufferRef.current = e.key;
                     isScannerBurstRef.current = false;
-                    // Si hubo una pausa (>120ms) y el input ya tiene un código,
-                    // seleccionar todo el texto para que el nuevo escaneo reemplace limpiamente al anterior
-                    if (barcodeInput.length > 0 && interval > 120) {
-                      barcodeInputRef.current?.select();
-                    }
                   }
                 }
 
