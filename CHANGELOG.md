@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.3] - 2026-11-07
+### Agregado
+- Interceptor global de lector de codigos y auto-enfoque continuo en inventario y ventas
+
+### Cambios recientes
+- fix(scanner): interceptor global de escaner y auto-enfoque indestructible en inventario y ventas
+---
 ## [0.2.2] - 2026-11-07
 ### Agregado
 - Limpieza de filtro tras escaneo en inventario y barra de navegacion compacta dinamica
