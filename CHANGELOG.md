@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.5] - 2026-11-07
+### Agregado
+- Desvinculación directa en login y auto-detección de cajas eliminadas
+
+### Cambios recientes
+- fix(auth): permitir desvincular con turno activo, boton desvincular en pantalla de login y auto-desvinculacion si caja fue eliminada en ERP
+---
 ## [0.2.4] - 2026-11-07
 ### Agregado
 - Botones de texto Ver y Devolución en Historial de Ventas
