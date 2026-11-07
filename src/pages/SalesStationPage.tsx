@@ -1897,7 +1897,14 @@ export function SalesStationPage({
       <nav className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-2 shadow-xs transition-colors duration-150 overflow-x-auto custom-scrollbar">
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* F1 Ventas (Activo) */}
-          <button className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all duration-200 cursor-pointer">
+          <button
+            type="button"
+            onClick={(e) => {
+              (e.currentTarget as HTMLElement).blur();
+              focusInput();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all duration-200 cursor-pointer"
+          >
             <span className="bg-emerald-900/60 px-1.5 py-0.5 rounded text-[10px] font-mono text-white">F1</span>
             <BagIcon />
             <span className="overflow-hidden whitespace-nowrap text-xs max-w-[110px] opacity-100 font-bold">Ventas</span>

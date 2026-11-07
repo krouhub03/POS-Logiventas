@@ -879,11 +879,10 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         `✓ ${actionText} a "${currentAdjusting.name}" [${currentAdjusting.barcode || currentAdjusting.sku}] • Existencia actual: ${finalStock} ${currentAdjusting.unit}`
       );
 
-      // 6. Retorno inmediato del foco al buscador de existencias para el siguiente escaneo
-      setTimeout(() => {
-        inventorySearchInputRef.current?.focus();
-        inventorySearchInputRef.current?.select();
-      }, 50);
+      // 6. Retorno garantizado y redundante del foco al buscador de existencias para el siguiente escaneo
+      setTimeout(focusInventorySearch, 50);
+      setTimeout(focusInventorySearch, 150);
+      setTimeout(focusInventorySearch, 300);
 
       // Sincronizar de inmediato con el ERP de forma bidireccional
       api.sync.syncCatalog().then(() => loadProducts("")).catch(console.warn);
@@ -922,7 +921,50 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   };
 
-  // Atajos de teclado
+  // Enfoque continuo al input de existencias/inventario
+  const focusInventorySearch = useCallback(() => {
+    if (activeTab === "inventory" && !isFormOpen && !adjustingProduct && !isTagsModalOpen && !isExcelModalOpen) {
+      const input = inventorySearchInputRef.current;
+      if (input) {
+        input.focus();
+        if (input.value.length > 0) {
+          input.select();
+        }
+      }
+    }
+  }, [activeTab, isFormOpen, adjustingProduct, isTagsModalOpen, isExcelModalOpen]);
+
+  // Enfocar automáticamente al ingresar o cambiar a la pestaña de Inventario
+  useEffect(() => {
+    if (activeTab === "inventory") {
+      focusInventorySearch();
+      const t = setTimeout(focusInventorySearch, 80);
+      return () => clearTimeout(t);
+    }
+  }, [activeTab, focusInventorySearch]);
+
+  // Re-enfocar automáticamente el buscador de existencias si se hace clic en cualquier zona libre
+  useEffect(() => {
+    if (activeTab !== "inventory") return;
+    if (isFormOpen || adjustingProduct || isTagsModalOpen || isExcelModalOpen) return;
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        !target.closest("button") &&
+        !target.closest("input") &&
+        !target.closest("select") &&
+        !target.closest("textarea")
+      ) {
+        focusInventorySearch();
+      }
+    };
+    window.addEventListener("click", handleGlobalClick);
+    return () => window.removeEventListener("click", handleGlobalClick);
+  }, [activeTab, isFormOpen, adjustingProduct, isTagsModalOpen, isExcelModalOpen, focusInventorySearch]);
+
+  // Atajos de teclado e Interceptor Global de Escáner en Inventario
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -933,6 +975,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         } else if (isTagsModalOpen) {
           setIsTagsModalOpen(false);
           handleCancelEditTag();
+        } else if (search.trim().length > 0 && activeTab === "inventory") {
+          setSearch("");
+          focusInventorySearch();
         } else if (onBackToSales) {
           onBackToSales();
         }
@@ -942,11 +987,40 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       } else if (e.key === "F8" || (e.altKey && e.key.toLowerCase() === "n")) {
         e.preventDefault();
         handleOpenCreateModal(false);
+      } else if (
+        activeTab === "inventory" &&
+        !isFormOpen &&
+        !adjustingProduct &&
+        !isTagsModalOpen &&
+        !isExcelModalOpen
+      ) {
+        // CAPTURA GLOBAL DE ESCÁNER EN INVENTARIO:
+        // Si el usuario disparó el lector y el foco no estaba en el input, capturarlo y enfocarlo de inmediato
+        const isOtherInputFocused =
+          document.activeElement &&
+          document.activeElement !== inventorySearchInputRef.current &&
+          (document.activeElement.tagName === "INPUT" ||
+            document.activeElement.tagName === "TEXTAREA" ||
+            document.activeElement.tagName === "SELECT");
+
+        if (isOtherInputFocused) return;
+
+        if (
+          document.activeElement !== inventorySearchInputRef.current &&
+          e.key.length === 1 &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.metaKey
+        ) {
+          e.preventDefault();
+          inventorySearchInputRef.current?.focus();
+          setSearch((prev) => prev + e.key);
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFormOpen, adjustingProduct, isTagsModalOpen, onBackToSales]);
+  }, [isFormOpen, adjustingProduct, isTagsModalOpen, isExcelModalOpen, activeTab, search, onBackToSales, focusInventorySearch]);
 
   return (
     <div className="flex flex-col h-full min-h-0 w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
@@ -1291,23 +1365,43 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 placeholder="Buscar existencias por SKU o nombre de producto…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => {
+                onKeyDown={async (e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    const clean = search.trim().toLowerCase();
+                    const clean = search.trim();
                     if (!clean) return;
 
-                    // Buscar coincidencia exacta por barcode o sku
+                    // 1. Buscar coincidencia rápida en memoria
+                    const cleanLower = clean.toLowerCase();
                     const exact = physicalProducts.find(
                       (p) =>
-                        (p.barcode && p.barcode.toLowerCase() === clean) ||
-                        p.sku.toLowerCase() === clean
+                        (p.barcode && p.barcode.toLowerCase() === cleanLower) ||
+                        p.sku.toLowerCase() === cleanLower
                     );
 
                     if (exact) {
                       handleOpenAdjustModal(exact, "add");
-                    } else if (inventoryFilteredProducts.length === 1) {
-                      handleOpenAdjustModal(inventoryFilteredProducts[0], "add");
+                      return;
+                    }
+
+                    // 2. Si aún no está en memoria, consultar directamente a SQLite por código de barras o SKU
+                    try {
+                      const direct = await api.products.findByBarcode(clean);
+                      if (direct && !direct.isService && !direct.isBundle) {
+                        handleOpenAdjustModal(direct, "add");
+                        return;
+                      }
+
+                      // 3. Si no es exacto, buscar en listado general
+                      const results = await api.products.list(clean);
+                      const physicalResults = results.filter((p) => !p.isService && !p.isBundle);
+                      if (physicalResults.length === 1) {
+                        handleOpenAdjustModal(physicalResults[0], "add");
+                      } else if (physicalResults.length === 0) {
+                        showNotification(`⚠️ Producto "${clean}" no encontrado en inventario.`);
+                      }
+                    } catch (err) {
+                      console.error("Error al buscar producto por código:", err);
                     }
                   }
                 }}
