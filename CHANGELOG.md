@@ -5,6 +5,14 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.6] - 2026-11-07
+### Agregado
+- Optimización de búsqueda de productos F10 con scroll infinito y carga progresiva
+
+### Cambios recientes
+- feat(perf): optimizar busqueda de productos con scroll infinito y carga progresiva paginada
+- fix(ui): cambiar boton de desvincular por enlace en el footer junto a buscar actualizacion
+---
 ## [0.2.5] - 2026-11-07
 ### Agregado
 - Desvinculación directa en login y auto-detección de cajas eliminadas
