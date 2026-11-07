@@ -476,6 +476,47 @@ export function CashierLockScreen({
             <span className={`text-sm ${syncing ? "animate-spin" : ""}`}>🔄</span>
           </button>
 
+          {/* Botón Desvincular / Cambiar Terminal */}
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Desvincular Terminal",
+                message:
+                  "¿Deseas desvincular esta terminal (" +
+                  (status.cajaCodigo || "CAJA") +
+                  ") y volver a la pantalla de vinculación para ingresar un nuevo código?",
+                confirmText: "Sí, Desvincular",
+                cancelText: "Cancelar",
+                variant: "danger",
+              });
+              if (ok) {
+                try {
+                  await api.auth.unpair();
+                  localStorage.removeItem("pos_active_tickets");
+                  localStorage.removeItem("pos_active_ticket_id");
+                  localStorage.removeItem("pos_active_cashier");
+                  if (onUnpaired) onUnpaired();
+                } catch (e) {
+                  alert({
+                    title: "Error al desvincular",
+                    message: String(e),
+                    variant: "error",
+                  });
+                }
+              }
+            }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all active:scale-95 cursor-pointer shadow-xs ${
+              isDark
+                ? "bg-slate-800/90 hover:bg-rose-950/40 text-slate-300 hover:text-rose-200 border-slate-700 hover:border-rose-500/50"
+                : "bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 border-slate-200 hover:border-rose-300"
+            }`}
+            title="Desvincular esta terminal y volver a la pantalla de vinculación"
+          >
+            <span>🔌</span>
+            <span>Desvincular</span>
+          </button>
+
           {/* Botón Apagar */}
           <button
             type="button"

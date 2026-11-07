@@ -887,9 +887,11 @@ pub async fn unpair_terminal(db: State<'_, Db>) -> AppResult<TerminalStatus> {
             |r| r.get(0),
         )?;
         if existe_abierto > 0 {
-            return Err(AppError::Validation(
-                "No se puede desvincular la terminal mientras exista un turno de caja activo. Realiza el arqueo y cierre de caja primero.".into(),
-            ));
+            // Cerrar forzosamente cualquier turno local antes de purgar los datos de la terminal
+            let _ = conn.execute(
+                "UPDATE cash_sessions SET status = 'closed', closed_at = datetime('now') WHERE status = 'open'",
+                [],
+            );
         }
     }
 
@@ -1264,9 +1266,17 @@ pub async fn validate_terminal_session(
     match res_opt {
         Ok(res) => {
             let status_code = res.status();
-            if status_code == reqwest::StatusCode::UNAUTHORIZED {
-                // Intentar auto-reconexión transparente en segundo plano sin desconectar al cajero
-                let _ = try_silent_reconnect(&db).await;
+            if status_code == reqwest::StatusCode::UNAUTHORIZED || status_code == reqwest::StatusCode::NOT_FOUND {
+                // Intentar auto-reconexión transparente en segundo plano
+                if !try_silent_reconnect(&db).await {
+                    // Si el ERP respondió 401/404 y no se puede reconectar, la caja fue eliminada o revocada
+                    if let Ok(conn) = db.conn() {
+                        let _ = set_setting(&conn, "pairing_status", "unpaired");
+                        let _ = set_setting(&conn, "terminal_token", "");
+                        let _ = set_setting(&conn, "caja_id", "");
+                        let _ = set_setting(&conn, "caja_codigo", "");
+                    }
+                }
             } else if status_code.is_success() {
                 if let Ok(json) = res.json::<Value>().await {
                     let is_active = json["data"]["activo"].as_bool().unwrap_or(true);

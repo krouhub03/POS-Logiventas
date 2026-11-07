@@ -98,9 +98,15 @@ function App() {
     const runHeartbeat = async () => {
       try {
         const liveStatus = await api.auth.validateSession(activeCashier?.erpUserId || undefined);
-        if (!liveStatus.isPaired && !activeShift) {
+        if (!liveStatus.isPaired) {
           setTerminalStatus(liveStatus);
           handleSetCashier(null);
+          setActiveShift(null);
+          alert({
+            title: "Terminal Desvinculada",
+            message: "Esta terminal de caja fue eliminada o revocada en el ERP. La sesión local ha sido cerrada para vincular una nueva caja.",
+            variant: "warning",
+          });
         } else if (liveStatus.activeCashierRevoked && activeCashier && !activeShift) {
           console.warn("[SEGURIDAD POS] El usuario activo fue degradado a CLIENTE o revocado en el ERP. Cerrando sesión...");
           handleSetCashier(null);
