@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.2] - 2026-11-07
+### Agregado
+- Limpieza de filtro tras escaneo en inventario y barra de navegacion compacta dinamica
+
+### Cambios recientes
+- feat(pos): limpieza automatica de filtro de escaneo en inventario y barra de navegacion compacta dinamica
+---
 ## [0.2.1] - 2026-11-06
 
 ### Agregado
