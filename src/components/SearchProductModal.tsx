@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { api } from "../services/api";
 import { formatCents } from "../lib/money";
 import { parseTags } from "../lib/tags";
@@ -25,11 +25,18 @@ export function SearchProductModal({
   onSelect,
 }: SearchProductModalProps) {
   const [search, setSearch] = useState("");
-  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [productsCount, setProductsCount] = useState(0);
+  const [servicesCount, setServicesCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [dbTags, setDbTags] = useState<ProductTag[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
 
   // Filtros activos
   const [typeFilter, setTypeFilter] = useState<"all" | "products" | "services">("all");
@@ -55,6 +62,7 @@ export function SearchProductModal({
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const categoryMenuRef = useRef<HTMLDivElement>(null);
   const tagMenuRef = useRef<HTMLDivElement>(null);
+  const latestRequestId = useRef(0);
 
   // Guardar filtros anclados en localStorage
   const savePinnedFilters = (newPinned: PinnedFilter[]) => {
@@ -66,31 +74,100 @@ export function SearchProductModal({
     }
   };
 
-  // Cargar productos, tags y categorías al abrir
+  // Debounce para el texto de búsqueda (150ms para respuesta inmediata)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Cargar página de productos desde SQLite vía IPC
+  const loadPage = useCallback(
+    async (offset: number, isReset: boolean) => {
+      if (!isOpen) return;
+
+      const currentReq = ++latestRequestId.current;
+      if (isReset) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      try {
+        const res = await api.products.searchPaged({
+          query: debouncedSearch.trim() || undefined,
+          typeFilter,
+          category: selectedCategory || undefined,
+          tag: selectedTag || undefined,
+          limit: 50,
+          offset,
+        });
+
+        // Validar que la respuesta corresponda a la última petición realizada
+        if (currentReq === latestRequestId.current) {
+          if (isReset) {
+            setProducts(res.items);
+            setSelectedIndex(0);
+            if (tableContainerRef.current) {
+              tableContainerRef.current.scrollTop = 0;
+            }
+          } else {
+            setProducts((prev) => [...prev, ...res.items]);
+          }
+          setTotalCount(res.totalCount);
+          setProductsCount(res.productsCount);
+          setServicesCount(res.servicesCount);
+          setHasMore(res.hasMore);
+        }
+      } catch (err) {
+        console.error("Error al buscar productos paginados:", err);
+      } finally {
+        if (currentReq === latestRequestId.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [isOpen, debouncedSearch, typeFilter, selectedCategory, selectedTag]
+  );
+
+  // Cargar siguiente lote de 50 ítems
+  const loadNextPage = useCallback(() => {
+    if (hasMore && !loading && !loadingMore) {
+      loadPage(products.length, false);
+    }
+  }, [hasMore, loading, loadingMore, products.length, loadPage]);
+
+  // Disparar carga cuando cambian los filtros o la búsqueda
+  useEffect(() => {
+    if (isOpen) {
+      loadPage(0, true);
+    }
+  }, [isOpen, debouncedSearch, typeFilter, selectedCategory, selectedTag, loadPage]);
+
+  // Cargar tags y categorías al abrir el modal
   useEffect(() => {
     if (isOpen) {
       setSearch("");
+      setDebouncedSearch("");
       setSelectedIndex(0);
       setTypeFilter("all");
       setSelectedCategory(null);
       setSelectedTag(null);
       setIsCategoryDropdownOpen(false);
       setIsTagDropdownOpen(false);
-      setLoading(true);
 
       Promise.all([
-        api.products.list(""),
         api.tags.list().catch(() => []),
         api.categories.list().catch(() => []),
       ])
-        .then(([prods, tags, cats]) => {
-          setAllProducts(prods);
+        .then(([tags, cats]) => {
           setDbTags(tags);
           setCategories(cats);
         })
         .catch(console.error)
         .finally(() => {
-          setLoading(false);
           setTimeout(() => inputRef.current?.focus(), 50);
         });
     }
@@ -120,84 +197,35 @@ export function SearchProductModal({
     return map;
   }, [dbTags]);
 
-  // Lista de categorías únicas presentes en productos + BD
+  // Lista de categorías únicas disponibles
   const availableCategories = useMemo(() => {
     const set = new Set<string>(categories);
-    for (const p of allProducts) {
+    for (const p of products) {
       if (p.categoryName && p.categoryName.trim()) {
         set.add(p.categoryName.trim());
       }
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [categories, allProducts]);
+  }, [categories, products]);
 
-  // Lista de tags únicos presentes
+  // Lista de tags únicos disponibles
   const availableTags = useMemo(() => {
     const set = new Set<string>();
     for (const t of dbTags) set.add(t.name);
-    for (const p of allProducts) {
+    for (const p of products) {
       parseTags(p.tags, dbTags).forEach((t) => set.add(t));
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [dbTags, allProducts]);
+  }, [dbTags, products]);
 
   // Conteo de productos por tipo
   const counts = useMemo(() => {
-    const productsCount = allProducts.filter((p) => !p.isService).length;
-    const servicesCount = allProducts.filter((p) => p.isService).length;
     return {
-      all: allProducts.length,
+      all: typeFilter === "all" ? totalCount : productsCount + servicesCount,
       products: productsCount,
       services: servicesCount,
     };
-  }, [allProducts]);
-
-  // Filtrado reactivo en memoria
-  const filteredProducts = useMemo(() => {
-    let list = allProducts;
-
-    // 1. Filtro de tipo
-    if (typeFilter === "products") {
-      list = list.filter((p) => !p.isService);
-    } else if (typeFilter === "services") {
-      list = list.filter((p) => p.isService);
-    }
-
-    // 2. Filtro de categoría
-    if (selectedCategory) {
-      list = list.filter(
-        (p) => (p.categoryName || "General").toLowerCase() === selectedCategory.toLowerCase()
-      );
-    }
-
-    // 3. Filtro de etiqueta
-    if (selectedTag) {
-      list = list.filter((p) => {
-        const pTags = parseTags(p.tags, dbTags).map((t) => t.toLowerCase());
-        return pTags.includes(selectedTag.toLowerCase());
-      });
-    }
-
-    // 4. Búsqueda por texto (nombre, SKU, código de barras, categoría, tags)
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter((p) => {
-        const nameMatch = p.name.toLowerCase().includes(q);
-        const skuMatch = p.sku.toLowerCase().includes(q);
-        const barcodeMatch = p.barcode ? p.barcode.toLowerCase().includes(q) : false;
-        const catMatch = p.categoryName ? p.categoryName.toLowerCase().includes(q) : false;
-        const tagMatch = p.tags ? p.tags.toLowerCase().includes(q) : false;
-        return nameMatch || skuMatch || barcodeMatch || catMatch || tagMatch;
-      });
-    }
-
-    return list;
-  }, [allProducts, typeFilter, selectedCategory, selectedTag, search, dbTags]);
-
-  // Resetear selección al cambiar resultados
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [filteredProducts.length, typeFilter, selectedCategory, selectedTag]);
+  }, [typeFilter, totalCount, productsCount, servicesCount]);
 
   // Mantener scroll visible en la fila activa
   useEffect(() => {
@@ -209,12 +237,26 @@ export function SearchProductModal({
 
   // Alternar fijación de un filtro anclado
   const togglePinFilter = (type: "category" | "tag", value: string) => {
-    const exists = pinnedFilters.some((f) => f.type === type && f.value.toLowerCase() === value.toLowerCase());
+    const exists = pinnedFilters.some(
+      (f) => f.type === type && f.value.toLowerCase() === value.toLowerCase()
+    );
     if (exists) {
-      savePinnedFilters(pinnedFilters.filter((f) => !(f.type === type && f.value.toLowerCase() === value.toLowerCase())));
+      savePinnedFilters(
+        pinnedFilters.filter(
+          (f) => !(f.type === type && f.value.toLowerCase() === value.toLowerCase())
+        )
+      );
     } else {
-      const icon = type === "category" ? "📁" : value.toLowerCase().includes("oferta") ? "⚡" : value.toLowerCase().includes("frío") ? "❄️" : "🏷️";
-      const color = type === "tag" ? (tagColorMap.get(value.toLowerCase()) || "#3b82f6") : "#f59e0b";
+      const icon =
+        type === "category"
+          ? "📁"
+          : value.toLowerCase().includes("oferta")
+          ? "⚡"
+          : value.toLowerCase().includes("frío")
+          ? "❄️"
+          : "🏷️";
+      const color =
+        type === "tag" ? tagColorMap.get(value.toLowerCase()) || "#3b82f6" : "#f59e0b";
       const newPin: PinnedFilter = {
         id: `${type}-${value}-${Date.now()}`,
         type,
@@ -239,6 +281,7 @@ export function SearchProductModal({
   // Limpiar todos los filtros
   const handleClearFilters = () => {
     setSearch("");
+    setDebouncedSearch("");
     setTypeFilter("all");
     setSelectedCategory(null);
     setSelectedTag(null);
@@ -269,28 +312,34 @@ export function SearchProductModal({
           onClose();
         }
       } else if (e.key === "Enter") {
-        if (filteredProducts[selectedIndex]) {
+        if (products[selectedIndex]) {
           e.preventDefault();
-          handleSelectProduct(filteredProducts[selectedIndex]);
+          handleSelectProduct(products[selectedIndex]);
         }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, hasActiveFilters, filteredProducts, selectedIndex, onClose]);
+  }, [isOpen, hasActiveFilters, products, selectedIndex, onClose]);
 
   // Manejo de atajos de teclado
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIndex((prev) => Math.min(prev + 1, filteredProducts.length - 1));
+      setSelectedIndex((prev) => {
+        const next = Math.min(prev + 1, products.length - 1);
+        if (next >= products.length - 6) {
+          loadNextPage();
+        }
+        return next;
+      });
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setSelectedIndex((prev) => Math.max(prev - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (filteredProducts[selectedIndex]) {
-        handleSelectProduct(filteredProducts[selectedIndex]);
+      if (products[selectedIndex]) {
+        handleSelectProduct(products[selectedIndex]);
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -314,6 +363,14 @@ export function SearchProductModal({
       e.preventDefault();
       inputRef.current?.focus();
       inputRef.current?.select();
+    }
+  };
+
+  // Manejador de scroll infinito
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < 250) {
+      loadNextPage();
     }
   };
 
@@ -672,6 +729,7 @@ export function SearchProductModal({
             ==================================================================== */}
         <div
           ref={tableContainerRef}
+          onScroll={handleScroll}
           className="flex-1 overflow-auto bg-white dark:bg-slate-900/60"
         >
           <table className="w-full text-left border-collapse text-xs">
@@ -687,7 +745,7 @@ export function SearchProductModal({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-              {filteredProducts.length === 0 ? (
+              {products.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-16 text-center text-slate-400 dark:text-slate-500 font-sans">
                     <div className="text-3xl mb-2">🔍</div>
@@ -706,122 +764,149 @@ export function SearchProductModal({
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map((p, idx) => {
-                  const isSelected = idx === selectedIndex;
-                  const itemTags = parseTags(p.tags, dbTags);
-                  const isLowStock = p.controlsStock && p.stock <= p.minStock;
+                <>
+                  {products.map((p, idx) => {
+                    const isSelected = idx === selectedIndex;
+                    const itemTags = parseTags(p.tags, dbTags);
+                    const isLowStock = p.controlsStock && p.stock <= p.minStock;
 
-                  return (
-                    <tr
-                      key={p.id}
-                      id={`search-row-${idx}`}
-                      onClick={() => handleSelectProduct(p)}
-                      className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? "bg-sky-50/90 dark:bg-sky-950/40 text-slate-900 dark:text-white border-l-4 border-l-sky-500 font-semibold"
-                          : "hover:bg-slate-50/80 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300"
-                      }`}
-                    >
-                      {/* TIPO */}
-                      <td className="py-3 px-4 text-center">
-                        {p.isService ? (
-                          <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800/50 flex items-center justify-center text-xs mx-auto shadow-2xs">
-                            🛠️
-                          </div>
-                        ) : (
-                          <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800/50 flex items-center justify-center text-xs mx-auto shadow-2xs">
-                            📦
-                          </div>
-                        )}
-                      </td>
+                    return (
+                      <tr
+                        key={`${p.id}-${idx}`}
+                        id={`search-row-${idx}`}
+                        onClick={() => handleSelectProduct(p)}
+                        className={`cursor-pointer transition-colors ${
+                          isSelected
+                            ? "bg-sky-50/90 dark:bg-sky-950/40 text-slate-900 dark:text-white border-l-4 border-l-sky-500 font-semibold"
+                            : "hover:bg-slate-50/80 dark:hover:bg-slate-800/40 text-slate-700 dark:text-slate-300"
+                        }`}
+                      >
+                        {/* TIPO */}
+                        <td className="py-3 px-4 text-center">
+                          {p.isService ? (
+                            <div className="w-8 h-8 rounded-xl bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800/50 flex items-center justify-center text-xs mx-auto shadow-2xs">
+                              🛠️
+                            </div>
+                          ) : (
+                            <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/70 border border-amber-200 dark:border-amber-800/50 flex items-center justify-center text-xs mx-auto shadow-2xs">
+                              📦
+                            </div>
+                          )}
+                        </td>
 
-                      {/* SKU / CÓDIGO */}
-                      <td className="py-3 px-4 font-mono font-bold">
-                        <span
-                          className={
-                            p.isService
-                              ? "text-slate-600 dark:text-slate-400"
-                              : "text-sky-600 dark:text-sky-400"
-                          }
-                        >
-                          {p.barcode || p.sku}
-                        </span>
-                      </td>
-
-                      {/* DESCRIPCIÓN */}
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white text-xs">
-                          {p.name}
-                        </div>
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
-                          {p.unit ? `Unidad: ${p.unit}` : ""} {p.isBundle ? "• Combo" : ""}
-                        </div>
-                      </td>
-
-                      {/* ETIQUETAS */}
-                      <td className="py-3 px-4">
-                        {itemTags.length > 0 ? (
-                          <div className="flex flex-wrap gap-1">
-                            {itemTags.map((tag) => {
-                              const tagColor = tagColorMap.get(tag.toLowerCase().trim()) || "#3b82f6";
-                              return (
-                                <span
-                                  key={tag}
-                                  style={{
-                                    backgroundColor: `${tagColor}18`,
-                                    borderColor: `${tagColor}40`,
-                                    color: tagColor,
-                                  }}
-                                  className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border"
-                                >
-                                  #{tag}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <span className="text-slate-300 dark:text-slate-600 font-mono">—</span>
-                        )}
-                      </td>
-
-                      {/* CATEGORÍA */}
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 font-medium text-xs">
-                        {p.categoryName || "General"}
-                      </td>
-
-                      {/* PRECIO VENTA */}
-                      <td className="py-3 px-4 text-right font-black text-sm text-emerald-600 dark:text-emerald-400 font-mono">
-                        {formatCents(p.priceCents)}
-                      </td>
-
-                      {/* EXISTENCIA */}
-                      <td className="py-3 px-4 text-right font-mono font-bold text-xs">
-                        {p.isService || !p.controlsStock ? (
-                          <span className="text-slate-400 dark:text-slate-500 font-sans italic text-[11px]">
-                            Servicio
-                          </span>
-                        ) : p.stock <= 0 ? (
-                          <span className="inline-flex items-center gap-1.5 text-[10px] font-sans font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/50 uppercase tracking-wide">
-                            <span>0 {p.unit}</span>
-                            <span className="font-extrabold text-[9px] bg-rose-200 dark:bg-rose-900/90 text-rose-900 dark:text-rose-100 px-1 rounded">
-                              Agotado
-                            </span>
-                          </span>
-                        ) : (
+                        {/* SKU / CÓDIGO */}
+                        <td className="py-3 px-4 font-mono font-bold">
                           <span
                             className={
-                              isLowStock
-                                ? "text-amber-600 dark:text-amber-400 font-black"
-                                : "text-emerald-700 dark:text-emerald-400"
+                              p.isService
+                                ? "text-slate-600 dark:text-slate-400"
+                                : "text-sky-600 dark:text-sky-400"
                             }
                           >
-                            {p.stock} {p.unit}
+                            {p.barcode || p.sku}
                           </span>
-                        )}
+                        </td>
+
+                        {/* DESCRIPCIÓN */}
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-slate-900 dark:text-white text-xs">
+                            {p.name}
+                          </div>
+                          <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+                            {p.unit ? `Unidad: ${p.unit}` : ""} {p.isBundle ? "• Combo" : ""}
+                          </div>
+                        </td>
+
+                        {/* ETIQUETAS */}
+                        <td className="py-3 px-4">
+                          {itemTags.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {itemTags.map((tag) => {
+                                const tagColor = tagColorMap.get(tag.toLowerCase().trim()) || "#3b82f6";
+                                return (
+                                  <span
+                                    key={tag}
+                                    style={{
+                                      backgroundColor: `${tagColor}18`,
+                                      borderColor: `${tagColor}40`,
+                                      color: tagColor,
+                                    }}
+                                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border"
+                                  >
+                                    #{tag}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 dark:text-slate-600 font-mono">—</span>
+                          )}
+                        </td>
+
+                        {/* CATEGORÍA */}
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-400 font-medium text-xs">
+                          {p.categoryName || "General"}
+                        </td>
+
+                        {/* PRECIO VENTA */}
+                        <td className="py-3 px-4 text-right font-black text-sm text-emerald-600 dark:text-emerald-400 font-mono">
+                          {formatCents(p.priceCents)}
+                        </td>
+
+                        {/* EXISTENCIA */}
+                        <td className="py-3 px-4 text-right font-mono font-bold text-xs">
+                          {p.isService || !p.controlsStock ? (
+                            <span className="text-slate-400 dark:text-slate-500 font-sans italic text-[11px]">
+                              Servicio
+                            </span>
+                          ) : p.stock <= 0 ? (
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-sans font-bold text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/50 uppercase tracking-wide">
+                              <span>0 {p.unit}</span>
+                              <span className="font-extrabold text-[9px] bg-rose-200 dark:bg-rose-900/90 text-rose-900 dark:text-rose-100 px-1 rounded">
+                                Agotado
+                              </span>
+                            </span>
+                          ) : (
+                            <span
+                              className={
+                                isLowStock
+                                  ? "text-amber-600 dark:text-amber-400 font-black"
+                                  : "text-emerald-700 dark:text-emerald-400"
+                              }
+                            >
+                              {p.stock} {p.unit}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* Indicador de carga de más productos */}
+                  {loadingMore && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="py-3.5 text-center text-xs text-sky-600 dark:text-sky-400 bg-sky-50/50 dark:bg-sky-950/30 font-semibold"
+                      >
+                        <span className="inline-block animate-spin mr-2">🔄</span>
+                        Cargando más productos...
                       </td>
                     </tr>
-                  );
-                })
+                  )}
+
+                  {/* Mensaje de fin de resultados */}
+                  {!hasMore && products.length >= 50 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="py-2.5 text-center text-[11px] text-slate-400 dark:text-slate-500 bg-slate-50/50 dark:bg-slate-900/40 font-medium"
+                      >
+                        Has llegado al final de los {totalCount} resultados
+                      </td>
+                    </tr>
+                  )}
+                </>
               )}
             </tbody>
           </table>

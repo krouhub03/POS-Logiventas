@@ -144,3 +144,24 @@ pub struct SaveProductComponentItem {
     pub order_index: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductSearchPagedInput {
+    pub query: Option<String>,
+    pub type_filter: Option<String>,
+    pub category: Option<String>,
+    pub tag: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductSearchPagedResult {
+    pub items: Vec<Product>,
+    pub total_count: i64,
+    pub products_count: i64,
+    pub services_count: i64,
+    pub has_more: bool,
+}
+

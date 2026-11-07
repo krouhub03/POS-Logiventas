@@ -20,6 +20,8 @@ import type {
   PairLoginResult,
   PaymentMethod,
   Product,
+  ProductSearchPagedInput,
+  ProductSearchPagedResult,
   ProductComponent,
   ProductTag,
   RecordCustomerPaymentInput,
@@ -88,6 +90,8 @@ export const api = {
 
   products: {
     list: (search?: string) => invoke<Product[]>("list_products", { search }),
+    searchPaged: (input: ProductSearchPagedInput) =>
+      invoke<ProductSearchPagedResult>("search_products_paged", { input }),
     findByBarcode: (barcode: string) =>
       invoke<Product | null>("find_product_by_barcode", { barcode }),
     get: (id: number) => invoke<Product>("get_product", { id }),

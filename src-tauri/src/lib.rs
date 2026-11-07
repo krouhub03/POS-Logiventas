@@ -78,6 +78,7 @@ pub fn run() {
             commands::system::restart_app,
             commands::system::close_app,
             commands::products::list_products,
+            commands::products::search_products_paged,
             commands::products::find_product_by_barcode,
             commands::products::get_product,
             commands::products::create_product,

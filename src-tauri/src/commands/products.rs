@@ -4,8 +4,9 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::product::{
-    InventoryMovementDto, NewProduct, Product, ProductComponentDto, ProductTag, SaveProductComponentItem,
-    StockAdjustmentInput, UpdateProductInput,
+    InventoryMovementDto, NewProduct, Product, ProductComponentDto, ProductSearchPagedInput,
+    ProductSearchPagedResult, ProductTag, SaveProductComponentItem, StockAdjustmentInput,
+    UpdateProductInput,
 };
 
 const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
@@ -163,6 +164,122 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     }
 
     Ok(products)
+}
+
+/// Búsqueda paginada y optimizada de productos y servicios con filtros y conteos dinámicos.
+#[tauri::command]
+pub fn search_products_paged(
+    db: State<'_, Db>,
+    input: ProductSearchPagedInput,
+) -> AppResult<ProductSearchPagedResult> {
+    let conn = db.conn()?;
+
+    let limit = input.limit.unwrap_or(50).clamp(1, 200) as i64;
+    let offset = input.offset.unwrap_or(0) as i64;
+
+    // 1. Construir condiciones WHERE base (sin filtro de tipo para obtener conteos globales)
+    let mut base_conditions = vec!["p.active = 1".to_string()];
+    let mut base_params: Vec<rusqlite::types::Value> = Vec::new();
+
+    // Filtro por texto (query)
+    if let Some(ref q) = input.query {
+        let q_trimmed = q.trim();
+        if !q_trimmed.is_empty() {
+            let pattern = format!("%{}%", q_trimmed);
+            base_conditions.push("(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.tags LIKE ? OR c.name LIKE ?)".to_string());
+            base_params.push(pattern.clone().into());
+            base_params.push(pattern.clone().into());
+            base_params.push(pattern.clone().into());
+            base_params.push(pattern.clone().into());
+            base_params.push(pattern.into());
+        }
+    }
+
+    // Filtro por categoría
+    if let Some(ref cat) = input.category {
+        let cat_trimmed = cat.trim();
+        if !cat_trimmed.is_empty() {
+            base_conditions.push("c.name = ?".to_string());
+            base_params.push(cat_trimmed.to_string().into());
+        }
+    }
+
+    // Filtro por etiqueta
+    if let Some(ref tag) = input.tag {
+        let tag_clean = tag.trim().trim_start_matches('#');
+        if !tag_clean.is_empty() {
+            let tag_pattern = format!("%{}%", tag_clean);
+            base_conditions.push("p.tags LIKE ?".to_string());
+            base_params.push(tag_pattern.into());
+        }
+    }
+
+    let base_where_sql = base_conditions.join(" AND ");
+
+    // 2. Ejecutar conteos en una sola consulta rápida
+    let count_sql = format!(
+        "SELECT \
+            COUNT(*), \
+            COALESCE(SUM(CASE WHEN p.is_service = 0 THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN p.is_service = 1 THEN 1 ELSE 0 END), 0) \
+         FROM {PRODUCT_FROM} \
+         WHERE {base_where_sql}"
+    );
+
+    let mut count_stmt = conn.prepare(&count_sql)?;
+    let (all_count, products_count, services_count): (i64, i64, i64) = count_stmt.query_row(
+        rusqlite::params_from_iter(base_params.iter()),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+
+    // Determinar total_count según el type_filter
+    let type_filter = input.type_filter.as_deref().unwrap_or("all");
+    let total_count = match type_filter {
+        "products" => products_count,
+        "services" => services_count,
+        _ => all_count,
+    };
+
+    // 3. Construir consulta paginada de ítems
+    let mut item_conditions = base_conditions;
+    let mut item_params = base_params;
+
+    if type_filter == "products" {
+        item_conditions.push("p.is_service = 0".to_string());
+    } else if type_filter == "services" {
+        item_conditions.push("p.is_service = 1".to_string());
+    }
+
+    let item_where_sql = item_conditions.join(" AND ");
+    let items_sql = format!(
+        "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
+         WHERE {item_where_sql} \
+         ORDER BY p.name ASC \
+         LIMIT ? OFFSET ?"
+    );
+
+    item_params.push(limit.into());
+    item_params.push(offset.into());
+
+    let mut items_stmt = conn.prepare(&items_sql)?;
+    let mut items = items_stmt
+        .query_map(rusqlite::params_from_iter(item_params.iter()), map_product)?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // 4. Enriquecer combos solo para los ítems devueltos en esta página
+    for p in &mut items {
+        enrich_bundle_product(&conn, p);
+    }
+
+    let has_more = (offset + items.len() as i64) < total_count;
+
+    Ok(ProductSearchPagedResult {
+        items,
+        total_count,
+        products_count,
+        services_count,
+        has_more,
+    })
 }
 
 /// Busca un producto por código de barras o SKU exacto (flujo de escáner o tipeo de código rápido).

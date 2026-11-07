@@ -28,6 +28,25 @@ export interface Product {
   components?: ProductComponent[];
 }
 
+/** Parámetros para la búsqueda paginada y progresiva de productos/servicios (F10). */
+export interface ProductSearchPagedInput {
+  query?: string;
+  typeFilter?: "all" | "products" | "services";
+  category?: string | null;
+  tag?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+/** Resultado de búsqueda paginada optimizada con conteos globales. */
+export interface ProductSearchPagedResult {
+  items: Product[];
+  totalCount: number;
+  productsCount: number;
+  servicesCount: number;
+  hasMore: boolean;
+}
+
 /** Filtro rápido anclado en la barra de búsqueda de productos (F10). */
 export interface PinnedFilter {
   id: string;
