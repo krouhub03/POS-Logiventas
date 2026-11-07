@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.4] - 2026-11-07
+### Agregado
+- Botones de texto Ver y Devolución en Historial de Ventas
+
+### Cambios recientes
+- feat(ui): botones normales con texto 'Ver' y 'Devolución' en Historial de Ventas
+---
 ## [0.2.3] - 2026-11-07
 ### Agregado
 - Interceptor global de lector de codigos y auto-enfoque continuo en inventario y ventas
