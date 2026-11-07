@@ -225,7 +225,7 @@ export function RecentSalesModal({
                   <th className="py-2.5 px-3">Pago</th>
                   <th className="py-2.5 px-3 text-right">Total</th>
                   <th className="py-2.5 px-3 text-center">Estado</th>
-                  <th className="py-2.5 px-3 text-center">Acciones</th>
+                  <th className="py-2.5 px-3 text-center w-52">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono">
@@ -297,24 +297,30 @@ export function RecentSalesModal({
                         )}
                       </td>
                       <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex items-center justify-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => handleOpenReceipt(s.id)}
-                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-300/60 dark:border-slate-700 transition-colors shadow-xs"
                             title="Ver ticket térmico y reimprimir"
                           >
-                            👁️
+                            <span>👁️</span>
+                            <span>Ver</span>
                           </button>
-                          {s.returnStatus !== "full" && (
+                          {s.returnStatus !== "full" ? (
                             <button
                               type="button"
                               onClick={() => handleOpenReturn(s.id)}
-                              className="px-2 py-1 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-200 text-xs font-bold transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900/80 text-amber-900 dark:text-amber-200 text-xs font-bold border border-amber-300 dark:border-amber-700/60 transition-colors shadow-xs"
                               title="Hacer devolución total o parcial de este ticket"
                             >
-                              ↩️
+                              <span>↩️</span>
+                              <span>Devolución</span>
                             </button>
+                          ) : (
+                            <span className="text-[11px] font-medium text-slate-400 italic px-1">
+                              Devuelto
+                            </span>
                           )}
                         </div>
                       </td>
