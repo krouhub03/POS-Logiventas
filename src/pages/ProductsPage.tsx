@@ -32,12 +32,14 @@ import { parseTags } from "../lib/tags";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
 import { ProductImportExportModal } from "../components/products/ProductImportExportModal";
+import { playScanSuccess } from "../lib/sound";
 
 export { toAssetUrl };
 
 export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
+  const inventorySearchInputRef = useRef<HTMLInputElement>(null);
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services" | "bundles">("all");
   const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
   const [isTagFilterOpen, setIsTagFilterOpen] = useState(false);
@@ -223,9 +225,16 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [adjustNotes, setAdjustNotes] = useState("");
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+  const feedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showNotification = (msg: string) => {
+    if (feedbackTimeoutRef.current) {
+      clearTimeout(feedbackTimeoutRef.current);
+    }
     setFeedback(msg);
-    setTimeout(() => setFeedback(null), 3500);
+    feedbackTimeoutRef.current = setTimeout(() => {
+      setFeedback(null);
+      feedbackTimeoutRef.current = null;
+    }, 3800);
   };
 
   // Cargar lista de etiquetas maestras desde SQLite
@@ -356,12 +365,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     setFormTags(next.join(", "));
   };
 
-  // Cargar lista de productos
-  const loadProducts = useCallback(async () => {
+  // Cargar lista de productos (soporta overrideSearch inmediato para evitar desincronización por asincronía de React)
+  const loadProducts = useCallback(async (overrideSearch?: string) => {
     try {
       setLoading(true);
+      const query = typeof overrideSearch === "string" ? overrideSearch : search;
       const [data, cats] = await Promise.all([
-        api.products.list(search),
+        api.products.list(query),
         api.categories.list().catch(() => [] as string[]),
       ]);
       setProducts(data);
@@ -774,7 +784,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       setIsFormOpen(false);
       loadProducts();
       // Subir producto nuevo al ERP y refrescar
-      api.sync.syncCatalog().then(loadProducts).catch(console.warn);
+      api.sync.syncCatalog().then(() => loadProducts()).catch(console.warn);
     } catch (err: unknown) {
       modalAlert({
         title: "Error al Guardar",
@@ -809,6 +819,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     if (!adjustingProduct) return;
 
     let finalStock = adjustingProduct.stock;
+    const addedQty = adjustQuantity;
     if (adjustMode === "add") {
       finalStock = adjustingProduct.stock + adjustQuantity;
     } else if (adjustMode === "set") {
@@ -826,6 +837,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       return;
     }
 
+    const currentAdjusting = adjustingProduct;
+    const mode = adjustMode;
+
     try {
       setAdjustSubmitting(true);
       const fullReason = adjustNotes.trim()
@@ -833,17 +847,46 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         : adjustReason;
 
       const input: StockAdjustmentInput = {
-        productId: adjustingProduct.id,
+        productId: currentAdjusting.id,
         newStock: finalStock,
         reason: fullReason,
       };
       await api.products.adjustStock(input);
-      showNotification(`✓ Stock de "${adjustingProduct.name}" actualizado a ${finalStock} ${adjustingProduct.unit}.`);
+
+      // 1. Limpiar el filtro de búsqueda del escáner y restablecer a la página 1
+      setSearch("");
+      setInventoryPage(1);
+
+      // 2. Cerrar el modal de ajuste de inmediato
       setAdjustingProduct(null);
-      loadProducts();
+
+      // 3. Recargar la lista completa sin filtro
+      await loadProducts("");
       if (activeTab === "kardex") loadMovements();
+
+      // 4. Feedback auditivo POS
+      playScanSuccess();
+
+      // 5. Confirmación rápida e informativa en pantalla (sin ventanas ni botones, ultra ágil)
+      const actionText =
+        mode === "add"
+          ? `+${addedQty} ${currentAdjusting.unit} agregadas`
+          : mode === "set"
+          ? `Stock fijado en ${finalStock} ${currentAdjusting.unit}`
+          : `-${addedQty} ${currentAdjusting.unit} retiradas`;
+
+      showNotification(
+        `✓ ${actionText} a "${currentAdjusting.name}" [${currentAdjusting.barcode || currentAdjusting.sku}] • Existencia actual: ${finalStock} ${currentAdjusting.unit}`
+      );
+
+      // 6. Retorno inmediato del foco al buscador de existencias para el siguiente escaneo
+      setTimeout(() => {
+        inventorySearchInputRef.current?.focus();
+        inventorySearchInputRef.current?.select();
+      }, 50);
+
       // Sincronizar de inmediato con el ERP de forma bidireccional
-      api.sync.syncCatalog().then(loadProducts).catch(console.warn);
+      api.sync.syncCatalog().then(() => loadProducts("")).catch(console.warn);
     } catch (err: unknown) {
       modalAlert({
         title: "Error al Ajustar Stock",
@@ -1011,10 +1054,13 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         </div>
       </header>
 
-      {/* 2. NOTIFICACIÓN TOAST FEEDBACK */}
+      {/* 2. NOTIFICACIÓN TOAST INFORMATIVA RÁPIDA (SIN VENTANA NI BOTONES, ULTRA ÁGIL) */}
       {feedback && (
-        <div className="bg-emerald-600 text-white text-xs font-bold py-2 px-4 shadow-md text-center transition-all animate-in fade-in">
-          {feedback}
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none max-w-2xl px-4">
+          <div className="flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-2xl bg-emerald-600/95 dark:bg-emerald-500/95 text-white font-bold text-xs shadow-2xl border border-emerald-400/50 backdrop-blur-md text-center">
+            <span className="text-sm">⚡</span>
+            <span>{feedback}</span>
+          </div>
         </div>
       )}
 
@@ -1239,11 +1285,32 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 🔍
               </span>
               <input
+                ref={inventorySearchInputRef}
                 type="text"
                 autoFocus
                 placeholder="Buscar existencias por SKU o nombre de producto…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const clean = search.trim().toLowerCase();
+                    if (!clean) return;
+
+                    // Buscar coincidencia exacta por barcode o sku
+                    const exact = physicalProducts.find(
+                      (p) =>
+                        (p.barcode && p.barcode.toLowerCase() === clean) ||
+                        p.sku.toLowerCase() === clean
+                    );
+
+                    if (exact) {
+                      handleOpenAdjustModal(exact, "add");
+                    } else if (inventoryFilteredProducts.length === 1) {
+                      handleOpenAdjustModal(inventoryFilteredProducts[0], "add");
+                    }
+                  }
+                }}
                 className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
               />
               {search && (

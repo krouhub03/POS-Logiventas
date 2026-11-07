@@ -1897,37 +1897,46 @@ export function SalesStationPage({
       <nav className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-2 shadow-xs transition-colors duration-150 overflow-x-auto custom-scrollbar">
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* F1 Ventas (Activo) */}
-          <button className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer">
+          <button className="flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition-all duration-200 cursor-pointer">
             <span className="bg-emerald-900/60 px-1.5 py-0.5 rounded text-[10px] font-mono text-white">F1</span>
             <BagIcon />
-            <span className="hidden sm:inline">Ventas</span>
+            <span className="overflow-hidden whitespace-nowrap text-xs max-w-[110px] opacity-100 font-bold">Ventas</span>
           </button>
 
           {/* F3 Productos */}
           <button
             onClick={onNavigateToProducts}
-            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+            className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-all duration-200 cursor-pointer shadow-2xs"
+            title="Catálogo comercial de productos y servicios (F3)"
           >
-            <span className="text-slate-400 font-mono text-[10px]">F3</span>
+            <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F3</span>
             <PackageIcon />
-            <span className="hidden md:inline">Productos</span>
+            <span className="overflow-hidden whitespace-nowrap transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100 text-xs">
+              Productos
+            </span>
           </button>
 
           {/* F2 Clientes */}
-          <div className="hidden sm:flex items-center rounded-xl overflow-hidden border border-slate-200/60 dark:border-slate-800">
+          <div className="flex items-center rounded-xl overflow-hidden border border-slate-200/60 dark:border-slate-800 shadow-2xs">
             <button
               type="button"
               onClick={() => setIsCustomerModalOpen(true)}
-              className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold transition-colors cursor-pointer ${
+              className={`group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs font-semibold transition-all duration-200 cursor-pointer ${
                 currentTicket?.customer
                   ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200"
                   : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
               }`}
               title="Asignar o cambiar cliente para este ticket (F2)"
             >
-              <span className="text-slate-400 font-mono text-[10px]">F2</span>
+              <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F2</span>
               <UsersIcon />
-              <span className="truncate max-w-[90px] lg:max-w-[120px] hidden md:inline">
+              <span
+                className={`overflow-hidden whitespace-nowrap transition-all duration-200 text-xs ${
+                  currentTicket?.customer
+                    ? "max-w-[120px] opacity-100 font-bold truncate"
+                    : "max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100"
+                }`}
+              >
                 {currentTicket?.customer ? currentTicket.customer.name : "Clientes"}
               </span>
             </button>
@@ -1952,12 +1961,14 @@ export function SalesStationPage({
           {(hasPermission(cashier, "inventario:ajustar") || hasPermission(cashier, "inventario:ver")) && (
             <button
               onClick={onNavigateToInventory || onNavigateToProducts}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors hidden sm:flex cursor-pointer"
+              className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-all duration-200 cursor-pointer shadow-2xs"
               title="Control de existencias y ajustes de inventario (F4)"
             >
-              <span className="text-slate-400 font-mono text-[10px]">F4</span>
+              <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F4</span>
               <StoreIcon />
-              <span className="hidden lg:inline">Inventario</span>
+              <span className="overflow-hidden whitespace-nowrap transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100 text-xs">
+                Inventario
+              </span>
             </button>
           )}
 
@@ -1965,12 +1976,14 @@ export function SalesStationPage({
           <button
             type="button"
             onClick={() => setIsRecentSalesOpen(true)}
-            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+            className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-all duration-200 cursor-pointer shadow-2xs"
             title="Consultar historial de ventas y procesar devoluciones (F5)"
           >
-            <span className="text-slate-400 font-mono text-[10px]">F5</span>
+            <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F5</span>
             <span>🕒</span>
-            <span className="hidden md:inline">Historial</span>
+            <span className="overflow-hidden whitespace-nowrap transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100 text-xs">
+              Historial
+            </span>
           </button>
 
           {/* F8 Inteligencia y Reportes de Ventas */}
@@ -1980,12 +1993,14 @@ export function SalesStationPage({
             <button
               type="button"
               onClick={onNavigateToReports}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+              className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-all duration-200 cursor-pointer shadow-2xs"
               title="Inteligencia y Reportes de Ventas (F8)"
             >
-              <span className="text-slate-400 font-mono text-[10px]">F8</span>
+              <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F8</span>
               <span>📊</span>
-              <span className="hidden md:inline">Reportes</span>
+              <span className="overflow-hidden whitespace-nowrap transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100 text-xs">
+                Reportes
+              </span>
             </button>
           )}
 
@@ -1993,12 +2008,14 @@ export function SalesStationPage({
           {hasPermission(cashier, "pos:configuracion") && (
             <button
               onClick={onNavigateToSettings}
-              className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-colors cursor-pointer"
+              className="group flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-xs border border-slate-200/60 dark:border-transparent transition-all duration-200 cursor-pointer shadow-2xs"
               title="Configuración de periféricos y hardware (F7)"
             >
-              <span className="text-slate-400 font-mono text-[10px]">F7</span>
+              <span className="text-slate-400 font-mono text-[10px] group-hover:text-slate-600 dark:group-hover:text-slate-200">F7</span>
               <SettingsIcon />
-              <span className="hidden lg:inline">Configuración</span>
+              <span className="overflow-hidden whitespace-nowrap transition-all duration-200 max-w-0 opacity-0 group-hover:max-w-[110px] group-hover:opacity-100 text-xs">
+                Configuración
+              </span>
             </button>
           )}
         </div>
