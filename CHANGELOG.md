@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.8] - 2026-11-09
+### Agregado
+- Sincronizacion bidireccional automatica de clientes y cupos de credito con el ERP
+
+### Cambios recientes
+- feat(customers): sincronizacion bidireccional automatica de clientes y cupos de credito con el ERP
+---
 ## [0.2.7] - 2026-11-09
 ### Agregado
 - Kardex multi-bodega automatico y sincronizacion multi-caja en tiempo real
