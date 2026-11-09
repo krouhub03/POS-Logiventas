@@ -566,9 +566,17 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                 )
                 .unwrap_or((0, 0.0, 0));
 
+            let default_wh: String = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| "bod-default".to_string());
+
             if is_bundle == 1 {
                 let mut comp_stmt = tx.prepare(
-                    "SELECT pc.child_product_id, pc.quantity, p.name, p.is_service, p.stock \
+                    "SELECT pc.child_product_id, pc.quantity, p.name, p.is_service, p.stock, p.cost_cents \
                      FROM product_components pc \
                      JOIN products p ON p.id = pc.child_product_id \
                      WHERE pc.parent_product_id = ?1",
@@ -580,11 +588,12 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                         r.get::<_, String>(2)?,
                         r.get::<_, i64>(3)?,
                         r.get::<_, f64>(4)?,
+                        r.get::<_, i64>(5)?,
                     ))
                 })?.collect::<Result<Vec<_>, _>>()?;
                 drop(comp_stmt);
 
-                for (child_id, comp_qty, child_name, child_is_service, child_stock) in components {
+                for (child_id, comp_qty, child_name, child_is_service, child_stock, child_cost) in components {
                     let total_child_qty = it.quantity * comp_qty;
                     if child_is_service == 0 {
                         if child_stock <= 0.0 || child_stock + 1e-9 < total_child_qty {
@@ -597,10 +606,12 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                             "UPDATE products SET stock = stock - ?1, updated_at = datetime('now') WHERE id = ?2",
                             params![total_child_qty, child_id],
                         )?;
+                        let child_balance_before = child_stock;
+                        let child_balance_after = child_stock - total_child_qty;
                         tx.execute(
-                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id) \
-                             VALUES (?1, 'sale', ?2, ?3, ?4)",
-                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id],
+                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
+                             VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id, default_wh, child_balance_before, child_balance_after, child_cost],
                         )?;
                     }
                 }
@@ -617,10 +628,12 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                     params![it.quantity, pid],
                 )?;
 
+                let balance_before = current_stock;
+                let balance_after = current_stock - it.quantity;
                 tx.execute(
-                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id) \
-                     VALUES (?1, 'sale', ?2, ?3, ?4)",
-                    params![pid, -it.quantity, folio, input.user_id],
+                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
+                     VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![pid, -it.quantity, folio, input.user_id, default_wh, balance_before, balance_after, unit_cost_cents],
                 )?;
             }
         }
@@ -1156,21 +1169,29 @@ pub fn create_sale_return_in_conn(
         )?;
 
         if let Some(pid) = line.product_id {
-            let (is_service, controls_stock, is_bundle): (i64, i64, i64) = tx
+            let (is_service, controls_stock, is_bundle, prod_stock, prod_cost): (i64, i64, i64, f64, i64) = tx
                 .query_row(
-                    "SELECT COALESCE(is_service, 0), COALESCE(controls_stock, 1), COALESCE(is_bundle, 0)
+                    "SELECT COALESCE(is_service, 0), COALESCE(controls_stock, 1), COALESCE(is_bundle, 0), COALESCE(stock, 0.0), COALESCE(cost_cents, 0)
                      FROM products WHERE id = ?1",
                     params![pid],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )
-                .unwrap_or((0, 1, 0));
+                .unwrap_or((0, 1, 0, 0.0, 0));
+
+            let default_wh: String = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| "bod-default".to_string());
 
             if is_service == 0 {
                 if line.disposition == "restock" {
                     if is_bundle == 1 {
                         // Reintegrar proporcionalmente cada componente físico del combo
                         let mut comp_stmt = tx.prepare(
-                            "SELECT pc.child_product_id, pc.quantity, p.is_service, p.controls_stock
+                            "SELECT pc.child_product_id, pc.quantity, p.is_service, p.controls_stock, p.stock, p.cost_cents
                              FROM product_components pc
                              JOIN products p ON p.id = pc.child_product_id
                              WHERE pc.parent_product_id = ?1",
@@ -1182,12 +1203,14 @@ pub fn create_sale_return_in_conn(
                                     r.get::<_, f64>(1)?,
                                     r.get::<_, i64>(2)?,
                                     r.get::<_, i64>(3)?,
+                                    r.get::<_, f64>(4)?,
+                                    r.get::<_, i64>(5)?,
                                 ))
                             })?
                             .collect::<Result<Vec<_>, _>>()?;
                         drop(comp_stmt);
 
-                        for (child_id, comp_qty, child_service, child_controls) in comps {
+                        for (child_id, comp_qty, child_service, child_controls, child_stock, child_cost) in comps {
                             if child_service == 0 && child_controls == 1 {
                                 let restore_qty = line.req_qty * comp_qty;
                                 tx.execute(
@@ -1195,13 +1218,17 @@ pub fn create_sale_return_in_conn(
                                     params![restore_qty, child_id],
                                 )?;
                                 tx.execute(
-                                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
-                                     VALUES (?1, 'return', ?2, ?3, ?4)",
+                                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
+                                     VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                                     params![
                                         child_id,
                                         restore_qty,
                                         format!("{} (Devolución Combo {})", return_folio, sale_folio),
-                                        input.user_id
+                                        input.user_id,
+                                        default_wh,
+                                        child_stock,
+                                        child_stock + restore_qty,
+                                        child_cost
                                     ],
                                 )?;
                             }
@@ -1212,25 +1239,33 @@ pub fn create_sale_return_in_conn(
                             params![line.req_qty, pid],
                         )?;
                         tx.execute(
-                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
-                             VALUES (?1, 'return', ?2, ?3, ?4)",
+                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
+                             VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                             params![
                                 pid,
                                 line.req_qty,
                                 format!("{} (Devolución {})", return_folio, sale_folio),
-                                input.user_id
+                                input.user_id,
+                                default_wh,
+                                prod_stock,
+                                prod_stock + line.req_qty,
+                                prod_cost
                             ],
                         )?;
                     }
                 } else if line.disposition == "merma" {
                     // Registrar trazabilidad en movimientos sin contaminar el stock vendible
                     tx.execute(
-                        "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id)
-                         VALUES (?1, 'return', 0, ?2, ?3)",
+                        "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
+                         VALUES (?1, 'return', 0, ?2, ?3, ?4, ?5, ?6, ?7)",
                         params![
                             pid,
                             format!("{} [MERMA/AVERÍA x{}] ({})", return_folio, line.req_qty, sale_folio),
-                            input.user_id
+                            input.user_id,
+                            default_wh,
+                            prod_stock,
+                            prod_stock,
+                            prod_cost
                         ],
                     )?;
                 }

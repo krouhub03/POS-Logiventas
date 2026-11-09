@@ -40,6 +40,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0033_permissive_offline_stock_policy.sql"),
     include_str!("../../migrations/0034_sales_analytics_indexes.sql"),
     include_str!("../../migrations/0035_customer_sales_indexes.sql"),
+    include_str!("../../migrations/0036_warehouses_and_kardex_enhancement.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
@@ -150,6 +151,40 @@ fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('offline_stock_policy', 'permissive')",
         [],
     );
+
+    // Asegurar tabla warehouses y columnas de kardex enriquecidas
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS warehouses (
+            id          TEXT PRIMARY KEY,
+            code        TEXT NOT NULL UNIQUE,
+            name        TEXT NOT NULL,
+            is_default  INTEGER NOT NULL DEFAULT 0,
+            active      INTEGER NOT NULL DEFAULT 1,
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    );
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO warehouses (id, code, name, is_default, active)
+         VALUES ('bod-default', 'BOD-01', 'Bodega Principal', 1, 1)",
+        [],
+    );
+    if !column_exists(conn, "inventory_movements", "warehouse_id") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN warehouse_id TEXT REFERENCES warehouses(id)", []);
+        let _ = conn.execute("UPDATE inventory_movements SET warehouse_id = 'bod-default' WHERE warehouse_id IS NULL", []);
+    }
+    if !column_exists(conn, "inventory_movements", "balance_before") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN balance_before REAL DEFAULT 0", []);
+    }
+    if !column_exists(conn, "inventory_movements", "balance_after") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN balance_after REAL DEFAULT 0", []);
+    }
+    if !column_exists(conn, "inventory_movements", "unit_cost_cents") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN unit_cost_cents INTEGER DEFAULT 0", []);
+    }
+    if !column_exists(conn, "inventory_movements", "erp_movement_id") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN erp_movement_id TEXT", []);
+    }
 
     Ok(())
 }

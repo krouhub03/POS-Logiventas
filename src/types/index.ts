@@ -123,17 +123,49 @@ export interface StockAdjustmentInput {
   newStock: number;
   reason: string;
   userId?: number;
+  warehouseId?: string;
+}
+
+/** Espejo de `models::product::WarehouseDto` (Rust). */
+export interface Warehouse {
+  id: string;
+  code: string;
+  name: string;
+  isDefault: boolean;
+  active: boolean;
+  updatedAt?: string | null;
+}
+
+/** Parámetros de filtrado para consulta de Kardex. */
+export interface KardexFilter {
+  productId?: number;
+  warehouseId?: string;
+  timePreset?: "today" | "week" | "month" | "custom";
+  fromDate?: string;
+  toDate?: string;
+  limit?: number;
+  offset?: number;
 }
 
 /** Espejo de `models::product::InventoryMovementDto` (Rust). */
 export interface InventoryMovement {
-  id: number;
-  productId: number;
+  id: number | string;
+  productId: number | string;
   productName?: string | null;
-  kind: "sale" | "purchase" | "adjustment" | "return";
+  productSku?: string | null;
+  productUnit?: string | null;
+  warehouseId?: string | null;
+  warehouseCode?: string | null;
+  warehouseName?: string | null;
+  kind: "sale" | "purchase" | "adjustment" | "return" | string;
+  tipoMovimiento?: string | null;
   quantity: number;
+  balanceBefore?: number | null;
+  balanceAfter?: number | null;
+  unitCostCents?: number | null;
+  costoTotalCents?: number | null;
   reference?: string | null;
-  userId?: number | null;
+  userId?: number | string | null;
   createdAt: string;
 }
 

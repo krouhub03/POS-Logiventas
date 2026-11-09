@@ -33,6 +33,8 @@ import type {
   SaveProductComponentItem,
   ShiftSummary,
   StockAdjustmentInput,
+  Warehouse,
+  KardexFilter,
   SyncStatus,
   SystemPrinter,
   TerminalStatus,
@@ -101,11 +103,18 @@ export const api = {
     delete: (id: number) => invoke<void>("delete_product", { id }),
     adjustStock: (input: StockAdjustmentInput) =>
       invoke<Product>("adjust_stock", { input }),
-    listMovements: (productId?: number, limit?: number) =>
-      invoke<InventoryMovement[]>("list_inventory_movements", {
-        productId,
+    listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
+    listMovements: (filterOrProductId?: KardexFilter | number, limit?: number) => {
+      if (typeof filterOrProductId === "object" && filterOrProductId !== null) {
+        return invoke<InventoryMovement[]>("list_inventory_movements", {
+          filter: filterOrProductId,
+        });
+      }
+      return invoke<InventoryMovement[]>("list_inventory_movements", {
+        productId: filterOrProductId,
         limit,
-      }),
+      });
+    },
     getComponents: (parentId: number) =>
       invoke<ProductComponent[]>("get_product_components", { parentId }),
     saveComponents: (
@@ -204,6 +213,12 @@ export const api = {
     getPaymentMethods: () => invoke<PaymentMethod[]>("get_payment_methods"),
     togglePaymentMethodTerminalStatus: (id: string, enabled: boolean) =>
       invoke<void>("toggle_payment_method_terminal_status", { id, enabled }),
+    syncWarehouses: () => invoke<number>("sync_warehouses"),
+    queryRemoteKardex: (filter: KardexFilter) =>
+      invoke<{ total: number; limit: number; offset: number; movements: InventoryMovement[] }>(
+        "query_remote_kardex",
+        { filter }
+      ),
     onStatusChange: (callback: (status: SyncStatus) => void): Promise<UnlistenFn> =>
       listen<SyncStatus>("sync-status-changed", (event) => callback(event.payload)),
   },

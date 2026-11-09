@@ -95,16 +95,47 @@ pub struct StockAdjustmentInput {
     pub new_stock: f64,
     pub reason: String,
     pub user_id: Option<i64>,
+    pub warehouse_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WarehouseDto {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub is_default: bool,
+    pub active: bool,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct KardexFilterInput {
+    pub product_id: Option<i64>,
+    pub warehouse_id: Option<String>,
+    pub time_preset: Option<String>, // "today" | "week" | "month" | "custom"
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct InventoryMovementDto {
     pub id: i64,
     pub product_id: i64,
     pub product_name: Option<String>,
+    pub product_sku: Option<String>,
+    pub warehouse_id: Option<String>,
+    pub warehouse_code: Option<String>,
+    pub warehouse_name: Option<String>,
     pub kind: String,
     pub quantity: f64,
+    pub balance_before: Option<f64>,
+    pub balance_after: Option<f64>,
+    pub unit_cost_cents: Option<i64>,
     pub reference: Option<String>,
     pub user_id: Option<i64>,
     pub created_at: String,

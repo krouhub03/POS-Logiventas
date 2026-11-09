@@ -580,11 +580,11 @@ pub fn adjust_stock_in_conn(
     let tx = conn.transaction()?;
 
     // Verificar si existe y si es servicio o combo
-    let (current_stock, is_service_int, is_bundle_int): (f64, i64, i64) = tx
+    let (current_stock, is_service_int, is_bundle_int, cost_cents): (f64, i64, i64, i64) = tx
         .query_row(
-            "SELECT stock, is_service, is_bundle FROM products WHERE id = ?1 AND active = 1",
+            "SELECT stock, is_service, is_bundle, cost_cents FROM products WHERE id = ?1 AND active = 1",
             params![input.product_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .map_err(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => {
@@ -613,7 +613,17 @@ pub fn adjust_stock_in_conn(
             params![input.new_stock, input.product_id],
         )?;
 
-        // Registrar en historial de movimientos
+        // Determinar bodega del ajuste
+        let default_wh: String = tx
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "bod-default".to_string());
+        let wh_id = input.warehouse_id.as_deref().unwrap_or(&default_wh);
+
+        // Registrar en historial de movimientos con trazabilidad de saldos
         let reason = if input.reason.trim().is_empty() {
             "Ajuste manual de inventario".to_string()
         } else {
@@ -621,9 +631,9 @@ pub fn adjust_stock_in_conn(
         };
 
         tx.execute(
-            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id) \
-             VALUES (?1, 'adjustment', ?2, ?3, ?4)",
-            params![input.product_id, diff, reason, input.user_id],
+            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
+             VALUES (?1, 'adjustment', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![input.product_id, diff, reason, input.user_id, wh_id, current_stock, input.new_stock, cost_cents],
         )?;
     }
 
@@ -634,34 +644,123 @@ pub fn adjust_stock_in_conn(
     Ok(product)
 }
 
-/// Lista el historial de movimientos de inventario (Kardex).
+/// Lista las bodegas activas sincronizadas del ERP o registradas localmente.
+#[tauri::command]
+pub fn list_warehouses(db: State<'_, Db>) -> AppResult<Vec<crate::models::product::WarehouseDto>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, code, name, is_default, active, updated_at \
+         FROM warehouses \
+         WHERE active = 1 \
+         ORDER BY is_default DESC, code ASC",
+    )?;
+
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::models::product::WarehouseDto {
+            id: r.get(0)?,
+            code: r.get(1)?,
+            name: r.get(2)?,
+            is_default: r.get::<_, i64>(3)? != 0,
+            active: r.get::<_, i64>(4)? != 0,
+            updated_at: r.get(5)?,
+        })
+    })?;
+
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Lista el historial de movimientos de inventario (Kardex) con soporte multi-bodega y temporalidad.
 #[tauri::command]
 pub fn list_inventory_movements(
     db: State<'_, Db>,
+    filter: Option<crate::models::product::KardexFilterInput>,
     product_id: Option<i64>,
     limit: Option<i64>,
 ) -> AppResult<Vec<InventoryMovementDto>> {
     let conn = db.conn()?;
-    let max_rows = limit.unwrap_or(100).clamp(1, 500);
+    let f = filter.unwrap_or_default();
 
-    let (sql, params_vec): (String, Vec<rusqlite::types::Value>) = if let Some(pid) = product_id {
-        (
-            "SELECT m.id, m.product_id, p.name, m.kind, m.quantity, m.reference, m.user_id, m.created_at \
-             FROM inventory_movements m \
-             LEFT JOIN products p ON p.id = m.product_id \
-             WHERE m.product_id = ?1 \
-             ORDER BY m.id DESC LIMIT ?2".to_string(),
-            vec![pid.into(), max_rows.into()],
-        )
+    let target_product_id = f.product_id.or(product_id);
+    let target_warehouse_id = f.warehouse_id;
+    let target_preset = f.time_preset;
+    let target_from_date = f.from_date;
+    let target_to_date = f.to_date;
+    let max_rows = f.limit.or(limit).unwrap_or(100).clamp(1, 500);
+    let offset = f.offset.unwrap_or(0).max(0);
+
+    let mut conditions = Vec::new();
+    let mut params_vec: Vec<rusqlite::types::Value> = Vec::new();
+
+    if let Some(pid) = target_product_id {
+        conditions.push("m.product_id = ?");
+        params_vec.push(pid.into());
+    }
+
+    if let Some(ref wh) = target_warehouse_id {
+        if wh != "all" && !wh.trim().is_empty() {
+            conditions.push("m.warehouse_id = ?");
+            params_vec.push(wh.clone().into());
+        }
+    }
+
+    // Filtros temporales
+    match target_preset.as_deref() {
+        Some("today") => {
+            conditions.push("date(m.created_at, 'localtime') = date('now', 'localtime')");
+        }
+        Some("week") => {
+            conditions.push("date(m.created_at, 'localtime') >= date('now', 'localtime', 'weekday 0', '-6 days')");
+        }
+        Some("month") => {
+            conditions.push("date(m.created_at, 'localtime') >= date('now', 'localtime', 'start of month')");
+        }
+        Some("custom") | None => {
+            if let Some(ref from) = target_from_date {
+                if !from.trim().is_empty() {
+                    let from_val = if from.len() == 10 {
+                        format!("{} 00:00:00", from)
+                    } else {
+                        from.clone()
+                    };
+                    conditions.push("m.created_at >= ?");
+                    params_vec.push(from_val.into());
+                }
+            }
+            if let Some(ref to) = target_to_date {
+                if !to.trim().is_empty() {
+                    let to_val = if to.len() == 10 {
+                        format!("{} 23:59:59", to)
+                    } else {
+                        to.clone()
+                    };
+                    conditions.push("m.created_at <= ?");
+                    params_vec.push(to_val.into());
+                }
+            }
+        }
+        _ => {}
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
     } else {
-        (
-            "SELECT m.id, m.product_id, p.name, m.kind, m.quantity, m.reference, m.user_id, m.created_at \
-             FROM inventory_movements m \
-             LEFT JOIN products p ON p.id = m.product_id \
-             ORDER BY m.id DESC LIMIT ?1".to_string(),
-            vec![max_rows.into()],
-        )
+        format!("WHERE {}", conditions.join(" AND "))
     };
+
+    let sql = format!(
+        "SELECT m.id, m.product_id, p.name, p.sku, m.kind, m.quantity, \
+                m.reference, m.user_id, m.created_at, \
+                m.warehouse_id, w.code, w.name, \
+                COALESCE(m.balance_before, 0.0), COALESCE(m.balance_after, 0.0), COALESCE(m.unit_cost_cents, 0) \
+         FROM inventory_movements m \
+         LEFT JOIN products p ON p.id = m.product_id \
+         LEFT JOIN warehouses w ON w.id = m.warehouse_id \
+         {where_clause} \
+         ORDER BY m.id DESC LIMIT ? OFFSET ?"
+    );
+
+    params_vec.push(max_rows.into());
+    params_vec.push(offset.into());
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |r| {
@@ -669,11 +768,18 @@ pub fn list_inventory_movements(
             id: r.get(0)?,
             product_id: r.get(1)?,
             product_name: r.get(2)?,
-            kind: r.get(3)?,
-            quantity: r.get(4)?,
-            reference: r.get(5)?,
-            user_id: r.get(6)?,
-            created_at: r.get(7)?,
+            product_sku: r.get(3)?,
+            kind: r.get(4)?,
+            quantity: r.get(5)?,
+            reference: r.get(6)?,
+            user_id: r.get(7)?,
+            created_at: r.get(8)?,
+            warehouse_id: r.get(9)?,
+            warehouse_code: r.get(10)?,
+            warehouse_name: r.get(11)?,
+            balance_before: r.get(12)?,
+            balance_after: r.get(13)?,
+            unit_cost_cents: r.get(14)?,
         })
     })?;
 
@@ -905,21 +1011,24 @@ mod tests {
                 new_stock: 25.0,
                 reason: "Conteo físico inicial".into(),
                 user_id: Some(1),
+                warehouse_id: None,
             },
         )
         .unwrap();
         assert!((updated.stock - 25.0).abs() < 1e-6);
 
         // Verificar movimiento en inventory_movements (+15.0) y flag needs_erp_upload = 1
-        let (mov_qty, mov_ref): (f64, String) = conn
+        let (mov_qty, mov_ref, bal_before, bal_after): (f64, String, f64, f64) = conn
             .query_row(
-                "SELECT quantity, reference FROM inventory_movements WHERE product_id = 100 ORDER BY id DESC LIMIT 1",
+                "SELECT quantity, reference, balance_before, balance_after FROM inventory_movements WHERE product_id = 100 ORDER BY id DESC LIMIT 1",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .unwrap();
         assert!((mov_qty - 15.0).abs() < 1e-6);
         assert_eq!(mov_ref, "Conteo físico inicial");
+        assert!((bal_before - 10.0).abs() < 1e-6);
+        assert!((bal_after - 25.0).abs() < 1e-6);
 
         let needs_upload: i64 = conn
             .query_row("SELECT needs_erp_upload FROM products WHERE id = 100", [], |r| r.get(0))
@@ -934,6 +1043,7 @@ mod tests {
                 new_stock: -5.0,
                 reason: "Error digitación".into(),
                 user_id: Some(1),
+                warehouse_id: None,
             },
         );
         assert!(neg_err.is_err(), "No debe permitir existencia negativa");

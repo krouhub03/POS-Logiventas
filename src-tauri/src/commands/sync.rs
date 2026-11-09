@@ -354,6 +354,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     // 0. Despachar Outbox primero para que el ERP consolide ventas antes de retornarnos el stock
     let _ = dispatch_outbox_internal(db).await;
 
+    // Sincronizar catálogo de bodegas
+    let _ = sync_warehouses_internal(db).await;
+
     // 1. Extraer productos creados o modificados localmente en el POS para subir al ERP
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
@@ -1041,6 +1044,159 @@ pub async fn toggle_payment_method_terminal_status(
         params![val, id],
     )?;
     Ok(())
+}
+
+/// 🏢 Sincroniza las bodegas activas de la empresa desde el ERP.
+pub async fn sync_warehouses_internal(db: &Db) -> AppResult<usize> {
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if token.is_empty() {
+        return Ok(0);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/sync/bodegas", erp_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await;
+
+    let res = match resp {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(0),
+    };
+
+    let json: Value = res.json().await.unwrap_or_default();
+    let warehouses = match json["data"]["warehouses"].as_array() {
+        Some(arr) => arr,
+        None => return Ok(0),
+    };
+
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let mut count = 0;
+    for w in warehouses {
+        let id = w["id"].as_str().unwrap_or_default();
+        let code = w["code"].as_str().unwrap_or_default();
+        let name = w["name"].as_str().unwrap_or_default();
+        let is_default = if w["isDefault"].as_bool().unwrap_or(false) { 1 } else { 0 };
+        let active = if w["active"].as_bool().unwrap_or(true) { 1 } else { 0 };
+
+        if !id.is_empty() && !code.is_empty() {
+            tx.execute(
+                "INSERT INTO warehouses (id, code, name, is_default, active, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                    code = excluded.code,
+                    name = excluded.name,
+                    is_default = excluded.is_default,
+                    active = excluded.active,
+                    updated_at = datetime('now')",
+                params![id, code, name, is_default, active],
+            )?;
+            count += 1;
+        }
+    }
+
+    if let Some(default_wh) = json["data"]["defaultWarehouseId"].as_str() {
+        if !default_wh.is_empty() {
+            let _ = tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('default_warehouse_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1",
+                params![default_wh],
+            );
+        }
+    }
+
+    tx.commit()?;
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn sync_warehouses(db: State<'_, Db>) -> AppResult<usize> {
+    sync_warehouses_internal(&db).await
+}
+
+#[tauri::command]
+pub async fn query_remote_kardex(
+    db: State<'_, Db>,
+    filter: crate::models::product::KardexFilterInput,
+) -> AppResult<serde_json::Value> {
+    let (erp_url, token, erp_product_id, sku) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_else(|| "http://localhost:3000".into());
+        let token = get_setting(&conn, "terminal_token").ok_or_else(|| {
+            AppError::Auth("Terminal no vinculada con el ERP".into())
+        })?;
+
+        let mut erp_prod_id = None;
+        let mut prod_sku = None;
+
+        if let Some(pid) = filter.product_id {
+            if let Ok(row) = conn.query_row(
+                "SELECT erp_id, sku FROM products WHERE id = ?1",
+                rusqlite::params![pid],
+                |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            ) {
+                erp_prod_id = row.0;
+                prod_sku = row.1;
+            }
+        }
+
+        (erp_url, token, erp_prod_id, prod_sku)
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/sync/kardex", erp_url.trim_end_matches('/'));
+
+    let payload = serde_json::json!({
+        "warehouseId": filter.warehouse_id,
+        "productId": filter.product_id,
+        "erpProductId": erp_product_id,
+        "sku": sku,
+        "timePreset": filter.time_preset,
+        "fromDate": filter.from_date,
+        "toDate": filter.to_date,
+        "limit": filter.limit.unwrap_or(200),
+        "offset": filter.offset.unwrap_or(0),
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| AppError::Validation(format!("Error de red al consultar Kardex remoto: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Validation(format!(
+            "Servidor respondió con código de error {}",
+            resp.status()
+        )));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Validation(format!("Respuesta inválida del servidor: {e}")))?;
+
+    Ok(json["data"].clone())
 }
 
 /// 📤 Despacha las ventas pendientes en la cola outbox (sync_queue) hacia el ERP.

@@ -10,6 +10,8 @@ import type {
   UpdateProductInput,
   InventoryMovement,
   StockAdjustmentInput,
+  Warehouse,
+  KardexFilter,
 } from "../types";
 
 interface ProductsPageProps {
@@ -46,6 +48,14 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const tagFilterRef = useRef<HTMLDivElement>(null);
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState<"all" | "optimal" | "low" | "out">("all");
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<{ id: number; name: string } | null>(null);
+
+  // Estados de Filtros Multi-Bodega y Temporalidad de Kardex
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("all");
+  const [kardexTimePreset, setKardexTimePreset] = useState<"today" | "week" | "month" | "custom">("month");
+  const [kardexFromDate, setKardexFromDate] = useState<string>("");
+  const [kardexToDate, setKardexToDate] = useState<string>("");
+  const [kardexLoading, setKardexLoading] = useState<boolean>(false);
 
   // Estado de Etiquetas Maestras (Tags con Nombre y Color)
   const [dbTags, setDbTags] = useState<ProductTag[]>([]);
@@ -384,15 +394,55 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   }, [search]);
 
-  // Cargar historial de movimientos (Kardex)
-  const loadMovements = useCallback(async (productId?: number) => {
+  // Cargar catálogo de bodegas
+  const loadWarehouses = useCallback(async () => {
     try {
-      const data = await api.products.listMovements(productId, 100);
-      setMovements(data);
+      const list = await api.products.listWarehouses();
+      setWarehouses(list);
     } catch (e: unknown) {
-      console.error("Error al cargar movimientos:", e);
+      console.warn("Error al cargar bodegas:", e);
     }
   }, []);
+
+  // Cargar historial de movimientos (Kardex) con estrategia híbrida Online (ERP) + Offline (SQLite)
+  const loadMovements = useCallback(async (productId?: number) => {
+    try {
+      setKardexLoading(true);
+      const targetProdId = productId !== undefined ? productId : (selectedKardexProduct ? selectedKardexProduct.id : undefined);
+      const filter: KardexFilter = {
+        productId: targetProdId,
+        warehouseId: selectedWarehouseId !== "all" ? selectedWarehouseId : undefined,
+        timePreset: kardexTimePreset,
+        fromDate: kardexTimePreset === "custom" && kardexFromDate ? kardexFromDate : undefined,
+        toDate: kardexTimePreset === "custom" && kardexToDate ? kardexToDate : undefined,
+        limit: 200,
+        offset: 0,
+      };
+
+      // 1. Intentar consulta centralizada en tiempo real al ERP
+      try {
+        const remoteData = await api.sync.queryRemoteKardex(filter);
+        if (remoteData && Array.isArray(remoteData.movements)) {
+          setMovements(remoteData.movements);
+          return;
+        }
+      } catch {
+        // Red no disponible o endpoint falló -> Fallback transparente a SQLite
+      }
+
+      // 2. Fallback a base de datos SQLite local (Offline-First)
+      const localData = await api.products.listMovements(filter);
+      setMovements(localData);
+    } catch (e: unknown) {
+      console.error("Error al cargar movimientos:", e);
+    } finally {
+      setKardexLoading(false);
+    }
+  }, [selectedKardexProduct, selectedWarehouseId, kardexTimePreset, kardexFromDate, kardexToDate]);
+
+  useEffect(() => {
+    loadWarehouses();
+  }, [loadWarehouses]);
 
   const [syncingCatalog, setSyncingCatalog] = useState(false);
 
@@ -419,9 +469,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   useEffect(() => {
     if (activeTab === "kardex") {
+      // Sincronizar bodegas en segundo plano de forma silenciosa y automática
+      api.sync.syncWarehouses().then(() => loadWarehouses()).catch(() => {});
       loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined);
     }
-  }, [activeTab, selectedKardexProduct, loadMovements]);
+  }, [activeTab, selectedKardexProduct, selectedWarehouseId, kardexTimePreset, kardexFromDate, kardexToDate, loadMovements, loadWarehouses]);
 
   // ==============================================================
   // PAGINACIÓN DE ALTO RENDIMIENTO (VIRTUALIZACIÓN LIGERA)
@@ -850,6 +902,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         productId: currentAdjusting.id,
         newStock: finalStock,
         reason: fullReason,
+        warehouseId: selectedWarehouseId !== "all" ? selectedWarehouseId : undefined,
       };
       await api.products.adjustStock(input);
 
@@ -2025,172 +2078,272 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
         {/* TAB 3: HISTORIAL DE MOVIMIENTOS (KARDEX) */}
         {activeTab === "kardex" && (
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Historial de Movimientos de Inventario (Kardex)
-                </h2>
-                <div className="text-[11px] text-slate-400">
-                  {selectedKardexProduct ? (
-                    <span className="flex items-center gap-2 mt-0.5">
-                      <span>
-                        Movimientos filtrados de:{" "}
-                        <strong className="text-indigo-600 dark:text-indigo-400">
-                          {selectedKardexProduct.name}
-                        </strong>
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col">
+            {/* CABECERA Y FILTROS DEL KARDEX */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 space-y-3 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Historial de Movimientos de Inventario (Kardex)
+                    </h2>
+                    {kardexLoading && (
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                        <span className="w-3.5 h-3.5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                        <span>Actualizando...</span>
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedKardexProduct(null);
-                          loadMovements();
-                        }}
-                        className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md"
-                      >
-                        ✕ Ver todos los movimientos
-                      </button>
-                    </span>
-                  ) : (
-                    "Auditoría completa de salidas por venta, ajustes manuales, entradas y mermas."
-                  )}
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {selectedKardexProduct ? (
+                      <span className="flex items-center gap-2">
+                        <span>
+                          Filtrado por producto:{" "}
+                          <strong className="text-indigo-600 dark:text-indigo-400">
+                            {selectedKardexProduct.name}
+                          </strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedKardexProduct(null);
+                          }}
+                          className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer bg-slate-200/80 dark:bg-slate-800 px-2 py-0.5 rounded-md"
+                        >
+                          ✕ Quitar filtro de producto
+                        </button>
+                      </span>
+                    ) : (
+                      "Auditoría transaccional de ventas, compras, traslados y ajustes por bodega."
+                    )}
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined)}
-                className="px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs font-bold"
-              >
-                🔄 Actualizar
-              </button>
-            </div>
 
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
-                  <th className="py-3 px-4 w-40">Fecha / Hora</th>
-                  <th className="py-3 px-4">Producto</th>
-                  <th className="py-3 px-4 w-32">Tipo</th>
-                  <th className="py-3 px-4 text-right w-28">Cantidad</th>
-                  <th className="py-3 px-4">Referencia / Motivo</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {movements.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center text-slate-400">
-                      No hay movimientos de inventario registrados.
-                    </td>
-                  </tr>
-                ) : (
-                  movements.map((m) => (
-                    <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50">
-                      <td className="py-3 px-4 font-mono text-slate-500 dark:text-slate-400">
-                        {m.createdAt}
-                      </td>
-                      <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
-                        {m.productName || `Producto #${m.productId}`}
-                      </td>
-                      <td className="py-3 px-4">
-                        {m.kind === "sale" && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
-                            Salida (Venta)
-                          </span>
-                        )}
-                        {m.kind === "adjustment" && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                            Ajuste
-                          </span>
-                        )}
-                        {m.kind === "purchase" && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                            Entrada
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        className={`py-3 px-4 text-right font-mono font-bold ${
-                          m.quantity < 0
-                            ? "text-rose-600 dark:text-rose-400"
-                            : "text-emerald-600 dark:text-emerald-400"
-                        }`}
-                      >
-                        {m.quantity > 0 ? `+${m.quantity}` : m.quantity}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
-                        {m.reference || "Sin referencia"}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-
-            {/* BARRA DE PAGINACIÓN DE ALTO RENDIMIENTO */}
-            {catalogProducts.length > 0 && (
-              <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
+              {/* FILTROS MULTI-BODEGA Y TEMPORALIDAD */}
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+                {/* 1. Selector de Bodega */}
                 <div className="flex items-center gap-2">
-                  <span>
-                    Mostrando <strong className="text-slate-800 dark:text-slate-200">{(catalogPage - 1) * itemsPerPage + 1}</strong> a{" "}
-                    <strong className="text-slate-800 dark:text-slate-200">{Math.min(catalogPage * itemsPerPage, catalogProducts.length)}</strong> de{" "}
-                    <strong className="text-slate-800 dark:text-slate-200">{catalogProducts.length}</strong> ítems
-                  </span>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center gap-1">
+                    <span>🏬 Bodega:</span>
+                  </label>
                   <select
-                    value={itemsPerPage}
-                    onChange={(e) => {
-                      setItemsPerPage(Number(e.target.value));
-                      setCatalogPage(1);
-                    }}
-                    className="ml-2 px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    value={selectedWarehouseId}
+                    onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
                   >
-                    <option value={25}>25 por página</option>
-                    <option value={50}>50 por página</option>
-                    <option value={100}>100 por página</option>
-                    <option value={200}>200 por página</option>
+                    <option value="all">Todas las Bodegas</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        [{w.code}] {w.name} {w.isDefault ? "★ Principal" : ""}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    disabled={catalogPage === 1}
-                    onClick={() => setCatalogPage(1)}
-                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
-                    title="Primera página"
-                  >
-                    ««
-                  </button>
-                  <button
-                    type="button"
-                    disabled={catalogPage === 1}
-                    onClick={() => setCatalogPage((p) => Math.max(1, p - 1))}
-                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
-                  >
-                    ‹ Anterior
-                  </button>
-                  <span className="px-3 py-1 font-bold text-slate-800 dark:text-slate-200">
-                    Página {catalogPage} de {totalCatalogPages}
+                {/* 2. Selector de Período Temporal */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                    <span>📅 Período:</span>
                   </span>
-                  <button
-                    type="button"
-                    disabled={catalogPage >= totalCatalogPages}
-                    onClick={() => setCatalogPage((p) => Math.min(totalCatalogPages, p + 1))}
-                    className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
-                  >
-                    Siguiente ›
-                  </button>
-                  <button
-                    type="button"
-                    disabled={catalogPage >= totalCatalogPages}
-                    onClick={() => setCatalogPage(totalCatalogPages)}
-                    className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-40 font-bold transition-colors"
-                    title="Última página"
-                  >
-                    »»
-                  </button>
+                  <div className="inline-flex rounded-xl bg-slate-200/70 dark:bg-slate-800 p-0.5 border border-slate-300 dark:border-slate-700 font-semibold text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setKardexTimePreset("today")}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        kardexTimePreset === "today"
+                          ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 font-bold shadow-2xs"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      Hoy (Día)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKardexTimePreset("week")}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        kardexTimePreset === "week"
+                          ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 font-bold shadow-2xs"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      Esta Semana
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKardexTimePreset("month")}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        kardexTimePreset === "month"
+                          ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 font-bold shadow-2xs"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      Este Mes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKardexTimePreset("custom")}
+                      className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                        kardexTimePreset === "custom"
+                          ? "bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 font-bold shadow-2xs"
+                          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                      }`}
+                    >
+                      Personalizado
+                    </button>
+                  </div>
+
+                  {/* Campos de Rango de Fecha Personalizado */}
+                  {kardexTimePreset === "custom" && (
+                    <div className="flex items-center gap-1.5 animate-fadeIn">
+                      <span className="text-[11px] text-slate-500 font-medium">Desde:</span>
+                      <input
+                        type="date"
+                        value={kardexFromDate}
+                        onChange={(e) => setKardexFromDate(e.target.value)}
+                        className="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-mono font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                      <span className="text-[11px] text-slate-500 font-medium">Hasta:</span>
+                      <input
+                        type="date"
+                        value={kardexToDate}
+                        onChange={(e) => setKardexToDate(e.target.value)}
+                        className="px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-mono font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
+
+            {/* TABLA DE AUDITORÍA KARDEX */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100/70 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
+                    <th className="py-3 px-3.5 w-36">Fecha / Hora</th>
+                    <th className="py-3 px-3 w-32">Bodega</th>
+                    <th className="py-3 px-3.5">Producto</th>
+                    <th className="py-3 px-3 w-28">Operación</th>
+                    <th className="py-3 px-3 text-right w-24">Cantidad</th>
+                    <th className="py-3 px-3 text-center w-36">Saldo (Antes → Después)</th>
+                    <th className="py-3 px-3.5">Referencia / Motivo</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-sans">
+                  {movements.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-14 text-center text-slate-400">
+                        {kardexLoading ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <span className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                            <span>Cargando movimientos de inventario...</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="text-2xl">📦</span>
+                            <span className="font-semibold text-slate-600 dark:text-slate-400">
+                              No hay movimientos de inventario en el período o bodega seleccionada.
+                            </span>
+                            <span className="text-[11px] text-slate-400">
+                              Prueba cambiando el filtro de bodega o el rango de fechas.
+                            </span>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : (
+                    movements.map((m) => {
+                      const isPositive = m.quantity > 0;
+                      return (
+                        <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                          <td className="py-3 px-3.5 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                            {m.createdAt.replace("T", " ").substring(0, 19)}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
+                              {m.warehouseCode || m.warehouseName || "BOD-01"}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3.5">
+                            <div className="font-bold text-slate-900 dark:text-white">
+                              {m.productName || `Producto #${m.productId}`}
+                            </div>
+                            {m.productSku && (
+                              <div className="text-[10px] font-mono text-slate-400">
+                                SKU: {m.productSku}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            {m.kind === "sale" && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
+                                Salida (Venta)
+                              </span>
+                            )}
+                            {m.kind === "adjustment" && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                Ajuste
+                              </span>
+                            )}
+                            {m.kind === "purchase" && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                                Entrada (Compra)
+                              </span>
+                            )}
+                            {m.kind === "return" && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
+                                Devolución
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className={`py-3 px-3 text-right font-mono font-bold whitespace-nowrap ${
+                              isPositive
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-rose-600 dark:text-rose-400"
+                            }`}
+                          >
+                            {isPositive ? `+${m.quantity}` : m.quantity}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono whitespace-nowrap text-slate-600 dark:text-slate-300">
+                            {m.balanceBefore !== undefined && m.balanceBefore !== null && m.balanceAfter !== undefined && m.balanceAfter !== null ? (
+                              <span className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-md text-[11px]">
+                                <span className="text-slate-400">{m.balanceBefore}</span>
+                                <span className="text-slate-400">→</span>
+                                <strong className="text-slate-900 dark:text-white font-bold">{m.balanceAfter}</strong>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-[10px]">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3.5 text-slate-600 dark:text-slate-300 text-xs">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                              {m.reference || "Sin referencia"}
+                            </span>
+                            {m.unitCostCents !== undefined && m.unitCostCents !== null && m.unitCostCents > 0 && (
+                              <span className="block text-[10px] text-slate-400 font-mono">
+                                Costo Unit: {formatCents(m.unitCostCents)}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* BARRA DE RESUMEN DE KARDEX */}
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
+              <div>
+                Total movimientos auditados: <strong className="text-slate-800 dark:text-slate-200">{movements.length}</strong>
+              </div>
+              <div className="text-[11px] text-slate-400">
+                ✓ Sincronizado en tiempo real con todas las cajas y bodegas.
+              </div>
+            </div>
           </div>
         )}
       </div>
