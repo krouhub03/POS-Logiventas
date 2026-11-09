@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.7] - 2026-11-09
+### Agregado
+- Kardex multi-bodega automatico y sincronizacion multi-caja en tiempo real
+
+### Cambios recientes
+- feat(kardex): auditoria multi-bodega con filtro temporal y sincronizacion automatica multi-caja
+---
 ## [0.2.6] - 2026-11-07
 ### Agregado
 - Optimización de búsqueda de productos F10 con scroll infinito y carga progresiva
