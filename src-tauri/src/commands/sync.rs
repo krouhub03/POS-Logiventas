@@ -874,8 +874,10 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         Ok::<usize, AppError>(total_synced)
     }?;
 
-    // Sincronizar también los medios de pago vinculados con sus cuentas PUC
+    // Sincronizar también los medios de pago, bodegas y clientes vinculados
     let _ = sync_payment_methods_internal(db).await;
+    let _ = sync_warehouses_internal(db).await;
+    let _ = sync_customers_internal(db).await;
 
     Ok(total_synced)
 }
@@ -1125,6 +1127,181 @@ pub async fn sync_warehouses_internal(db: &Db) -> AppResult<usize> {
 #[tauri::command]
 pub async fn sync_warehouses(db: State<'_, Db>) -> AppResult<usize> {
     sync_warehouses_internal(&db).await
+}
+
+/// 👥 Sincroniza bidireccionalmente los clientes de la empresa (primero sube pendientes locales y luego descarga del ERP).
+pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
+    // 1. Empujar primero cualquier cliente nuevo o modificado en esta caja
+    let _ = dispatch_outbox_internal(db).await;
+
+    let (erp_url, token) = {
+        let conn = db.conn()?;
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_else(|| "http://localhost:3000".into());
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if token.is_empty() {
+        return Ok(0);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()?;
+
+    let url = format!("{}/api/pos/v1/sync/clientes", erp_url.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Validation(format!(
+            "Error HTTP al sincronizar clientes: {}",
+            resp.status()
+        )));
+    }
+
+    let json: serde_json::Value = resp.json().await?;
+    let customers = json["data"]["customers"]
+        .as_array()
+        .or_else(|| json["customers"].as_array());
+
+    let mut count = 0;
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    // Identificar clientes que aún tengan cambios pendientes de subir para no sobreescribirlos
+    let pending_customer_ids: std::collections::HashSet<i64> = {
+        let mut stmt = tx.prepare(
+            "SELECT entity_id FROM sync_queue WHERE entity_type = 'customer' AND status = 'pending' AND entity_id IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    if let Some(list) = customers {
+        for c in list {
+            let erp_id = c["erpId"]
+                .as_str()
+                .or_else(|| c["id"].as_str())
+                .unwrap_or_default()
+                .trim();
+            let name = c["name"].as_str().unwrap_or_default().trim();
+
+            if erp_id.is_empty() || name.is_empty() {
+                continue;
+            }
+
+            let tax_id = c["taxId"]
+                .as_str()
+                .or_else(|| c["tax_id"].as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !s.starts_with("POS-SIN-DOC-"));
+            let email = c["email"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            let phone = c["phone"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            let address = c["address"].as_str().map(str::trim).filter(|s| !s.is_empty());
+            let credit_limit_cents = c["creditLimitCents"]
+                .as_i64()
+                .or_else(|| c["credit_limit_cents"].as_i64())
+                .unwrap_or(0);
+            let credit_days = c["creditDays"]
+                .as_i64()
+                .or_else(|| c["credit_days"].as_i64())
+                .unwrap_or(30) as i32;
+            let active = c["active"].as_i64().unwrap_or(1) as i32;
+
+            // Buscar coincidencia local por erp_id o por tax_id
+            let mut local_id_opt: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM customers WHERE erp_id = ?1 LIMIT 1",
+                    params![erp_id],
+                    |r| r.get(0),
+                )
+                .ok();
+
+            if local_id_opt.is_none() {
+                if let Some(tid) = tax_id {
+                    local_id_opt = tx
+                        .query_row(
+                            "SELECT id FROM customers WHERE tax_id = ?1 LIMIT 1",
+                            params![tid],
+                            |r| r.get(0),
+                        )
+                        .ok();
+                }
+            }
+
+            if local_id_opt.is_none() && tax_id.is_none() {
+                local_id_opt = tx
+                    .query_row(
+                        "SELECT id FROM customers WHERE erp_id IS NULL AND LOWER(name) = LOWER(?1) LIMIT 1",
+                        params![name],
+                        |r| r.get(0),
+                    )
+                    .ok();
+            }
+
+            if let Some(local_id) = local_id_opt {
+                if pending_customer_ids.contains(&local_id) {
+                    let _ = tx.execute(
+                        "UPDATE customers SET erp_id = COALESCE(erp_id, ?1) WHERE id = ?2",
+                        params![erp_id, local_id],
+                    );
+                } else {
+                    tx.execute(
+                        "UPDATE customers \
+                         SET erp_id = ?1, name = ?2, tax_id = COALESCE(?3, tax_id), \
+                             email = COALESCE(?4, email), phone = COALESCE(?5, phone), \
+                             address = COALESCE(?6, address), credit_limit_cents = ?7, \
+                             credit_days = ?8, active = ?9 \
+                         WHERE id = ?10",
+                        params![
+                            erp_id,
+                            name,
+                            tax_id,
+                            email,
+                            phone,
+                            address,
+                            credit_limit_cents,
+                            credit_days,
+                            active,
+                            local_id,
+                        ],
+                    )?;
+                }
+            } else {
+                tx.execute(
+                    "INSERT INTO customers (erp_id, name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, active) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?9)",
+                    params![
+                        erp_id,
+                        name,
+                        tax_id,
+                        email,
+                        phone,
+                        address,
+                        credit_limit_cents,
+                        credit_days,
+                        active,
+                    ],
+                )?;
+            }
+
+            count += 1;
+        }
+    }
+
+    tx.commit()?;
+    Ok(count)
+}
+
+#[tauri::command]
+pub async fn sync_customers(db: State<'_, Db>) -> AppResult<usize> {
+    sync_customers_internal(&db).await
 }
 
 #[tauri::command]
@@ -1750,7 +1927,143 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         }
     }
 
-    // ── 6. Saneamiento Dead-Letter para registros estancados (>= 10 intentos) ──
+    // ── 6. Despacho de Clientes ('customer') ───────────────────────────────
+    let (pending_customers, clientes_json) = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, COALESCE(entity_id, 0), payload FROM sync_queue WHERE entity_type = 'customer' AND status = 'pending' ORDER BY id ASC LIMIT 30",
+        )?;
+
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+
+        let mut pending = Vec::new();
+        let mut json_list = Vec::new();
+
+        for r in rows {
+            let (queue_id, entity_id, payload_str) = r?;
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
+                let local_id = parsed["localId"]
+                    .as_i64()
+                    .filter(|&id| id > 0)
+                    .unwrap_or(entity_id);
+                parsed["localId"] = serde_json::json!(local_id);
+
+                // Si el cliente ya obtuvo erp_id en una sincronización previa, inyectarlo
+                if parsed["erpId"].is_null() && local_id > 0 {
+                    if let Ok(Some(existing_erp_id)) = conn.query_row(
+                        "SELECT erp_id FROM customers WHERE id = ?1",
+                        params![local_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    ) {
+                        parsed["erpId"] = serde_json::json!(existing_erp_id);
+                    }
+                }
+
+                pending.push((queue_id, local_id));
+                json_list.push(parsed);
+            }
+        }
+
+        (pending, json_list)
+    };
+
+    if !pending_customers.is_empty() {
+        total_dispatched += pending_customers.len();
+        let url = format!("{}/api/pos/v1/sync/clientes", erp_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "clientes": clientes_json }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<i64, (String, Option<String>, Option<String>)> =
+                        json["data"]["resultados"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|item| {
+                                        let local_id = item["localId"].as_i64()?;
+                                        let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                        let erp_id = item["erpId"].as_str().map(|s| s.to_string());
+                                        let err = item["error"].as_str().map(|s| s.to_string());
+                                        Some((local_id, (status, erp_id, err)))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                    for (queue_id, local_id) in &pending_customers {
+                        if let Some((status, erp_id_opt, err_opt)) = resultados_map.get(local_id) {
+                            if status == "synced" {
+                                if let Some(erp_id) = erp_id_opt {
+                                    let _ = conn.execute(
+                                        "UPDATE customers SET erp_id = ?1 WHERE id = ?2",
+                                        params![erp_id, local_id],
+                                    );
+                                }
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                    params![queue_id],
+                                );
+                                total_synced += 1;
+                            } else {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                                    params![
+                                        err_opt.clone().unwrap_or_else(|| "Error al sincronizar cliente".into()),
+                                        queue_id
+                                    ],
+                                );
+                                total_failed += 1;
+                            }
+                        } else {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                params![queue_id],
+                            );
+                            total_synced += 1;
+                        }
+                    }
+                } else {
+                    for (queue_id, _) in &pending_customers {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            params![res_text, queue_id],
+                        );
+                    }
+                    total_failed += pending_customers.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (queue_id, _) in &pending_customers {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![err_str, queue_id],
+                    );
+                }
+                total_failed += pending_customers.len();
+            }
+        }
+    }
+
+    // ── 7. Saneamiento Dead-Letter para registros estancados (>= 10 intentos) ──
     if let Ok(conn) = db.conn() {
         let _ = conn.execute(
             "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 10",
@@ -1991,8 +2304,9 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 let _ = pull_inventory_deltas_internal(&db).await;
             }
 
-            // 4. Sincronización asíncrona de imágenes (baja prioridad, cada 30 segundos)
-            if loop_count % 3 == 0 {
+            // 4. Sincronización asíncrona de clientes e imágenes (cada 30 segundos y en el primer ciclo)
+            if loop_count == 1 || loop_count % 3 == 0 {
+                let _ = sync_customers_internal(&db).await;
                 let _ = crate::commands::images::upload_pending_images_internal(&app, &db).await;
                 let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
             }

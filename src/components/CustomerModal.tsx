@@ -192,6 +192,14 @@ export function CustomerModal({
         })
         .finally(() => setLoading(false));
 
+      // Sincronizar clientes en segundo plano desde el ERP (y subir locales pendientes)
+      api.sync
+        .syncCustomers()
+        .then(() => {
+          reloadCustomers();
+        })
+        .catch(() => {});
+
       // Sincronizar medios de pago dinámicos desde la BD / ERP
       refreshPaymentMethods();
     }
@@ -327,6 +335,8 @@ export function CustomerModal({
       };
 
       const created = await api.customers.create(input);
+      // Empujar inmediatamente a la nube sin bloquear la caja
+      api.sync.dispatchOutbox().catch(() => {});
       onSelect(created);
       onClose();
     } catch (err: unknown) {

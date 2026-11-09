@@ -193,55 +193,94 @@ pub async fn create_customer(
     let conn = db.conn().map_err(|e| e.to_string())?;
     let credit_limit = input.credit_limit_cents.unwrap_or(0);
     let credit_days = input.credit_days.unwrap_or(30);
+    let clean_tax_id = input.tax_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
 
-    conn.execute(
-        "INSERT INTO customers (name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, notes, active) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7, ?8, 1)",
-        params![
-            name,
-            input.tax_id.as_deref().map(|s| s.trim()),
-            input.email.as_deref().map(|s| s.trim()),
-            input.phone.as_deref().map(|s| s.trim()),
-            input.address.as_deref().map(|s| s.trim()),
-            credit_limit,
-            credit_days,
-            input.notes.as_deref().map(|s| s.trim()),
-        ],
-    )
-    .map_err(|e| format!("Error guardando cliente: {}", e))?;
+    // Si ya existe localmente un cliente con el mismo documento, actualizarlo en lugar de duplicar
+    let existing_by_tax: Option<(i64, Option<String>, i64, bool)> = if let Some(tid) = clean_tax_id {
+        conn.query_row(
+            "SELECT id, erp_id, current_balance_cents, is_credit_blocked FROM customers WHERE tax_id = ?1 LIMIT 1",
+            params![tid],
+            |r| {
+                let blocked_int: i32 = r.get(3).unwrap_or(0);
+                Ok((r.get(0)?, r.get(1)?, r.get(2).unwrap_or(0), blocked_int == 1))
+            },
+        )
+        .ok()
+    } else {
+        None
+    };
 
-    let new_id = conn.last_insert_rowid();
+    let (customer_id, erp_id, current_balance_cents, is_credit_blocked) = if let Some((existing_id, existing_erp_id, bal, blocked)) = existing_by_tax {
+        conn.execute(
+            "UPDATE customers \
+             SET name = ?1, email = COALESCE(?2, email), phone = COALESCE(?3, phone), \
+                 address = COALESCE(?4, address), credit_limit_cents = ?5, credit_days = ?6, \
+                 notes = COALESCE(?7, notes), active = 1 \
+             WHERE id = ?8",
+            params![
+                name,
+                input.email.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                input.phone.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                input.address.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                credit_limit,
+                credit_days,
+                input.notes.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                existing_id,
+            ],
+        )
+        .map_err(|e| format!("Error actualizando cliente existente: {}", e))?;
+        (existing_id, existing_erp_id, bal, blocked)
+    } else {
+        conn.execute(
+            "INSERT INTO customers (name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, notes, active) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, ?7, ?8, 1)",
+            params![
+                name,
+                clean_tax_id,
+                input.email.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                input.phone.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                input.address.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                credit_limit,
+                credit_days,
+                input.notes.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            ],
+        )
+        .map_err(|e| format!("Error guardando cliente: {}", e))?;
+        (conn.last_insert_rowid(), None, 0, false)
+    };
 
     // Encolar en sync_queue para sincronización con el ERP Megalider
     let payload = serde_json::json!({
-        "localId": new_id,
+        "localId": customer_id,
+        "erpId": erp_id,
         "name": name,
-        "taxId": input.tax_id,
+        "taxId": clean_tax_id,
         "email": input.email,
         "phone": input.phone,
         "address": input.address,
         "creditLimitCents": credit_limit,
         "creditDays": credit_days,
-        "notes": input.notes
+        "notes": input.notes,
+        "active": true
     });
 
     let _ = conn.execute(
         "INSERT INTO sync_queue (entity_type, entity_id, payload, status) \
          VALUES ('customer', ?1, ?2, 'pending')",
-        params![new_id, payload.to_string()],
+        params![customer_id, payload.to_string()],
     );
 
     Ok(CustomerDto {
-        id: new_id,
-        erp_id: None,
+        id: customer_id,
+        erp_id,
         name,
-        tax_id: input.tax_id,
+        tax_id: clean_tax_id.map(str::to_string),
         email: input.email,
         phone: input.phone,
         address: input.address,
         credit_limit_cents: credit_limit,
-        current_balance_cents: 0,
-        is_credit_blocked: false,
+        current_balance_cents,
+        is_credit_blocked,
         credit_days,
         notes: input.notes,
         active: true,
@@ -270,8 +309,33 @@ pub async fn update_customer_credit(
     .map_err(|e| format!("Error actualizando crédito del cliente: {}", e))?;
 
     let sql = format!("SELECT {CUSTOMER_COLUMNS} FROM customers WHERE id = ?1");
-    conn.query_row(&sql, params![input.id], map_customer)
-        .map_err(|e| format!("Error consultando cliente actualizado: {}", e))
+    let updated = conn
+        .query_row(&sql, params![input.id], map_customer)
+        .map_err(|e| format!("Error consultando cliente actualizado: {}", e))?;
+
+    // Encolar actualización de cupo/plazo en sync_queue hacia el ERP
+    let payload = serde_json::json!({
+        "localId": updated.id,
+        "erpId": updated.erp_id,
+        "name": updated.name,
+        "taxId": updated.tax_id,
+        "email": updated.email,
+        "phone": updated.phone,
+        "address": updated.address,
+        "creditLimitCents": updated.credit_limit_cents,
+        "creditDays": updated.credit_days,
+        "isCreditBlocked": updated.is_credit_blocked,
+        "notes": updated.notes,
+        "active": updated.active
+    });
+
+    let _ = conn.execute(
+        "INSERT INTO sync_queue (entity_type, entity_id, payload, status) \
+         VALUES ('customer', ?1, ?2, 'pending')",
+        params![updated.id, payload.to_string()],
+    );
+
+    Ok(updated)
 }
 
 #[tauri::command]

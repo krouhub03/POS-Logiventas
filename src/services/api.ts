@@ -214,6 +214,7 @@ export const api = {
     togglePaymentMethodTerminalStatus: (id: string, enabled: boolean) =>
       invoke<void>("toggle_payment_method_terminal_status", { id, enabled }),
     syncWarehouses: () => invoke<number>("sync_warehouses"),
+    syncCustomers: () => invoke<number>("sync_customers"),
     queryRemoteKardex: (filter: KardexFilter) =>
       invoke<{ total: number; limit: number; offset: number; movements: InventoryMovement[] }>(
         "query_remote_kardex",

@@ -136,6 +136,7 @@ pub fn run() {
             commands::sync::get_payment_methods,
             commands::sync::toggle_payment_method_terminal_status,
             commands::sync::sync_warehouses,
+            commands::sync::sync_customers,
             commands::sync::query_remote_kardex,
             commands::shifts::get_active_shift,
             commands::shifts::open_shift,
