@@ -34,6 +34,8 @@ import type {
   ShiftSummary,
   StockAdjustmentInput,
   Warehouse,
+  PosTerminalOption,
+  CategoryDetailed,
   KardexFilter,
   SyncStatus,
   SystemPrinter,
@@ -104,6 +106,7 @@ export const api = {
     adjustStock: (input: StockAdjustmentInput) =>
       invoke<Product>("adjust_stock", { input }),
     listWarehouses: () => invoke<Warehouse[]>("list_warehouses"),
+    listPosTerminals: () => invoke<PosTerminalOption[]>("list_pos_terminals"),
     listMovements: (filterOrProductId?: KardexFilter | number, limit?: number) => {
       if (typeof filterOrProductId === "object" && filterOrProductId !== null) {
         return invoke<InventoryMovement[]>("list_inventory_movements", {
@@ -144,6 +147,12 @@ export const api = {
 
   categories: {
     list: () => invoke<string[]>("list_categories"),
+    listDetailed: () => invoke<CategoryDetailed[]>("list_categories_detailed"),
+    create: (name: string) => invoke<CategoryDetailed>("create_category", { name }),
+    update: (id: number, name: string, active: boolean) =>
+      invoke<CategoryDetailed>("update_category", { id, name, active }),
+    delete: (id: number, reassignToId?: number | null) =>
+      invoke<void>("delete_category", { id, reassignToId }),
   },
 
   tags: {
@@ -216,7 +225,13 @@ export const api = {
     syncWarehouses: () => invoke<number>("sync_warehouses"),
     syncCustomers: () => invoke<number>("sync_customers"),
     queryRemoteKardex: (filter: KardexFilter) =>
-      invoke<{ total: number; limit: number; offset: number; movements: InventoryMovement[] }>(
+      invoke<{
+        total: number;
+        limit: number;
+        offset: number;
+        cajas?: PosTerminalOption[];
+        movements: InventoryMovement[];
+      }>(
         "query_remote_kardex",
         { filter }
       ),

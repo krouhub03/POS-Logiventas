@@ -11,10 +11,13 @@ import type {
   InventoryMovement,
   StockAdjustmentInput,
   Warehouse,
+  PosTerminalOption,
   KardexFilter,
+  CashierUser,
 } from "../types";
 
 interface ProductsPageProps {
+  cashier?: CashierUser | null;
   initialTab?: "catalog" | "inventory" | "kardex";
   onBackToSales?: () => void;
 }
@@ -34,11 +37,12 @@ import { parseTags } from "../lib/tags";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 import { ImageLightboxModal } from "../components/ImageLightboxModal";
 import { ProductImportExportModal } from "../components/products/ProductImportExportModal";
+import { TaxonomyManagementModal } from "../components/products/TaxonomyManagementModal";
 import { playScanSuccess } from "../lib/sound";
 
 export { toAssetUrl };
 
-export function ProductsPage({ initialTab = "catalog", onBackToSales }: ProductsPageProps) {
+export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }: ProductsPageProps) {
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
   const inventorySearchInputRef = useRef<HTMLInputElement>(null);
@@ -49,13 +53,76 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState<"all" | "optimal" | "low" | "out">("all");
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<{ id: number; name: string } | null>(null);
 
-  // Estados de Filtros Multi-Bodega y Temporalidad de Kardex
+  // Estados de Filtros Multi-Bodega, Multi-Caja y Temporalidad de Kardex
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("all");
+  const [posTerminals, setPosTerminals] = useState<PosTerminalOption[]>([]);
+  const [selectedCajaId, setSelectedCajaId] = useState<string>("all");
   const [kardexTimePreset, setKardexTimePreset] = useState<"today" | "week" | "month" | "custom">("month");
   const [kardexFromDate, setKardexFromDate] = useState<string>("");
   const [kardexToDate, setKardexToDate] = useState<string>("");
   const [kardexLoading, setKardexLoading] = useState<boolean>(false);
+
+  // Ordenamiento interactivo de columnas en Kardex
+  type KardexSortField =
+    | "date"
+    | "time"
+    | "warehouse"
+    | "caja"
+    | "product"
+    | "kind"
+    | "quantity"
+    | "balance"
+    | "reference";
+  type SortOrder = "asc" | "desc";
+
+  const [kardexSortField, setKardexSortField] = useState<KardexSortField>("date");
+  const [kardexSortOrder, setKardexSortOrder] = useState<SortOrder>("desc");
+
+  const handleKardexSort = (field: KardexSortField) => {
+    if (kardexSortField === field) {
+      setKardexSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setKardexSortField(field);
+      setKardexSortOrder(
+        field === "date" || field === "time" || field === "quantity" || field === "balance"
+          ? "desc"
+          : "asc"
+      );
+    }
+  };
+
+  // Ordenamiento interactivo de columnas en Catálogo
+  type CatalogSortField = "type" | "sku" | "name" | "tags" | "cost" | "price" | "margin";
+  const [catalogSortField, setCatalogSortField] = useState<CatalogSortField | null>(null);
+  const [catalogSortOrder, setCatalogSortOrder] = useState<SortOrder>("asc");
+
+  const handleCatalogSort = (field: CatalogSortField) => {
+    if (catalogSortField === field) {
+      setCatalogSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setCatalogSortField(field);
+      setCatalogSortOrder(
+        field === "cost" || field === "price" || field === "margin" ? "desc" : "asc"
+      );
+    }
+  };
+
+  // Ordenamiento interactivo de columnas en Existencias
+  type InventorySortField = "status" | "sku" | "name" | "stock" | "minStock" | "cost" | "valuation";
+  const [inventorySortField, setInventorySortField] = useState<InventorySortField | null>(null);
+  const [inventorySortOrder, setInventorySortOrder] = useState<SortOrder>("asc");
+
+  const handleInventorySort = (field: InventorySortField) => {
+    if (inventorySortField === field) {
+      setInventorySortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setInventorySortField(field);
+      setInventorySortOrder(
+        field === "stock" || field === "cost" || field === "valuation" ? "desc" : "asc"
+      );
+    }
+  };
 
   // Estado de Etiquetas Maestras (Tags con Nombre y Color)
   const [dbTags, setDbTags] = useState<ProductTag[]>([]);
@@ -75,7 +142,10 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   // Modales
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isTaxonomyModalOpen, setIsTaxonomyModalOpen] = useState(false);
   const [isExcelModalOpen, setIsExcelModalOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [excelModalTab, setExcelModalTab] = useState<"import" | "export">("import");
   const [categoriesList, setCategoriesList] = useState<string[]>([]);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -347,20 +417,23 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   };
 
-  // Cerrar menú desplegable de filtros de etiquetas al hacer clic fuera
+  // Cerrar menú desplegable de filtros y menú más al hacer clic fuera
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (tagFilterRef.current && !tagFilterRef.current.contains(event.target as Node)) {
         setIsTagFilterOpen(false);
       }
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
     }
-    if (isTagFilterOpen) {
+    if (isTagFilterOpen || isMoreMenuOpen) {
       document.addEventListener("mousedown", handleClickOutside);
     }
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [isTagFilterOpen]);
+  }, [isTagFilterOpen, isMoreMenuOpen]);
 
   // Alternar tag activo en el formulario de producto
   const toggleFormTag = (tagName: string) => {
@@ -394,13 +467,19 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     }
   }, [search]);
 
-  // Cargar catálogo de bodegas
+  // Cargar catálogo de bodegas y terminales POS (Cajas)
   const loadWarehouses = useCallback(async () => {
     try {
-      const list = await api.products.listWarehouses();
+      // Sincronizar catálogo de bodegas desde el ERP para reflejar nombres y asignaciones actualizadas
+      await api.sync.syncWarehouses().catch(() => 0);
+      const [list, terminals] = await Promise.all([
+        api.products.listWarehouses(),
+        api.products.listPosTerminals().catch(() => [] as PosTerminalOption[]),
+      ]);
       setWarehouses(list);
+      setPosTerminals(terminals);
     } catch (e: unknown) {
-      console.warn("Error al cargar bodegas:", e);
+      console.warn("Error al cargar bodegas/cajas:", e);
     }
   }, []);
 
@@ -412,6 +491,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       const filter: KardexFilter = {
         productId: targetProdId,
         warehouseId: selectedWarehouseId !== "all" ? selectedWarehouseId : undefined,
+        cajaId: selectedCajaId !== "all" ? selectedCajaId : undefined,
         timePreset: kardexTimePreset,
         fromDate: kardexTimePreset === "custom" && kardexFromDate ? kardexFromDate : undefined,
         toDate: kardexTimePreset === "custom" && kardexToDate ? kardexToDate : undefined,
@@ -422,6 +502,9 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
       // 1. Intentar consulta centralizada en tiempo real al ERP
       try {
         const remoteData = await api.sync.queryRemoteKardex(filter);
+        if (remoteData && Array.isArray(remoteData.cajas) && remoteData.cajas.length > 0) {
+          setPosTerminals(remoteData.cajas as PosTerminalOption[]);
+        }
         if (remoteData && Array.isArray(remoteData.movements)) {
           setMovements(remoteData.movements);
           return;
@@ -438,7 +521,72 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     } finally {
       setKardexLoading(false);
     }
-  }, [selectedKardexProduct, selectedWarehouseId, kardexTimePreset, kardexFromDate, kardexToDate]);
+  }, [selectedKardexProduct, selectedWarehouseId, selectedCajaId, kardexTimePreset, kardexFromDate, kardexToDate]);
+
+  // Lista ordenada en memoria según la columna y dirección seleccionada
+  const sortedMovements = useMemo(() => {
+    const list = [...movements];
+    list.sort((a, b) => {
+      let valA: string | number = "";
+      let valB: string | number = "";
+
+      const dtA = a.createdAt ? a.createdAt.replace("T", " ") : "";
+      const dtB = b.createdAt ? b.createdAt.replace("T", " ") : "";
+      const partsA = dtA.split(" ");
+      const partsB = dtB.split(" ");
+      const dateA = partsA[0] || "";
+      const dateB = partsB[0] || "";
+      const timeA = partsA[1] || "";
+      const timeB = partsB[1] || "";
+
+      switch (kardexSortField) {
+        case "date":
+          valA = dateA;
+          valB = dateB;
+          break;
+        case "time":
+          valA = timeA;
+          valB = timeB;
+          break;
+        case "warehouse":
+          valA = (a.warehouseCode || a.warehouseName || "BOD-01").toLowerCase();
+          valB = (b.warehouseCode || b.warehouseName || "BOD-01").toLowerCase();
+          break;
+        case "caja":
+          valA = (a.cajaCode || a.cajaName || "").toLowerCase();
+          valB = (b.cajaCode || b.cajaName || "").toLowerCase();
+          break;
+        case "product":
+          valA = (a.productName || "").toLowerCase();
+          valB = (b.productName || "").toLowerCase();
+          break;
+        case "kind":
+          valA = (a.kind || "").toLowerCase();
+          valB = (b.kind || "").toLowerCase();
+          break;
+        case "quantity":
+          valA = a.quantity || 0;
+          valB = b.quantity || 0;
+          break;
+        case "balance":
+          valA = a.balanceAfter ?? 0;
+          valB = b.balanceAfter ?? 0;
+          break;
+        case "reference":
+          valA = (a.reference || "").toLowerCase();
+          valB = (b.reference || "").toLowerCase();
+          break;
+      }
+
+      if (typeof valA === "number" && typeof valB === "number") {
+        return kardexSortOrder === "asc" ? valA - valB : valB - valA;
+      }
+      return kardexSortOrder === "asc"
+        ? String(valA).localeCompare(String(valB))
+        : String(valB).localeCompare(String(valA));
+    });
+    return list;
+  }, [movements, kardexSortField, kardexSortOrder]);
 
   useEffect(() => {
     loadWarehouses();
@@ -469,11 +617,11 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   useEffect(() => {
     if (activeTab === "kardex") {
-      // Sincronizar bodegas en segundo plano de forma silenciosa y automática
+      // Sincronizar bodegas y cajas en segundo plano de forma silenciosa y automática
       api.sync.syncWarehouses().then(() => loadWarehouses()).catch(() => {});
       loadMovements(selectedKardexProduct ? selectedKardexProduct.id : undefined);
     }
-  }, [activeTab, selectedKardexProduct, selectedWarehouseId, kardexTimePreset, kardexFromDate, kardexToDate, loadMovements, loadWarehouses]);
+  }, [activeTab, selectedKardexProduct, selectedWarehouseId, selectedCajaId, kardexTimePreset, kardexFromDate, kardexToDate, loadMovements, loadWarehouses]);
 
   // ==============================================================
   // PAGINACIÓN DE ALTO RENDIMIENTO (VIRTUALIZACIÓN LIGERA)
@@ -507,10 +655,62 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     });
   }, [products, catalogTypeFilter, selectedTagsFilter, dbTags]);
 
+  const sortedCatalogProducts = useMemo(() => {
+    if (!catalogSortField) return catalogProducts;
+    const list = [...catalogProducts];
+    list.sort((a, b) => {
+      let valA: string | number = "";
+      let valB: string | number = "";
+      switch (catalogSortField) {
+        case "type":
+          valA = a.isBundle ? "3" : a.isService ? "2" : "1";
+          valB = b.isBundle ? "3" : b.isService ? "2" : "1";
+          break;
+        case "sku":
+          valA = (a.barcode || a.sku || "").toLowerCase();
+          valB = (b.barcode || b.sku || "").toLowerCase();
+          break;
+        case "name":
+          valA = (a.name || "").toLowerCase();
+          valB = (b.name || "").toLowerCase();
+          break;
+        case "tags": {
+          const tagsA = parseTags(a.tags, dbTags).join(", ").toLowerCase();
+          const tagsB = parseTags(b.tags, dbTags).join(", ").toLowerCase();
+          valA = tagsA;
+          valB = tagsB;
+          break;
+        }
+        case "cost":
+          valA = a.costCents || 0;
+          valB = b.costCents || 0;
+          break;
+        case "price":
+          valA = a.priceCents || 0;
+          valB = b.priceCents || 0;
+          break;
+        case "margin": {
+          const marginA = a.priceCents > 0 ? ((a.priceCents - a.costCents) / a.priceCents) * 100 : 0;
+          const marginB = b.priceCents > 0 ? ((b.priceCents - b.costCents) / b.priceCents) * 100 : 0;
+          valA = marginA;
+          valB = marginB;
+          break;
+        }
+      }
+      if (typeof valA === "number" && typeof valB === "number") {
+        return catalogSortOrder === "asc" ? valA - valB : valB - valA;
+      }
+      return catalogSortOrder === "asc"
+        ? String(valA).localeCompare(String(valB))
+        : String(valB).localeCompare(String(valA));
+    });
+    return list;
+  }, [catalogProducts, catalogSortField, catalogSortOrder, dbTags]);
+
   const paginatedCatalogProducts = useMemo(() => {
     const start = (catalogPage - 1) * itemsPerPage;
-    return catalogProducts.slice(start, start + itemsPerPage);
-  }, [catalogProducts, catalogPage, itemsPerPage]);
+    return sortedCatalogProducts.slice(start, start + itemsPerPage);
+  }, [sortedCatalogProducts, catalogPage, itemsPerPage]);
 
   const totalCatalogPages = Math.max(1, Math.ceil(catalogProducts.length / itemsPerPage));
 
@@ -530,10 +730,62 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
     });
   }, [physicalProducts, inventoryStatusFilter]);
 
+  const sortedInventoryProducts = useMemo(() => {
+    if (!inventorySortField) return inventoryFilteredProducts;
+    const list = [...inventoryFilteredProducts];
+    list.sort((a, b) => {
+      let valA: string | number = "";
+      let valB: string | number = "";
+      switch (inventorySortField) {
+        case "status": {
+          // Estado: Agotado (0), Crítico (1), Óptimo (2)
+          const getStatusWeight = (p: Product) => (p.stock <= 0 ? 0 : p.stock <= p.minStock ? 1 : 2);
+          valA = getStatusWeight(a);
+          valB = getStatusWeight(b);
+          break;
+        }
+        case "sku":
+          valA = (a.barcode || a.sku || "").toLowerCase();
+          valB = (b.barcode || b.sku || "").toLowerCase();
+          break;
+        case "name":
+          valA = (a.name || "").toLowerCase();
+          valB = (b.name || "").toLowerCase();
+          break;
+        case "stock":
+          valA = a.stock || 0;
+          valB = b.stock || 0;
+          break;
+        case "minStock":
+          valA = a.minStock || 0;
+          valB = b.minStock || 0;
+          break;
+        case "cost":
+          valA = a.costCents || 0;
+          valB = b.costCents || 0;
+          break;
+        case "valuation": {
+          const valLineA = a.stock > 0 ? Math.round(a.stock * a.costCents) : 0;
+          const valLineB = b.stock > 0 ? Math.round(b.stock * b.costCents) : 0;
+          valA = valLineA;
+          valB = valLineB;
+          break;
+        }
+      }
+      if (typeof valA === "number" && typeof valB === "number") {
+        return inventorySortOrder === "asc" ? valA - valB : valB - valA;
+      }
+      return inventorySortOrder === "asc"
+        ? String(valA).localeCompare(String(valB))
+        : String(valB).localeCompare(String(valA));
+    });
+    return list;
+  }, [inventoryFilteredProducts, inventorySortField, inventorySortOrder]);
+
   const paginatedInventoryProducts = useMemo(() => {
     const start = (inventoryPage - 1) * itemsPerPage;
-    return inventoryFilteredProducts.slice(start, start + itemsPerPage);
-  }, [inventoryFilteredProducts, inventoryPage, itemsPerPage]);
+    return sortedInventoryProducts.slice(start, start + itemsPerPage);
+  }, [sortedInventoryProducts, inventoryPage, itemsPerPage]);
 
   const totalInventoryPages = Math.max(1, Math.ceil(inventoryFilteredProducts.length / itemsPerPage));
 
@@ -1077,107 +1329,132 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
 
   return (
     <div className="flex flex-col h-full min-h-0 w-full bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans transition-colors duration-150 overflow-hidden select-none">
-      {/* 1. BARRA SUPERIOR DE NAVEGACIÓN */}
-      <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
+      {/* 1. BARRA SUPERIOR DE NAVEGACIÓN LIMPIA Y MINIMALISTA */}
+      <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between gap-3 shrink-0 shadow-xs z-30 select-none">
+        {/* LADO IZQUIERDO: RETORNO A VENTAS */}
+        <div className="flex items-center gap-3 shrink-0">
           {onBackToSales && (
             <button
               type="button"
               onClick={onBackToSales}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-colors"
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 font-bold text-xs border border-slate-200 dark:border-slate-700 transition-all cursor-pointer whitespace-nowrap shadow-2xs group"
               title="Volver a la Estación de Cobro (F1 / Esc)"
             >
-              <span>← Volver a Ventas</span>
-              <span className="bg-emerald-700/60 px-1 rounded text-[10px] font-mono">F1</span>
+              <span className="text-sm group-hover:-translate-x-0.5 transition-transform">←</span>
+              <span>Volver a Ventas</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 font-mono text-[10px] font-bold border border-slate-200 dark:border-slate-700">
+                F1
+              </kbd>
             </button>
           )}
-          <div className="h-5 w-px bg-slate-300 dark:bg-slate-700 hidden sm:block"></div>
-          <h1 className="text-base font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-            <img src="/metahabi-icon.png" alt="Metahabi" className="w-5 h-5 object-contain" />
-            <span>Catálogo & Inventario</span>
-          </h1>
         </div>
 
-        {/* Pestañas principales */}
-        <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-slate-200 dark:border-slate-700/60 text-xs font-semibold">
+        {/* CENTRO: PESTAÑAS PRINCIPALES TIPO SEGMENTED PILL */}
+        <div className="flex items-center bg-slate-100 dark:bg-slate-800/90 p-1 rounded-xl border border-slate-200/80 dark:border-slate-700/70 text-xs font-bold shadow-2xs shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab("catalog")}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "catalog"
-                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs"
+                ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs border border-slate-200/60 dark:border-slate-700/60 font-black"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
           >
-            📦 Productos & Servicios
+            <span>📦</span>
+            <span>Catálogo</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("inventory")}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "inventory"
-                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs"
+                ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs border border-slate-200/60 dark:border-slate-700/60 font-black"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
           >
-            📊 Existencias F4
+            <span>📊</span>
+            <span>Existencias</span>
+            <kbd className="px-1 py-0.2 rounded bg-slate-200/60 dark:bg-slate-800 text-[9px] font-mono text-slate-500">F4</kbd>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("kardex")}
-            className={`px-3 py-1 rounded-lg transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap cursor-pointer ${
               activeTab === "kardex"
-                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 font-bold shadow-xs"
+                ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs border border-slate-200/60 dark:border-slate-700/60 font-black"
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             }`}
           >
-            📜 Kardex / Movimientos
+            <span>📜</span>
+            <span>Kardex</span>
           </button>
         </div>
 
-        {/* Acciones principales */}
-        <div className="flex items-center gap-2">
+        {/* LADO DERECHO: ACCIONES Y HERRAMIENTAS */}
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              setExcelModalTab("import");
-              setIsExcelModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs shadow-sm transition-colors cursor-pointer"
-            title="Importar catálogo de Eleventa (.xlsx) o exportar inventario a Excel"
+            onClick={() => setIsTaxonomyModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs border border-slate-200/80 dark:border-slate-700/80 shadow-2xs transition-all cursor-pointer whitespace-nowrap"
+            title="Administrar categorías y etiquetas del catálogo con control RBAC"
           >
-            <span>📗 Excel (Importar / Exportar)</span>
-          </button>
-          <button
-            type="button"
-            disabled={syncingCatalog}
-            onClick={handleSyncCatalog}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-colors disabled:opacity-50"
-            title="Sincronizar catálogo con Megalider ERP (Subir locales y descargar remotos)"
-          >
-            <span className={syncingCatalog ? "animate-spin inline-block text-xs" : "text-xs"}>🔄</span>
-            <span>{syncingCatalog ? "Sincronizando..." : "Sincronizar ERP"}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setIsTagsModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs shadow-xs transition-colors cursor-pointer"
-            title="Administrar catálogo de etiquetas maestras (Nombre y Color)"
-          >
-            <span>🏷️ Etiquetas</span>
-            <span className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1 rounded text-[10px] font-mono">
-              {dbTags.length}
+            <span>📁🏷️ Categorías</span>
+            <span className="bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.2 rounded-full text-[10px] font-mono">
+              {categoriesList.length}
             </span>
           </button>
+
           <button
             type="button"
             onClick={() => handleOpenCreateModal(false)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-sm transition-colors"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
             title="Registrar nuevo producto o servicio (F8)"
           >
-            <span>+ Nuevo Producto / Servicio</span>
-            <span className="bg-indigo-700/60 px-1 rounded text-[10px] font-mono">F8</span>
+            <span>+ Nuevo</span>
+            <kbd className="bg-emerald-700/70 text-emerald-100 px-1.5 py-0.2 rounded text-[10px] font-mono">F8</kbd>
           </button>
+
+          {/* Menú de Opciones (Excel, Sincronización) */}
+          <div className="relative" ref={moreMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsMoreMenuOpen((prev) => !prev)}
+              className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-center transition-all cursor-pointer shadow-2xs"
+              title="Más herramientas (Excel, Sincronización ERP)"
+            >
+              <span className="text-sm font-bold">⋮</span>
+            </button>
+
+            {isMoreMenuOpen && (
+              <div className="absolute right-0 mt-1.5 w-56 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 z-50 text-xs font-semibold animate-in fade-in zoom-in-95 duration-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMoreMenuOpen(false);
+                    setExcelModalTab("import");
+                    setIsExcelModalOpen(true);
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
+                >
+                  <span>📗</span>
+                  <span>Excel (Importar / Exportar)</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={syncingCatalog}
+                  onClick={() => {
+                    setIsMoreMenuOpen(false);
+                    handleSyncCatalog();
+                  }}
+                  className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer disabled:opacity-50"
+                >
+                  <span className={syncingCatalog ? "animate-spin inline-block" : ""}>🔄</span>
+                  <span>{syncingCatalog ? "Sincronizando..." : "Sincronizar Catálogo con ERP"}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1537,16 +1814,93 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
-                  <th className="py-3 px-3 w-14 text-center">Foto</th>
-                  <th className="py-3 px-4 w-28">Tipo</th>
-                  <th className="py-3 px-4 w-40">Código / SKU</th>
-                  <th className="py-3 px-4">Nombre Comercial</th>
-                  <th className="py-3 px-4 w-44">Etiquetas (Tags)</th>
-                  <th className="py-3 px-4 text-right w-28">Costo</th>
-                  <th className="py-3 px-4 text-right w-28">Precio Venta</th>
-                  <th className="py-3 px-4 text-right w-28">Margen Bruto</th>
-                  <th className="py-3 px-4 text-center w-28">Acciones</th>
+                <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
+                  <th className="py-3 px-3 w-14 text-center select-none">Foto</th>
+                  <th
+                    onClick={() => handleCatalogSort("type")}
+                    className="py-3 px-4 w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Tipo"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Tipo</span>
+                      <span className={`text-[10px] ${catalogSortField === "type" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "type" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("sku")}
+                    className="py-3 px-4 w-40 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Código / SKU"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Código / SKU</span>
+                      <span className={`text-[10px] ${catalogSortField === "sku" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "sku" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("name")}
+                    className="py-3 px-4 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Nombre Comercial"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Nombre Comercial</span>
+                      <span className={`text-[10px] ${catalogSortField === "name" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "name" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("tags")}
+                    className="py-3 px-4 w-44 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Etiquetas"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>Etiquetas (Tags)</span>
+                      <span className={`text-[10px] ${catalogSortField === "tags" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "tags" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("cost")}
+                    className="py-3 px-4 text-right w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Costo"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Costo</span>
+                      <span className={`text-[10px] ${catalogSortField === "cost" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "cost" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("price")}
+                    className="py-3 px-4 text-right w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Precio de Venta"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Precio Venta</span>
+                      <span className={`text-[10px] ${catalogSortField === "price" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "price" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th
+                    onClick={() => handleCatalogSort("margin")}
+                    className="py-3 px-4 text-right w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                    title="Clic para ordenar por Margen Bruto"
+                  >
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span>Margen Bruto</span>
+                      <span className={`text-[10px] ${catalogSortField === "margin" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                        {catalogSortField === "margin" ? (catalogSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                      </span>
+                    </div>
+                  </th>
+                  <th className="py-3 px-4 text-center w-28 select-none">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -1877,15 +2231,92 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="py-3 px-4 w-28">Estado</th>
-                    <th className="py-3 px-4 w-40">Código / SKU</th>
-                    <th className="py-3 px-4">Producto en Almacén</th>
-                    <th className="py-3 px-4 text-right w-36">Existencia Actual</th>
-                    <th className="py-3 px-4 text-right w-28">Stock Mínimo</th>
-                    <th className="py-3 px-4 text-right w-28">Costo Unit.</th>
-                    <th className="py-3 px-4 text-right w-36">Valor en Bodega</th>
-                    <th className="py-3 px-4 text-center w-48">Acciones de Almacén</th>
+                  <tr className="bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
+                    <th
+                      onClick={() => handleInventorySort("status")}
+                      className="py-3 px-4 w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Estado de Existencia"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Estado</span>
+                        <span className={`text-[10px] ${inventorySortField === "status" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "status" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("sku")}
+                      className="py-3 px-4 w-40 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Código / SKU"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Código / SKU</span>
+                        <span className={`text-[10px] ${inventorySortField === "sku" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "sku" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("name")}
+                      className="py-3 px-4 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Producto en Almacén"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Producto en Almacén</span>
+                        <span className={`text-[10px] ${inventorySortField === "name" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "name" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("stock")}
+                      className="py-3 px-4 text-right w-36 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Existencia Actual"
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Existencia Actual</span>
+                        <span className={`text-[10px] ${inventorySortField === "stock" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "stock" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("minStock")}
+                      className="py-3 px-4 text-right w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Stock Mínimo"
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Stock Mínimo</span>
+                        <span className={`text-[10px] ${inventorySortField === "minStock" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "minStock" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("cost")}
+                      className="py-3 px-4 text-right w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Costo Unitario"
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Costo Unit.</span>
+                        <span className={`text-[10px] ${inventorySortField === "cost" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "cost" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleInventorySort("valuation")}
+                      className="py-3 px-4 text-right w-36 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Valor Total en Bodega"
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Valor en Bodega</span>
+                        <span className={`text-[10px] ${inventorySortField === "valuation" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {inventorySortField === "valuation" ? (inventorySortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th className="py-3 px-4 text-center w-48 select-none">Acciones de Almacén</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -2120,25 +2551,46 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                 </div>
               </div>
 
-              {/* FILTROS MULTI-BODEGA Y TEMPORALIDAD */}
+              {/* FILTROS MULTI-BODEGA, MULTI-CAJA Y TEMPORALIDAD */}
               <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
-                {/* 1. Selector de Bodega */}
-                <div className="flex items-center gap-2">
-                  <label className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center gap-1">
-                    <span>🏬 Bodega:</span>
-                  </label>
-                  <select
-                    value={selectedWarehouseId}
-                    onChange={(e) => setSelectedWarehouseId(e.target.value)}
-                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
-                  >
-                    <option value="all">Todas las Bodegas</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        [{w.code}] {w.name} {w.isDefault ? "★ Principal" : ""}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* 1. Selector de Bodega */}
+                  <div className="flex items-center gap-2">
+                    <label className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center gap-1">
+                      <span>🏬 Bodega:</span>
+                    </label>
+                    <select
+                      value={selectedWarehouseId}
+                      onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">Todas las Bodegas</option>
+                      {warehouses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          [{w.code}] {w.name} {w.isDefault ? "★ Principal" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 1.5. Selector de Caja (Terminal POS) */}
+                  <div className="flex items-center gap-2">
+                    <label className="font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap flex items-center gap-1">
+                      <span>🖥️ Caja:</span>
+                    </label>
+                    <select
+                      value={selectedCajaId}
+                      onChange={(e) => setSelectedCajaId(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                    >
+                      <option value="all">Todas las Cajas</option>
+                      {posTerminals.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          [{c.code}] {c.name} {c.isCurrent ? "★ Esta Caja" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* 2. Selector de Período Temporal */}
@@ -2221,19 +2673,120 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-100/70 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-bold uppercase tracking-wider text-[11px]">
-                    <th className="py-3 px-3.5 w-36">Fecha / Hora</th>
-                    <th className="py-3 px-3 w-32">Bodega</th>
-                    <th className="py-3 px-3.5">Producto</th>
-                    <th className="py-3 px-3 w-28">Operación</th>
-                    <th className="py-3 px-3 text-right w-24">Cantidad</th>
-                    <th className="py-3 px-3 text-center w-36">Saldo (Antes → Después)</th>
-                    <th className="py-3 px-3.5">Referencia / Motivo</th>
+                    <th
+                      onClick={() => handleKardexSort("date")}
+                      className="py-3 px-3.5 w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Fecha"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Fecha</span>
+                        <span className={`text-[10px] ${kardexSortField === "date" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "date" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("time")}
+                      className="py-3 px-3 w-24 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Hora"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Hora</span>
+                        <span className={`text-[10px] ${kardexSortField === "time" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "time" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("warehouse")}
+                      className="py-3 px-3 w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Bodega"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Bodega</span>
+                        <span className={`text-[10px] ${kardexSortField === "warehouse" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "warehouse" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("caja")}
+                      className="py-3 px-3 w-32 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Caja"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Caja</span>
+                        <span className={`text-[10px] ${kardexSortField === "caja" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "caja" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("product")}
+                      className="py-3 px-3.5 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Producto"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Producto</span>
+                        <span className={`text-[10px] ${kardexSortField === "product" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "product" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("kind")}
+                      className="py-3 px-3 w-28 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Tipo de Operación"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Operación</span>
+                        <span className={`text-[10px] ${kardexSortField === "kind" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "kind" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("quantity")}
+                      className="py-3 px-3 text-right w-24 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Cantidad"
+                    >
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span>Cantidad</span>
+                        <span className={`text-[10px] ${kardexSortField === "quantity" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "quantity" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("balance")}
+                      className="py-3 px-3 text-center w-36 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Saldo Final"
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span>Saldo (Antes → Después)</span>
+                        <span className={`text-[10px] ${kardexSortField === "balance" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "balance" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
+                    <th
+                      onClick={() => handleKardexSort("reference")}
+                      className="py-3 px-3.5 cursor-pointer select-none hover:bg-slate-200/60 dark:hover:bg-slate-900 transition-colors"
+                      title="Clic para ordenar por Referencia"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span>Referencia / Motivo</span>
+                        <span className={`text-[10px] ${kardexSortField === "reference" ? "text-indigo-600 dark:text-indigo-400 font-black" : "text-slate-400 opacity-50"}`}>
+                          {kardexSortField === "reference" ? (kardexSortOrder === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-sans">
-                  {movements.length === 0 ? (
+                  {sortedMovements.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-14 text-center text-slate-400">
+                      <td colSpan={9} className="py-14 text-center text-slate-400">
                         {kardexLoading ? (
                           <div className="flex flex-col items-center gap-2">
                             <span className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
@@ -2243,27 +2796,49 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                           <div className="flex flex-col items-center gap-1">
                             <span className="text-2xl">📦</span>
                             <span className="font-semibold text-slate-600 dark:text-slate-400">
-                              No hay movimientos de inventario en el período o bodega seleccionada.
+                              No hay movimientos de inventario en el período, bodega o caja seleccionada.
                             </span>
                             <span className="text-[11px] text-slate-400">
-                              Prueba cambiando el filtro de bodega o el rango de fechas.
+                              Prueba cambiando el filtro de bodega, caja o el rango de fechas.
                             </span>
                           </div>
                         )}
                       </td>
                     </tr>
                   ) : (
-                    movements.map((m) => {
+                    sortedMovements.map((m) => {
                       const isPositive = m.quantity > 0;
+                      const rawDt = m.createdAt ? m.createdAt.replace("T", " ") : "";
+                      const [dateStr = "", timeStrFull = ""] = rawDt.split(" ");
+                      const timeStr = timeStrFull.substring(0, 8);
+
                       return (
                         <tr key={m.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
-                          <td className="py-3 px-3.5 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                            {m.createdAt.replace("T", " ").substring(0, 19)}
+                          <td className="py-3 px-3.5 font-mono text-slate-700 dark:text-slate-300 font-semibold whitespace-nowrap text-xs">
+                            {dateStr || "—"}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap text-[11px]">
+                            {timeStr || "—"}
                           </td>
                           <td className="py-3 px-3 whitespace-nowrap">
                             <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
                               {m.warehouseCode || m.warehouseName || "BOD-01"}
                             </span>
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            {m.cajaCode || m.cajaName ? (
+                              <span
+                                title={m.cajaName ? `${m.cajaName} (${m.cajaCode || ""})` : undefined}
+                                className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-mono inline-flex items-center gap-1"
+                              >
+                                <span>🖥️</span>
+                                <span>{m.cajaCode || m.cajaName}</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500 border border-slate-200/70 dark:border-slate-800 font-mono">
+                                ERP / General
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-3.5">
                             <div className="font-bold text-slate-900 dark:text-white">
@@ -2338,7 +2913,7 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
             {/* BARRA DE RESUMEN DE KARDEX */}
             <div className="p-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 bg-slate-50/50 dark:bg-slate-900/50">
               <div>
-                Total movimientos auditados: <strong className="text-slate-800 dark:text-slate-200">{movements.length}</strong>
+                Total movimientos auditados: <strong className="text-slate-800 dark:text-slate-200">{sortedMovements.length}</strong>
               </div>
               <div className="text-[11px] text-slate-400">
                 ✓ Sincronizado en tiempo real con todas las cajas y bodegas.
@@ -3050,10 +3625,10 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
                         </label>
                         <button
                           type="button"
-                          onClick={() => setIsTagsModalOpen(true)}
+                          onClick={() => setIsTaxonomyModalOpen(true)}
                           className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer flex items-center gap-1"
                         >
-                          <span>⚙️ Gestionar Etiquetas</span>
+                          <span>⚙️ Gestionar Categorías y Etiquetas</span>
                         </button>
                       </div>
 
@@ -3622,6 +4197,17 @@ export function ProductsPage({ initialTab = "catalog", onBackToSales }: Products
         onImportSuccess={() => {
           loadProducts();
           showNotification("✓ Catálogo importado desde Excel y sincronización con ERP iniciada.");
+        }}
+      />
+
+      {/* Modal de Gestión Centralizada de Categorías y Etiquetas con Control de Acceso RBAC */}
+      <TaxonomyManagementModal
+        isOpen={isTaxonomyModalOpen}
+        onClose={() => setIsTaxonomyModalOpen(false)}
+        cashier={cashier || null}
+        onChanged={() => {
+          loadProducts();
+          loadTags();
         }}
       />
 

@@ -27,6 +27,10 @@ export type PosPermission =
   | "reportes:ver"
   | "pos:reportes"
   | "pos:configuracion"
+  | "catalogo:categorias:gestionar"
+  | "catalogo:etiquetas:gestionar"
+  | "catalogo:categorias"
+  | "catalogo:etiquetas"
   | string;
 
 /**
@@ -84,7 +88,11 @@ export function hasPermission(user: CashierUser | null, permission: PosPermissio
       permission === "clientes:ver" ||
       permission === "caja:cuadre" ||
       permission === "reportes:ver" ||
-      permission === "pos:reportes"
+      permission === "pos:reportes" ||
+      permission === "catalogo:categorias:gestionar" ||
+      permission === "catalogo:etiquetas:gestionar" ||
+      permission === "catalogo:categorias" ||
+      permission === "catalogo:etiquetas"
     ) {
       return true;
     }

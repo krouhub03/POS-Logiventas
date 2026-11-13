@@ -28,10 +28,10 @@ export interface Product {
   components?: ProductComponent[];
 }
 
-/** Parámetros para la búsqueda paginada y progresiva de productos/servicios (F10). */
+/** Parámetros para la búsqueda paginada y progresiva de productos/servicios/combos (F10). */
 export interface ProductSearchPagedInput {
   query?: string;
-  typeFilter?: "all" | "products" | "services";
+  typeFilter?: "all" | "products" | "services" | "bundles";
   category?: string | null;
   tag?: string | null;
   limit?: number;
@@ -44,6 +44,7 @@ export interface ProductSearchPagedResult {
   totalCount: number;
   productsCount: number;
   servicesCount: number;
+  bundlesCount: number;
   hasMore: boolean;
 }
 
@@ -54,6 +55,14 @@ export interface PinnedFilter {
   value: string;
   icon?: string;
   color?: string;
+}
+
+/** Espejo de `models::product::CategoryDetailedDto` (Rust). */
+export interface CategoryDetailed {
+  id: number;
+  name: string;
+  active: boolean;
+  productCount: number;
 }
 
 /** Espejo de `models::product::ProductTag` (Rust). */
@@ -136,10 +145,22 @@ export interface Warehouse {
   updatedAt?: string | null;
 }
 
+/** Espejo de `models::product::PosTerminalDto` (Rust). */
+export interface PosTerminalOption {
+  id: string;
+  code: string;
+  name: string;
+  warehouseId?: string | null;
+  isCurrent: boolean;
+  active: boolean;
+  updatedAt?: string | null;
+}
+
 /** Parámetros de filtrado para consulta de Kardex. */
 export interface KardexFilter {
   productId?: number;
   warehouseId?: string;
+  cajaId?: string;
   timePreset?: "today" | "week" | "month" | "custom";
   fromDate?: string;
   toDate?: string;
@@ -157,6 +178,9 @@ export interface InventoryMovement {
   warehouseId?: string | null;
   warehouseCode?: string | null;
   warehouseName?: string | null;
+  cajaId?: string | null;
+  cajaCode?: string | null;
+  cajaName?: string | null;
   kind: "sale" | "purchase" | "adjustment" | "return" | string;
   tipoMovimiento?: string | null;
   quantity: number;

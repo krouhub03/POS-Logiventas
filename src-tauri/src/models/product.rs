@@ -109,11 +109,24 @@ pub struct WarehouseDto {
     pub updated_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PosTerminalDto {
+    pub id: String,
+    pub code: String,
+    pub name: String,
+    pub warehouse_id: Option<String>,
+    pub is_current: bool,
+    pub active: bool,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct KardexFilterInput {
     pub product_id: Option<i64>,
     pub warehouse_id: Option<String>,
+    pub caja_id: Option<String>,
     pub time_preset: Option<String>, // "today" | "week" | "month" | "custom"
     pub from_date: Option<String>,
     pub to_date: Option<String>,
@@ -131,6 +144,9 @@ pub struct InventoryMovementDto {
     pub warehouse_id: Option<String>,
     pub warehouse_code: Option<String>,
     pub warehouse_name: Option<String>,
+    pub caja_id: Option<String>,
+    pub caja_code: Option<String>,
+    pub caja_name: Option<String>,
     pub kind: String,
     pub quantity: f64,
     pub balance_before: Option<f64>,
@@ -139,6 +155,15 @@ pub struct InventoryMovementDto {
     pub reference: Option<String>,
     pub user_id: Option<i64>,
     pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryDetailedDto {
+    pub id: i64,
+    pub name: String,
+    pub active: bool,
+    pub product_count: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -193,6 +218,7 @@ pub struct ProductSearchPagedResult {
     pub total_count: i64,
     pub products_count: i64,
     pub services_count: i64,
+    pub bundles_count: i64,
     pub has_more: bool,
 }
 

@@ -573,6 +573,18 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                     |r| r.get(0),
                 )
                 .unwrap_or_else(|_| "bod-default".to_string());
+            let caja_id: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let caja_code: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let caja_name: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
 
             if is_bundle == 1 {
                 let mut comp_stmt = tx.prepare(
@@ -609,9 +621,9 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                         let child_balance_before = child_stock;
                         let child_balance_after = child_stock - total_child_qty;
                         tx.execute(
-                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
-                             VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id, default_wh, child_balance_before, child_balance_after, child_cost],
+                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
+                             VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id, default_wh, child_balance_before, child_balance_after, child_cost, caja_id, caja_code, caja_name],
                         )?;
                     }
                 }
@@ -631,9 +643,9 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                 let balance_before = current_stock;
                 let balance_after = current_stock - it.quantity;
                 tx.execute(
-                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
-                     VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![pid, -it.quantity, folio, input.user_id, default_wh, balance_before, balance_after, unit_cost_cents],
+                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
+                     VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![pid, -it.quantity, folio, input.user_id, default_wh, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name],
                 )?;
             }
         }
@@ -1185,6 +1197,18 @@ pub fn create_sale_return_in_conn(
                     |r| r.get(0),
                 )
                 .unwrap_or_else(|_| "bod-default".to_string());
+            let caja_id: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let caja_code: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let caja_name: Option<String> = tx
+                .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
 
             if is_service == 0 {
                 if line.disposition == "restock" {
@@ -1218,8 +1242,8 @@ pub fn create_sale_return_in_conn(
                                     params![restore_qty, child_id],
                                 )?;
                                 tx.execute(
-                                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
-                                     VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                                    "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name)
+                                     VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                                     params![
                                         child_id,
                                         restore_qty,
@@ -1228,7 +1252,10 @@ pub fn create_sale_return_in_conn(
                                         default_wh,
                                         child_stock,
                                         child_stock + restore_qty,
-                                        child_cost
+                                        child_cost,
+                                        caja_id,
+                                        caja_code,
+                                        caja_name
                                     ],
                                 )?;
                             }
@@ -1239,8 +1266,8 @@ pub fn create_sale_return_in_conn(
                             params![line.req_qty, pid],
                         )?;
                         tx.execute(
-                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
-                             VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name)
+                             VALUES (?1, 'return', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                             params![
                                 pid,
                                 line.req_qty,
@@ -1249,15 +1276,18 @@ pub fn create_sale_return_in_conn(
                                 default_wh,
                                 prod_stock,
                                 prod_stock + line.req_qty,
-                                prod_cost
+                                prod_cost,
+                                caja_id,
+                                caja_code,
+                                caja_name
                             ],
                         )?;
                     }
                 } else if line.disposition == "merma" {
                     // Registrar trazabilidad en movimientos sin contaminar el stock vendible
                     tx.execute(
-                        "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents)
-                         VALUES (?1, 'return', 0, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name)
+                         VALUES (?1, 'return', 0, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                         params![
                             pid,
                             format!("{} [MERMA/AVERÍA x{}] ({})", return_folio, line.req_qty, sale_folio),
@@ -1265,7 +1295,10 @@ pub fn create_sale_return_in_conn(
                             default_wh,
                             prod_stock,
                             prod_stock,
-                            prod_cost
+                            prod_cost,
+                            caja_id,
+                            caja_code,
+                            caja_name
                         ],
                     )?;
                 }

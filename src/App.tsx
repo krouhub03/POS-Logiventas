@@ -392,6 +392,7 @@ function App() {
         {(currentView === "products" || currentView === "inventory") && (
           <div className="absolute inset-0 z-40 bg-slate-100 dark:bg-slate-950 overflow-hidden">
             <ProductsPage
+              cashier={activeCashier}
               initialTab={currentView === "inventory" ? "inventory" : "catalog"}
               onBackToSales={() => setCurrentView("sales")}
             />

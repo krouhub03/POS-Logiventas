@@ -4,9 +4,9 @@ use tauri::State;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::product::{
-    InventoryMovementDto, NewProduct, Product, ProductComponentDto, ProductSearchPagedInput,
-    ProductSearchPagedResult, ProductTag, SaveProductComponentItem, StockAdjustmentInput,
-    UpdateProductInput,
+    CategoryDetailedDto, InventoryMovementDto, NewProduct, Product, ProductComponentDto,
+    ProductSearchPagedInput, ProductSearchPagedResult, ProductTag, SaveProductComponentItem,
+    StockAdjustmentInput, UpdateProductInput,
 };
 
 const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.unit, p.price_cents, p.cost_cents, \
@@ -88,8 +88,19 @@ pub fn enrich_bundle_product(conn: &rusqlite::Connection, p: &mut Product) {
 }
 
 fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
-    let is_service_int: i64 = r.get(11)?;
-    let active_int: i64 = r.get(12)?;
+    let id: i64 = r.get(0)?;
+    let sku: String = r.get(1).unwrap_or_default();
+    let barcode: Option<String> = r.get(2).ok();
+    let name: String = r.get(3).unwrap_or_default();
+    let category_id: Option<i64> = r.get(4).ok();
+    let unit: String = r.get(5).unwrap_or_else(|_| "pza".to_string());
+    let price_cents: i64 = r.get(6).unwrap_or(0);
+    let cost_cents: i64 = r.get(7).unwrap_or(0);
+    let tax_rate_bp: i64 = r.get(8).unwrap_or(0);
+    let stock: f64 = r.get(9).unwrap_or(0.0);
+    let min_stock: f64 = r.get(10).unwrap_or(0.0);
+    let is_service_int: i64 = r.get(11).unwrap_or(0);
+    let active_int: i64 = r.get(12).unwrap_or(1);
     let is_bundle_int: i64 = r.get(15).unwrap_or(0);
     let tags: Option<String> = r.get(16).ok();
     let tax_fixed_cents: i64 = r.get(17).unwrap_or(0);
@@ -102,19 +113,19 @@ fn map_product(r: &Row<'_>) -> rusqlite::Result<Product> {
     let max_stock: f64 = r.get(24).unwrap_or(0.0);
 
     Ok(Product {
-        id: r.get(0)?,
-        sku: r.get(1)?,
-        barcode: r.get(2)?,
-        name: r.get(3)?,
-        category_id: r.get(4)?,
+        id,
+        sku,
+        barcode,
+        name,
+        category_id,
         category_name,
-        unit: r.get(5)?,
-        price_cents: r.get(6)?,
+        unit,
+        price_cents,
         wholesale_price_cents,
-        cost_cents: r.get(7)?,
-        tax_rate_bp: r.get(8)?,
-        stock: r.get(9)?,
-        min_stock: r.get(10)?,
+        cost_cents,
+        tax_rate_bp,
+        stock,
+        min_stock,
         max_stock,
         is_service: is_service_int != 0,
         controls_stock: is_service_int == 0,
@@ -146,6 +157,156 @@ pub fn list_categories(db: State<'_, Db>) -> AppResult<Vec<String>> {
     Ok(list)
 }
 
+/// Lista el maestro completo de categorías con su estado y total de productos asignados.
+#[tauri::command]
+pub fn list_categories_detailed(db: State<'_, Db>) -> AppResult<Vec<CategoryDetailedDto>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.name, c.active, \
+                (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.active = 1) AS p_count \
+         FROM categories c \
+         ORDER BY c.name COLLATE NOCASE ASC"
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let active_int: i64 = r.get(2)?;
+        Ok(CategoryDetailedDto {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            active: active_int != 0,
+            product_count: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Crea una nueva categoría maestra en la base de datos local.
+#[tauri::command]
+pub fn create_category(db: State<'_, Db>, name: String) -> AppResult<CategoryDetailedDto> {
+    let name_clean = name.trim();
+    if name_clean.is_empty() {
+        return Err(AppError::Validation("El nombre de la categoría es obligatorio".into()));
+    }
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM categories WHERE name = ?1 COLLATE NOCASE",
+        params![name_clean],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    if exists > 0 {
+        return Err(AppError::Validation(format!("Ya existe una categoría llamada '{}'", name_clean)));
+    }
+
+    tx.execute(
+        "INSERT INTO categories (name, active) VALUES (?1, 1)",
+        params![name_clean],
+    )?;
+    let id = tx.last_insert_rowid();
+    tx.commit()?;
+
+    Ok(CategoryDetailedDto {
+        id,
+        name: name_clean.to_string(),
+        active: true,
+        product_count: 0,
+    })
+}
+
+/// Actualiza o renombra una categoría maestra existente.
+#[tauri::command]
+pub fn update_category(db: State<'_, Db>, id: i64, name: String, active: bool) -> AppResult<CategoryDetailedDto> {
+    let name_clean = name.trim();
+    if name_clean.is_empty() {
+        return Err(AppError::Validation("El nombre de la categoría es obligatorio".into()));
+    }
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let exists_duplicate: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM categories WHERE name = ?1 COLLATE NOCASE AND id != ?2",
+        params![name_clean, id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    if exists_duplicate > 0 {
+        return Err(AppError::Validation(format!("Ya existe otra categoría llamada '{}'", name_clean)));
+    }
+
+    let active_int = if active { 1 } else { 0 };
+    let affected = tx.execute(
+        "UPDATE categories SET name = ?1, active = ?2 WHERE id = ?3",
+        params![name_clean, active_int, id],
+    )?;
+
+    if affected == 0 {
+        return Err(AppError::Validation("Categoría no encontrada".into()));
+    }
+
+    let p_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM products WHERE category_id = ?1 AND active = 1",
+        params![id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    tx.commit()?;
+
+    Ok(CategoryDetailedDto {
+        id,
+        name: name_clean.to_string(),
+        active,
+        product_count: p_count,
+    })
+}
+
+/// Elimina o desactiva una categoría protegiendo la integridad de los productos asignados.
+#[tauri::command]
+pub fn delete_category(db: State<'_, Db>, id: i64, reassign_to_id: Option<i64>) -> AppResult<()> {
+    let mut conn = db.conn()?;
+    let tx = conn.transaction()?;
+
+    let p_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM products WHERE category_id = ?1 AND active = 1",
+        params![id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    if p_count > 0 {
+        if let Some(target_id) = reassign_to_id {
+            if target_id == id {
+                return Err(AppError::Validation("No se puede reasignar a la misma categoría que se está eliminando".into()));
+            }
+            let target_exists: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM categories WHERE id = ?1",
+                params![target_id],
+                |r| r.get(0),
+            ).unwrap_or(0);
+            if target_exists == 0 {
+                return Err(AppError::Validation("La categoría de destino para reasignar productos no existe".into()));
+            }
+
+            tx.execute(
+                "UPDATE products SET category_id = ?1, needs_erp_upload = 1, updated_at = datetime('now') WHERE category_id = ?2",
+                params![target_id, id],
+            )?;
+        } else {
+            return Err(AppError::Validation(format!(
+                "No se puede eliminar la categoría porque tiene {} producto(s) asignado(s). Seleccione una categoría de destino para reasignarlos o desactívela.",
+                p_count
+            )));
+        }
+    }
+
+    let affected = tx.execute("DELETE FROM categories WHERE id = ?1", params![id])?;
+    if affected == 0 {
+        return Err(AppError::Validation("Categoría no encontrada".into()));
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
 /// Lista productos activos. `search` filtra por nombre, SKU, código de barras o tags (#frio, etc.).
 #[tauri::command]
 pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec<Product>> {
@@ -166,7 +327,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
     Ok(products)
 }
 
-/// Búsqueda paginada y optimizada de productos y servicios con filtros y conteos dinámicos.
+/// Búsqueda paginada y optimizada de productos, servicios y combos con filtros y conteos dinámicos.
 #[tauri::command]
 pub fn search_products_paged(
     db: State<'_, Db>,
@@ -174,7 +335,7 @@ pub fn search_products_paged(
 ) -> AppResult<ProductSearchPagedResult> {
     let conn = db.conn()?;
 
-    let limit = input.limit.unwrap_or(50).clamp(1, 200) as i64;
+    let limit = input.limit.unwrap_or(30).clamp(1, 200) as i64;
     let offset = input.offset.unwrap_or(0) as i64;
 
     // 1. Construir condiciones WHERE base (sin filtro de tipo para obtener conteos globales)
@@ -186,7 +347,7 @@ pub fn search_products_paged(
         let q_trimmed = q.trim();
         if !q_trimmed.is_empty() {
             let pattern = format!("%{}%", q_trimmed);
-            base_conditions.push("(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.tags LIKE ? OR c.name LIKE ?)".to_string());
+            base_conditions.push("(p.name LIKE ? COLLATE NOCASE OR p.sku LIKE ? COLLATE NOCASE OR p.barcode LIKE ? COLLATE NOCASE OR p.tags LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE)".to_string());
             base_params.push(pattern.clone().into());
             base_params.push(pattern.clone().into());
             base_params.push(pattern.clone().into());
@@ -195,11 +356,11 @@ pub fn search_products_paged(
         }
     }
 
-    // Filtro por categoría
+    // Filtro por categoría (insensible a mayúsculas/minúsculas)
     if let Some(ref cat) = input.category {
         let cat_trimmed = cat.trim();
-        if !cat_trimmed.is_empty() {
-            base_conditions.push("c.name = ?".to_string());
+        if !cat_trimmed.is_empty() && cat_trimmed != "all" {
+            base_conditions.push("c.name = ? COLLATE NOCASE".to_string());
             base_params.push(cat_trimmed.to_string().into());
         }
     }
@@ -207,29 +368,30 @@ pub fn search_products_paged(
     // Filtro por etiqueta
     if let Some(ref tag) = input.tag {
         let tag_clean = tag.trim().trim_start_matches('#');
-        if !tag_clean.is_empty() {
+        if !tag_clean.is_empty() && tag_clean != "all" {
             let tag_pattern = format!("%{}%", tag_clean);
-            base_conditions.push("p.tags LIKE ?".to_string());
+            base_conditions.push("p.tags LIKE ? COLLATE NOCASE".to_string());
             base_params.push(tag_pattern.into());
         }
     }
 
     let base_where_sql = base_conditions.join(" AND ");
 
-    // 2. Ejecutar conteos en una sola consulta rápida
+    // 2. Ejecutar conteos en una sola consulta rápida (incluyendo combos)
     let count_sql = format!(
         "SELECT \
             COUNT(*), \
-            COALESCE(SUM(CASE WHEN p.is_service = 0 THEN 1 ELSE 0 END), 0), \
-            COALESCE(SUM(CASE WHEN p.is_service = 1 THEN 1 ELSE 0 END), 0) \
+            COALESCE(SUM(CASE WHEN p.is_service = 0 AND p.is_bundle = 0 THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN p.is_service = 1 THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN p.is_bundle = 1 THEN 1 ELSE 0 END), 0) \
          FROM {PRODUCT_FROM} \
          WHERE {base_where_sql}"
     );
 
     let mut count_stmt = conn.prepare(&count_sql)?;
-    let (all_count, products_count, services_count): (i64, i64, i64) = count_stmt.query_row(
+    let (all_count, products_count, services_count, bundles_count): (i64, i64, i64, i64) = count_stmt.query_row(
         rusqlite::params_from_iter(base_params.iter()),
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )?;
 
     // Determinar total_count según el type_filter
@@ -237,6 +399,7 @@ pub fn search_products_paged(
     let total_count = match type_filter {
         "products" => products_count,
         "services" => services_count,
+        "bundles" => bundles_count,
         _ => all_count,
     };
 
@@ -245,9 +408,11 @@ pub fn search_products_paged(
     let mut item_params = base_params;
 
     if type_filter == "products" {
-        item_conditions.push("p.is_service = 0".to_string());
+        item_conditions.push("p.is_service = 0 AND p.is_bundle = 0".to_string());
     } else if type_filter == "services" {
         item_conditions.push("p.is_service = 1".to_string());
+    } else if type_filter == "bundles" {
+        item_conditions.push("p.is_bundle = 1".to_string());
     }
 
     let item_where_sql = item_conditions.join(" AND ");
@@ -278,6 +443,7 @@ pub fn search_products_paged(
         total_count,
         products_count,
         services_count,
+        bundles_count,
         has_more,
     })
 }
@@ -408,10 +574,30 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
 
     // Si tiene stock inicial y es producto físico simple, registrar movimiento inicial
     if controls_stock && !is_bundle && stock > 0.0 {
+        let default_wh: String = tx
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "bod-default".to_string());
+        let caja_id: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_code: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_name: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+
         tx.execute(
-            "INSERT INTO inventory_movements (product_id, kind, quantity, reference) \
-             VALUES (?1, 'adjustment', ?2, 'Inventario inicial')",
-            params![id, stock],
+            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
+             VALUES (?1, 'adjustment', ?2, 'Inventario inicial', ?3, 0.0, ?2, ?4, ?5, ?6, ?7)",
+            params![id, stock, default_wh, cost_cents, caja_id, caja_code, caja_name],
         )?;
     }
 
@@ -607,9 +793,9 @@ pub fn adjust_stock_in_conn(
 
     let diff = input.new_stock - current_stock;
     if diff.abs() > f64::EPSILON {
-        // Actualizar stock del producto y marcar para sync con ERP
+        // Actualizar stock local del producto (sin needs_erp_upload=1 para no sobreescribir con stock absoluto en sync_catalog)
         tx.execute(
-            "UPDATE products SET stock = ?1, needs_erp_upload = 1, updated_at = datetime('now') WHERE id = ?2",
+            "UPDATE products SET stock = ?1, updated_at = datetime('now') WHERE id = ?2",
             params![input.new_stock, input.product_id],
         )?;
 
@@ -630,10 +816,55 @@ pub fn adjust_stock_in_conn(
             input.reason.trim().to_string()
         };
 
+        let caja_id: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_code: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_name: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+
         tx.execute(
-            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents) \
-             VALUES (?1, 'adjustment', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![input.product_id, diff, reason, input.user_id, wh_id, current_stock, input.new_stock, cost_cents],
+            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
+             VALUES (?1, 'adjustment', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![input.product_id, diff, reason, input.user_id, wh_id, current_stock, input.new_stock, cost_cents, caja_id, caja_code, caja_name],
+        )?;
+
+        let movement_id = tx.last_insert_rowid();
+
+        // 🛡️ ENCOLADO RELATIVO MULTI-CAJA: Encolar delta exacto en sync_queue para no pisar ventas entre cajas
+        let sku: String = tx
+            .query_row("SELECT sku FROM products WHERE id = ?1", params![input.product_id], |r| r.get(0))?;
+
+        let erp_user_id: Option<String> = input.user_id.and_then(|uid| {
+            tx.query_row("SELECT erp_user_id FROM users WHERE id = ?1", params![uid], |r| r.get(0)).ok().flatten()
+        });
+
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let sync_uuid = format!("MOV-{}-{}", input.product_id, now_nanos);
+
+        let sync_payload = serde_json::json!({
+            "uuid": sync_uuid,
+            "sku": sku,
+            "delta": diff,
+            "warehouseId": wh_id,
+            "motivo": reason,
+            "costoCents": cost_cents,
+            "cajaId": caja_id,
+            "erpUserId": erp_user_id,
+        });
+
+        tx.execute(
+            "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('inventory_movement', ?1, ?2, 'pending')",
+            params![movement_id, sync_payload.to_string()],
         )?;
     }
 
@@ -669,7 +900,69 @@ pub fn list_warehouses(db: State<'_, Db>) -> AppResult<Vec<crate::models::produc
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Lista el historial de movimientos de inventario (Kardex) con soporte multi-bodega y temporalidad.
+/// Lista las terminales POS (Cajas) sincronizadas del ERP o registradas localmente.
+#[tauri::command]
+pub fn list_pos_terminals(db: State<'_, Db>) -> AppResult<Vec<crate::models::product::PosTerminalDto>> {
+    let conn = db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, code, name, warehouse_id, is_current, active, updated_at \
+         FROM pos_terminals \
+         WHERE active = 1 \
+         ORDER BY is_current DESC, code ASC",
+    )?;
+
+    let rows = stmt.query_map([], |r| {
+        Ok(crate::models::product::PosTerminalDto {
+            id: r.get(0)?,
+            code: r.get(1)?,
+            name: r.get(2)?,
+            warehouse_id: r.get(3)?,
+            is_current: r.get::<_, i64>(4)? != 0,
+            active: r.get::<_, i64>(5)? != 0,
+            updated_at: r.get(6)?,
+        })
+    })?;
+
+    let mut terminals: Vec<crate::models::product::PosTerminalDto> = rows.collect::<Result<Vec<_>, _>>()?;
+
+    // Fallback: si aún no hay terminales sincronizadas en pos_terminals, incluir la caja actual desde settings
+    if terminals.is_empty() {
+        let caja_id: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_code: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_name: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let wh_id: Option<String> = conn
+            .query_row("SELECT value FROM settings WHERE key = 'default_warehouse_id'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+
+        if let Some(id_or_code) = caja_id.clone().or_else(|| caja_code.clone()) {
+            let code = caja_code.unwrap_or_else(|| id_or_code.clone());
+            let name = caja_name.unwrap_or_else(|| format!("Caja {}", code));
+            terminals.push(crate::models::product::PosTerminalDto {
+                id: id_or_code,
+                code,
+                name,
+                warehouse_id: wh_id,
+                is_current: true,
+                active: true,
+                updated_at: None,
+            });
+        }
+    }
+
+    Ok(terminals)
+}
+
+/// Lista el historial de movimientos de inventario (Kardex) con soporte multi-bodega, filtro por caja y temporalidad.
 #[tauri::command]
 pub fn list_inventory_movements(
     db: State<'_, Db>,
@@ -682,6 +975,7 @@ pub fn list_inventory_movements(
 
     let target_product_id = f.product_id.or(product_id);
     let target_warehouse_id = f.warehouse_id;
+    let target_caja_id = f.caja_id;
     let target_preset = f.time_preset;
     let target_from_date = f.from_date;
     let target_to_date = f.to_date;
@@ -700,6 +994,54 @@ pub fn list_inventory_movements(
         if wh != "all" && !wh.trim().is_empty() {
             conditions.push("m.warehouse_id = ?");
             params_vec.push(wh.clone().into());
+        }
+    }
+
+    if let Some(ref cid) = target_caja_id {
+        let cid_trim = cid.trim();
+        if cid_trim != "all" && !cid_trim.is_empty() {
+            // Resolver código de la caja desde pos_terminals o settings
+            let resolved_code: String = conn
+                .query_row(
+                    "SELECT code FROM pos_terminals WHERE id = ?1 OR code = ?1 LIMIT 1",
+                    params![cid_trim],
+                    |r| r.get(0),
+                )
+                .ok()
+                .or_else(|| {
+                    let cur_id: Option<String> = conn
+                        .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+                        .ok();
+                    if cur_id.as_deref() == Some(cid_trim) {
+                        conn.query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0)).ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| cid_trim.to_string());
+
+            let cur_caja_id: Option<String> = conn
+                .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let cur_caja_code: Option<String> = conn
+                .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+                .ok()
+                .filter(|s: &String| !s.trim().is_empty());
+            let is_current_terminal = cur_caja_id.as_deref() == Some(cid_trim)
+                || cur_caja_code.as_deref() == Some(cid_trim)
+                || cur_caja_code.as_deref() == Some(resolved_code.as_str());
+
+            if is_current_terminal {
+                // Los movimientos históricos en esta terminal con caja_id NULL pertenecen a esta caja
+                conditions.push("(m.caja_id = ? OR m.caja_code = ? OR m.reference LIKE ? OR m.reference LIKE ? OR (m.caja_id IS NULL AND m.caja_code IS NULL))");
+            } else {
+                conditions.push("(m.caja_id = ? OR m.caja_code = ? OR m.reference LIKE ? OR m.reference LIKE ?)");
+            }
+            params_vec.push(cid_trim.to_string().into());
+            params_vec.push(resolved_code.clone().into());
+            params_vec.push(format!("{}-%", resolved_code).into());
+            params_vec.push(format!("NC-{}-%", resolved_code).into());
         }
     }
 
@@ -751,10 +1093,14 @@ pub fn list_inventory_movements(
         "SELECT m.id, m.product_id, p.name, p.sku, m.kind, m.quantity, \
                 m.reference, m.user_id, m.created_at, \
                 m.warehouse_id, w.code, w.name, \
-                COALESCE(m.balance_before, 0.0), COALESCE(m.balance_after, 0.0), COALESCE(m.unit_cost_cents, 0) \
+                COALESCE(m.balance_before, 0.0), COALESCE(m.balance_after, 0.0), COALESCE(m.unit_cost_cents, 0), \
+                COALESCE(m.caja_id, pt.id, (SELECT value FROM settings WHERE key = 'caja_id')), \
+                COALESCE(m.caja_code, pt.code, (SELECT value FROM settings WHERE key = 'caja_codigo')), \
+                COALESCE(m.caja_name, pt.name, (SELECT value FROM settings WHERE key = 'caja_nombre')) \
          FROM inventory_movements m \
          LEFT JOIN products p ON p.id = m.product_id \
          LEFT JOIN warehouses w ON w.id = m.warehouse_id \
+         LEFT JOIN pos_terminals pt ON pt.id = m.caja_id OR pt.code = m.caja_code \
          {where_clause} \
          ORDER BY m.id DESC LIMIT ? OFFSET ?"
     );
@@ -780,6 +1126,9 @@ pub fn list_inventory_movements(
             balance_before: r.get(12)?,
             balance_after: r.get(13)?,
             unit_cost_cents: r.get(14)?,
+            caja_id: r.get(15)?,
+            caja_code: r.get(16)?,
+            caja_name: r.get(17)?,
         })
     })?;
 
@@ -1030,10 +1379,14 @@ mod tests {
         assert!((bal_before - 10.0).abs() < 1e-6);
         assert!((bal_after - 25.0).abs() < 1e-6);
 
-        let needs_upload: i64 = conn
-            .query_row("SELECT needs_erp_upload FROM products WHERE id = 100", [], |r| r.get(0))
+        let sync_queue_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_queue WHERE entity_type = 'inventory_movement'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(needs_upload, 1);
+        assert_eq!(sync_queue_count, 1, "Debe encolar el delta de movimiento en sync_queue");
 
         // 2. Intentar ajustar a stock negativo (-5.0) debe ser bloqueado
         let neg_err = adjust_stock_in_conn(

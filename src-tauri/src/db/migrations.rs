@@ -41,6 +41,8 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0034_sales_analytics_indexes.sql"),
     include_str!("../../migrations/0035_customer_sales_indexes.sql"),
     include_str!("../../migrations/0036_warehouses_and_kardex_enhancement.sql"),
+    include_str!("../../migrations/0037_kardex_pos_terminals_filter.sql"),
+    include_str!("../../migrations/0038_sync_warehouse_code_conflict_fix.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
@@ -184,6 +186,27 @@ fn ensure_critical_schema(conn: &Connection) -> AppResult<()> {
     }
     if !column_exists(conn, "inventory_movements", "erp_movement_id") {
         let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN erp_movement_id TEXT", []);
+    }
+    let _ = conn.execute(
+        "CREATE TABLE IF NOT EXISTS pos_terminals (
+            id            TEXT PRIMARY KEY,
+            code          TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            warehouse_id  TEXT,
+            is_current    INTEGER NOT NULL DEFAULT 0,
+            active        INTEGER NOT NULL DEFAULT 1,
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    );
+    if !column_exists(conn, "inventory_movements", "caja_id") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN caja_id TEXT", []);
+    }
+    if !column_exists(conn, "inventory_movements", "caja_code") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN caja_code TEXT", []);
+    }
+    if !column_exists(conn, "inventory_movements", "caja_name") {
+        let _ = conn.execute("ALTER TABLE inventory_movements ADD COLUMN caja_name TEXT", []);
     }
 
     Ok(())

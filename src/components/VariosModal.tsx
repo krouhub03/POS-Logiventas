@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { toCents } from "../lib/money";
 import { useModals } from "../contexts/ModalContext";
 
@@ -13,12 +13,22 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
   const [desc, setDesc] = useState("Artículo común / Varios");
   const [priceInput, setPriceInput] = useState("");
   const [qtyInput, setQtyInput] = useState("1");
+  const descRef = useRef<HTMLInputElement>(null);
   const priceRef = useRef<HTMLInputElement>(null);
 
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  const handleStepQty = useCallback((delta: number) => {
+    setQtyInput((prev) => {
+      const current = parseFloat(prev);
+      const base = isNaN(current) ? 1 : current;
+      const next = Math.max(1, Math.round((base + delta) * 1000) / 1000);
+      return String(next);
+    });
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -34,24 +44,36 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
         if (e.key === "Escape") {
           e.preventDefault();
           onCloseRef.current();
+          return;
+        }
+
+        // Si el foco está en la descripción, permitir escribir texto normal con guiones o signos
+        if (document.activeElement === descRef.current) {
+          return;
+        }
+
+        // Interceptar teclas '+' y '-' (teclado estándar y numpad) para subir/bajar cantidad
+        const isPlus = e.key === "+" || e.code === "NumpadAdd";
+        const isMinus = e.key === "-" || e.code === "NumpadSubtract";
+
+        if (isPlus) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleStepQty(1);
+        } else if (isMinus) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleStepQty(-1);
         }
       };
+
       window.addEventListener("keydown", handleKey);
       return () => {
         clearTimeout(timer);
         window.removeEventListener("keydown", handleKey);
       };
     }
-  }, [isOpen]);
-
-  const handleStepQty = (delta: number) => {
-    setQtyInput((prev) => {
-      const current = parseFloat(prev);
-      const base = isNaN(current) ? 1 : current;
-      const next = Math.max(1, Math.round((base + delta) * 1000) / 1000);
-      return String(next);
-    });
-  };
+  }, [isOpen, handleStepQty]);
 
   if (!isOpen) return null;
 
@@ -101,6 +123,7 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
               Descripción del producto o servicio
             </label>
             <input
+              ref={descRef}
               type="text"
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
@@ -118,21 +141,21 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
                 ref={priceRef}
                 type="text"
                 value={priceInput}
-                onChange={(e) => setPriceInput(e.target.value)}
+                onChange={(e) => setPriceInput(e.target.value.replace(/[^0-9.]/g, ""))}
                 placeholder="0.00"
                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white font-bold text-lg focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
               />
             </div>
             <div>
               <label className="block text-xs uppercase tracking-wider font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                Cantidad
+                Cantidad <span className="text-[10px] text-slate-400 font-mono font-normal">(+ / −)</span>
               </label>
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() => handleStepQty(-1)}
                   className="w-10 h-11 shrink-0 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-bold text-lg flex items-center justify-center transition-colors cursor-pointer select-none"
-                  title="Restar 1 unidad"
+                  title="Restar 1 unidad (tecla -)"
                 >
                   −
                 </button>
@@ -143,10 +166,10 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
                   value={qtyInput}
                   onChange={(e) => setQtyInput(e.target.value.replace(/[^0-9.]/g, ""))}
                   onKeyDown={(e) => {
-                    if (e.key === "ArrowUp") {
+                    if (e.key === "ArrowUp" || e.key === "+" || e.code === "NumpadAdd") {
                       e.preventDefault();
                       handleStepQty(1);
-                    } else if (e.key === "ArrowDown") {
+                    } else if (e.key === "ArrowDown" || e.key === "-" || e.code === "NumpadSubtract") {
                       e.preventDefault();
                       handleStepQty(-1);
                     }
@@ -157,7 +180,7 @@ export function VariosModal({ isOpen, onClose, onAdd }: VariosModalProps) {
                   type="button"
                   onClick={() => handleStepQty(1)}
                   className="w-10 h-11 shrink-0 rounded-lg bg-slate-100 hover:bg-emerald-100 dark:bg-slate-800 dark:hover:bg-emerald-950/60 border border-slate-300 dark:border-slate-700 text-slate-700 hover:text-emerald-700 dark:text-slate-200 dark:hover:text-emerald-400 font-bold text-lg flex items-center justify-center transition-colors cursor-pointer select-none"
-                  title="Sumar 1 unidad"
+                  title="Sumar 1 unidad (tecla +)"
                 >
                   +
                 </button>

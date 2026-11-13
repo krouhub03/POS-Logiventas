@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
 use std::time::Duration;
 use tauri::{AppHandle, State};
@@ -1095,33 +1095,100 @@ pub async fn sync_warehouses_internal(db: &Db) -> AppResult<usize> {
         let active = if w["active"].as_bool().unwrap_or(true) { 1 } else { 0 };
 
         if !id.is_empty() && !code.is_empty() {
-            tx.execute(
-                "INSERT INTO warehouses (id, code, name, is_default, active, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
-                 ON CONFLICT(id) DO UPDATE SET
-                    code = excluded.code,
-                    name = excluded.name,
-                    is_default = excluded.is_default,
-                    active = excluded.active,
-                    updated_at = datetime('now')",
-                params![id, code, name, is_default, active],
-            )?;
+            // Verificar si ya existe una bodega por código o por id
+            let existing: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT id, name FROM warehouses WHERE code = ?1 OR id = ?2 LIMIT 1",
+                    params![code, id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+
+            match existing {
+                Some((old_id, _)) if old_id != id => {
+                    // Migrar movimientos locales vinculados al id provisional previo (ej. 'bod-default')
+                    let _ = tx.execute(
+                        "UPDATE inventory_movements SET warehouse_id = ?1 WHERE warehouse_id = ?2",
+                        params![id, old_id],
+                    );
+                    tx.execute(
+                        "UPDATE warehouses 
+                         SET id = ?1, code = ?2, name = ?3, is_default = ?4, active = ?5, updated_at = datetime('now') 
+                         WHERE id = ?6",
+                        params![id, code, name, is_default, active, old_id],
+                    )?;
+                }
+                Some((matched_id, _)) => {
+                    tx.execute(
+                        "UPDATE warehouses 
+                         SET code = ?1, name = ?2, is_default = ?3, active = ?4, updated_at = datetime('now') 
+                         WHERE id = ?5",
+                        params![code, name, is_default, active, matched_id],
+                    )?;
+                }
+                None => {
+                    tx.execute(
+                        "INSERT INTO warehouses (id, code, name, is_default, active, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
+                        params![id, code, name, is_default, active],
+                    )?;
+                }
+            }
             count += 1;
         }
     }
 
     if let Some(default_wh) = json["data"]["defaultWarehouseId"].as_str() {
         if !default_wh.is_empty() {
-            let _ = tx.execute(
-                "INSERT INTO settings (key, value) VALUES ('default_warehouse_id', ?1)
-                 ON CONFLICT(key) DO UPDATE SET value = ?1",
-                params![default_wh],
-            );
+            let _ = set_setting(&tx, "default_warehouse_id", default_wh);
         }
+    }
+
+    // Actualizar también bodega_id y bodega_nombre en settings para que la terminal siempre refleje el nombre más reciente
+    let curr_bodega_id = get_setting(&tx, "bodega_id").unwrap_or_default();
+    for w in warehouses {
+        let wid = w["id"].as_str().unwrap_or_default();
+        let wname = w["name"].as_str().unwrap_or_default();
+        let is_default = w["isDefault"].as_bool().unwrap_or(false);
+        if (!curr_bodega_id.is_empty() && curr_bodega_id == wid) || (curr_bodega_id.is_empty() && is_default) {
+            let _ = set_setting(&tx, "bodega_id", wid);
+            let _ = set_setting(&tx, "bodega_nombre", wname);
+            break;
+        }
+    }
+
+    if let Some(cajas_arr) = json["data"]["cajas"].as_array() {
+        upsert_pos_terminals_from_json(&tx, cajas_arr);
     }
 
     tx.commit()?;
     Ok(count)
+}
+
+fn upsert_pos_terminals_from_json(conn: &rusqlite::Connection, cajas_arr: &[Value]) {
+    for c in cajas_arr {
+        let id = c["id"].as_str().unwrap_or_default();
+        let code = c["code"].as_str().unwrap_or_default();
+        let name = c["name"].as_str().unwrap_or_default();
+        let wh_id = c["warehouseId"].as_str();
+        let is_current = if c["isCurrent"].as_bool().unwrap_or(false) { 1 } else { 0 };
+        let active = if c["active"].as_bool().unwrap_or(true) { 1 } else { 0 };
+
+        if !id.is_empty() && !code.is_empty() {
+            let _ = conn.execute(
+                "INSERT INTO pos_terminals (id, code, name, warehouse_id, is_current, active, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+                 ON CONFLICT(id) DO UPDATE SET
+                    code = excluded.code,
+                    name = excluded.name,
+                    warehouse_id = excluded.warehouse_id,
+                    is_current = excluded.is_current,
+                    active = excluded.active,
+                    updated_at = datetime('now')",
+                params![id, code, name, wh_id, is_current, active],
+            );
+        }
+    }
 }
 
 #[tauri::command]
@@ -1343,6 +1410,7 @@ pub async fn query_remote_kardex(
 
     let payload = serde_json::json!({
         "warehouseId": filter.warehouse_id,
+        "cajaId": filter.caja_id,
         "productId": filter.product_id,
         "erpProductId": erp_product_id,
         "sku": sku,
@@ -1372,6 +1440,12 @@ pub async fn query_remote_kardex(
         .json()
         .await
         .map_err(|e| AppError::Validation(format!("Respuesta inválida del servidor: {e}")))?;
+
+    if let Some(cajas_arr) = json["data"]["cajas"].as_array() {
+        if let Ok(conn) = db.conn() {
+            upsert_pos_terminals_from_json(&conn, cajas_arr);
+        }
+    }
 
     Ok(json["data"].clone())
 }
@@ -1761,6 +1835,116 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                     );
                     total_failed += 1;
                 }
+            }
+        }
+    }
+
+    // ── 4b. Despacho de Movimientos de Inventario ('inventory_movement') ────
+    let pending_movements = {
+        let conn = db.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, payload FROM sync_queue WHERE entity_type = 'inventory_movement' AND status = 'pending' ORDER BY id ASC LIMIT 50"
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        list
+    };
+
+    if !pending_movements.is_empty() {
+        total_dispatched += pending_movements.len();
+        let url = format!("{}/api/pos/v1/sync/inventario/movimientos", erp_url.trim_end_matches('/'));
+
+        let mut items = Vec::new();
+        for (_, p_str) in &pending_movements {
+            if let Ok(val) = serde_json::from_str::<Value>(p_str) {
+                items.push(val);
+            }
+        }
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "movimientos": items }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter().filter_map(|item| {
+                                let uuid = item["uuid"].as_str()?.to_string();
+                                let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                let err = item["error"].as_str().map(|s| s.to_string());
+                                Some((uuid, (status, err)))
+                            }).collect()
+                        })
+                        .unwrap_or_default();
+
+                    for (id, p_str) in &pending_movements {
+                        let uuid = serde_json::from_str::<Value>(p_str)
+                            .ok()
+                            .and_then(|v| v["uuid"].as_str().map(|s| s.to_string()))
+                            .unwrap_or_default();
+
+                        let (status, err) = resultados_map.get(&uuid)
+                            .cloned()
+                            .unwrap_or_else(|| ("synced".to_string(), None));
+
+                        if status == "synced" || status == "skipped" {
+                            let _ = conn.execute(
+                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                params![id],
+                            );
+                            total_synced += 1;
+                        } else {
+                            let err_msg = err.unwrap_or_else(|| "Error al procesar movimiento de inventario".to_string());
+                            let _ = conn.execute(
+                                "UPDATE sync_queue
+                                 SET attempts = attempts + 1,
+                                     last_error = ?1,
+                                     status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE status END
+                                 WHERE id = ?2",
+                                params![err_msg, id],
+                            );
+                            total_failed += 1;
+                        }
+                    }
+                } else {
+                    for (id, _) in &pending_movements {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue
+                             SET attempts = attempts + 1,
+                                 last_error = ?1,
+                                 status = CASE WHEN attempts + 1 >= 10 THEN 'failed' ELSE status END
+                             WHERE id = ?2",
+                            params![res_text, id],
+                        );
+                    }
+                    total_failed += pending_movements.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (id, _) in &pending_movements {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        params![err_str, id],
+                    );
+                }
+                total_failed += pending_movements.len();
             }
         }
     }
@@ -2304,8 +2488,9 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 let _ = pull_inventory_deltas_internal(&db).await;
             }
 
-            // 4. Sincronización asíncrona de clientes e imágenes (cada 30 segundos y en el primer ciclo)
+            // 4. Sincronización asíncrona de clientes, bodegas e imágenes (cada 30 segundos y en el primer ciclo)
             if loop_count == 1 || loop_count % 3 == 0 {
+                let _ = sync_warehouses_internal(&db).await;
                 let _ = sync_customers_internal(&db).await;
                 let _ = crate::commands::images::upload_pending_images_internal(&app, &db).await;
                 let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
