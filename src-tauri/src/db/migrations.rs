@@ -277,4 +277,98 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
     }
+
+    fn setup_db_at_v028(conn: &mut Connection) {
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        // Ejecutar solo hasta la migración 36 (estado exacto de v0.2.8)
+        for (idx, sql) in MIGRATIONS.iter().take(36).enumerate() {
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch(sql).unwrap();
+            tx.pragma_update(None, "user_version", (idx + 1) as i64).unwrap();
+            tx.commit().unwrap();
+        }
+        // Insertar un producto base para registrar movimientos históricos
+        conn.execute(
+            "INSERT INTO products (id, sku, name, price_cents, cost_cents, stock, active)
+             VALUES (1, 'SKU-TEST', 'Producto Test', 1000, 500, 10.0, 1)",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn migration_0038_handles_existing_warehouse_and_missing_bodega_nombre() {
+        // Caso 1: La caja ya tenía 'bod-default' Y también la bodega real sincronizada del ERP
+        let mut conn = Connection::open_in_memory().unwrap();
+        setup_db_at_v028(&mut conn);
+
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('bodega_id', 'bod_real_1'), ('bodega_nombre', 'Bodega Norte')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO warehouses (id, code, name, is_default, active) VALUES ('bod_real_1', 'BOD-NORTE', 'Bodega Norte', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, warehouse_id)
+             VALUES (1, 'adjustment', 5.0, 'Mov legacy', 'bod-default')",
+            [],
+        )
+        .unwrap();
+
+        // Debe migrar 0037 y 0038 sin error de UNIQUE/FK
+        run(&mut conn).unwrap();
+
+        let moved_wh: String = conn
+            .query_row(
+                "SELECT warehouse_id FROM inventory_movements WHERE reference = 'Mov legacy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(moved_wh, "bod_real_1");
+
+        // Caso 2: La caja tenía bodega_id en settings, SIN bodega_nombre, y aún no existía la bodega real en warehouses
+        let mut conn2 = Connection::open_in_memory().unwrap();
+        setup_db_at_v028(&mut conn2);
+
+        conn2
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('bodega_id', 'bod_real_2')",
+                [],
+            )
+            .unwrap();
+        conn2
+            .execute(
+                "INSERT INTO inventory_movements (product_id, kind, quantity, reference, warehouse_id)
+                 VALUES (1, 'adjustment', 3.0, 'Mov legacy 2', 'bod-default')",
+                [],
+            )
+            .unwrap();
+
+        // Debe crear la bodega con fallback NOT NULL y reasignar sin error de FK
+        run(&mut conn2).unwrap();
+
+        let (wh_id, wh_name): (String, String) = conn2
+            .query_row(
+                "SELECT id, name FROM warehouses WHERE id = 'bod_real_2'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(wh_id, "bod_real_2");
+        assert!(!wh_name.is_empty());
+
+        let moved_wh2: String = conn2
+            .query_row(
+                "SELECT warehouse_id FROM inventory_movements WHERE reference = 'Mov legacy 2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(moved_wh2, "bod_real_2");
+    }
 }
