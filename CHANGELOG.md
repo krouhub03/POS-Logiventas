@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.10] - 2026-11-13
+### Agregado
+- Habilitar reparacion del sistema en instalador Windows MSI
+
+### Cambios recientes
+- feat(installer): habilitar boton Reparar en instalador MSI y Configuración de Windows
+---
 ## [0.2.9] - 2026-11-13
 ### Agregado
 - Sincronizacion de deltas multi-caja, atajos en articulo comun y ordenamiento en Kardex
