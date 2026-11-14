@@ -5,6 +5,19 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.11] - 2026-11-14
+### Agregado
+- Sincronización multi-caja de clientes y cartera CxC, corrección de apertura (migración 0038) y cuadre de cierre Z-Report
+
+### Cambios recientes
+- feat(customers): sincronizacion multi-caja de clientes, saldos CxC, edicion y movimientos
+- fix(shifts): enviar totales autoritativos y drenar ventas pendientes antes del cierre Z-Report
+- fix(migrations): hacer migracion 0038 segura frente a restricciones FK, UNIQUE y NOT NULL en cajas reales
+- chore(release): v0.2.10 - Habilitar reparacion del sistema en instalador Windows MSI
+- feat(installer): habilitar boton Reparar en instalador MSI y Configuración de Windows
+- chore(release): v0.2.9 - Sincronizacion de deltas multi-caja, atajos en articulo comun y ordenamiento en Kardex
+- feat(pos): sincronizacion deltas inventario multi-caja, atajos + - en articulo comun y ordenamiento de columnas
+---
 ## [0.2.10] - 2026-11-13
 ### Agregado
 - Habilitar reparacion del sistema en instalador Windows MSI
