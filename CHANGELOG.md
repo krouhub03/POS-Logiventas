@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.12] - 2026-11-14
+### Agregado
+- Corrección de error FOREIGN KEY al procesar ventas y User-Agent en sincronización ERP
+
+### Cambios recientes
+- fix(sales,sync): resolver llaves foraneas de bodega/usuario/cliente y enviar User-Agent en sync
+---
 ## [0.2.11] - 2026-11-14
 ### Agregado
 - Sincronización multi-caja de clientes y cartera CxC, corrección de apertura (migración 0038) y cuadre de cierre Z-Report
