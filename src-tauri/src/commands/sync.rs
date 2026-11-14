@@ -204,7 +204,7 @@ pub async fn verify_and_reserve_stock(
         })
         .collect();
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_millis(2500))
         .build()?;
 
@@ -321,7 +321,7 @@ pub async fn release_stock_reservation(
         return Ok(());
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_millis(1500))
         .build()?;
 
@@ -347,7 +347,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         (erp_url, token)
     };
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(30))
         .build()?;
 
@@ -902,7 +902,7 @@ pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
         return Ok(0);
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(10))
         .build()?;
 
@@ -1061,7 +1061,7 @@ pub async fn sync_warehouses_internal(db: &Db) -> AppResult<usize> {
         return Ok(0);
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(10))
         .build()?;
 
@@ -1214,7 +1214,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
         return Ok(0);
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(10))
         .build()?;
 
@@ -1480,7 +1480,7 @@ pub async fn query_remote_kardex(
         (erp_url, token, erp_prod_id, prod_sku)
     };
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(12))
         .build()?;
 
@@ -1541,7 +1541,7 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         return Ok(OutboxBatchResult { dispatched: 0, synced: 0, failed: 0 });
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_secs(10))
         .build()?;
 
@@ -2392,7 +2392,7 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
         return Ok(0);
     }
 
-    let client = reqwest::Client::builder()
+    let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(Duration::from_millis(3000))
         .build()?;
 
@@ -2517,7 +2517,7 @@ pub async fn get_sync_status_internal(db: &Db) -> AppResult<SyncStatusDto> {
         }
 
         if !active_token.is_empty() {
-            let client = reqwest::Client::builder()
+            let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
                 .timeout(Duration::from_millis(4000))
                 .build()?;
             let check_url = format!("{}/api/pos/v1/terminal/estado", erp_url.trim_end_matches('/'));

@@ -419,13 +419,39 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         )
         .ok();
 
+    // Resolver llaves foráneas con fallback seguro para evitar FOREIGN KEY constraint failed
+    let resolved_user_id: Option<i64> = if let Some(uid) = input.user_id {
+        tx.query_row("SELECT id FROM users WHERE id = ?1 LIMIT 1", params![uid], |r| r.get(0))
+            .ok()
+            .or_else(|| {
+                active_shift_id.and_then(|sid| {
+                    tx.query_row(
+                        "SELECT u.id FROM cash_sessions cs JOIN users u ON u.id = cs.user_id WHERE cs.id = ?1 LIMIT 1",
+                        params![sid],
+                        |r| r.get(0),
+                    )
+                    .ok()
+                })
+            })
+            .or_else(|| {
+                tx.query_row("SELECT id FROM users WHERE active = 1 ORDER BY id ASC LIMIT 1", [], |r| r.get(0)).ok()
+            })
+    } else {
+        None
+    };
+
+    let resolved_customer_id: Option<i64> = input.customer_id.and_then(|cid| {
+        tx.query_row("SELECT id FROM customers WHERE id = ?1 LIMIT 1", params![cid], |r| r.get(0))
+            .ok()
+    });
+
     tx.execute(
         "INSERT INTO sales (folio, customer_id, user_id, cash_session_id, subtotal_cents, discount_cents, tax_cents, total_cents, paid_cents, change_cents, client_tx_id, status)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'completed')",
         params![
             folio,
-            input.customer_id,
-            input.user_id,
+            resolved_customer_id,
+            resolved_user_id,
             active_shift_id,
             subtotal_cents,
             discount_cents,
@@ -566,13 +592,26 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                 )
                 .unwrap_or((0, 0.0, 0));
 
-            let default_wh: String = tx
+            let configured_wh: Option<String> = tx
                 .query_row(
                     "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
                     [],
                     |r| r.get(0),
                 )
-                .unwrap_or_else(|_| "bod-default".to_string());
+                .ok();
+            let default_wh: Option<String> = configured_wh
+                .and_then(|wid| {
+                    tx.query_row("SELECT id FROM warehouses WHERE id = ?1 LIMIT 1", params![wid], |r| r.get(0))
+                        .ok()
+                })
+                .or_else(|| {
+                    tx.query_row("SELECT id FROM warehouses WHERE is_default = 1 LIMIT 1", [], |r| r.get(0))
+                        .ok()
+                })
+                .or_else(|| {
+                    tx.query_row("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1", [], |r| r.get(0))
+                        .ok()
+                });
             let caja_id: Option<String> = tx
                 .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
                 .ok()
@@ -623,7 +662,7 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                         tx.execute(
                             "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
                              VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), input.user_id, default_wh, child_balance_before, child_balance_after, child_cost, caja_id, caja_code, caja_name],
+                            params![child_id, -total_child_qty, format!("{folio} (Combo)"), resolved_user_id, default_wh, child_balance_before, child_balance_after, child_cost, caja_id, caja_code, caja_name],
                         )?;
                     }
                 }
@@ -645,7 +684,7 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
                 tx.execute(
                     "INSERT INTO inventory_movements (product_id, kind, quantity, reference, user_id, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
                      VALUES (?1, 'sale', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                    params![pid, -it.quantity, folio, input.user_id, default_wh, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name],
+                    params![pid, -it.quantity, folio, resolved_user_id, default_wh, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name],
                 )?;
             }
         }
@@ -1190,13 +1229,26 @@ pub fn create_sale_return_in_conn(
                 )
                 .unwrap_or((0, 1, 0, 0.0, 0));
 
-            let default_wh: String = tx
+            let configured_wh: Option<String> = tx
                 .query_row(
                     "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
                     [],
                     |r| r.get(0),
                 )
-                .unwrap_or_else(|_| "bod-default".to_string());
+                .ok();
+            let default_wh: Option<String> = configured_wh
+                .and_then(|wid| {
+                    tx.query_row("SELECT id FROM warehouses WHERE id = ?1 LIMIT 1", params![wid], |r| r.get(0))
+                        .ok()
+                })
+                .or_else(|| {
+                    tx.query_row("SELECT id FROM warehouses WHERE is_default = 1 LIMIT 1", [], |r| r.get(0))
+                        .ok()
+                })
+                .or_else(|| {
+                    tx.query_row("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1", [], |r| r.get(0))
+                        .ok()
+                });
             let caja_id: Option<String> = tx
                 .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
                 .ok()
