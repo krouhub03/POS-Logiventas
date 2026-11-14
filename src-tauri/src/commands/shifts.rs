@@ -432,6 +432,8 @@ pub fn close_shift_in_conn(
     let active = internal_get_active_shift(conn)?
         .ok_or_else(|| AppError::Validation("No hay un turno de caja abierto para cerrar".into()))?;
 
+    let summary = get_shift_summary_for_shift(conn, &active)?;
+
     let shift_id = active.id;
     let folio = active.folio;
     let user_id = active.user_id;
@@ -518,7 +520,7 @@ pub fn close_shift_in_conn(
         |r| r.get(0),
     )?;
 
-    // Encolar en sync_queue para asegurar sincronización en background
+    // Encolar en sync_queue para asegurar sincronización en background con totales autoritativos del POS
     let sync_payload = json!({
         "folioTurno": folio,
         "erpUserId": erp_user_id,
@@ -526,7 +528,13 @@ pub fn close_shift_in_conn(
         "baseInicial": (opening_cents as f64) / 100.0,
         "fechaApertura": opened_at,
         "fechaCierre": closed_at,
-        "observaciones": input.notes.clone().unwrap_or_default()
+        "observaciones": input.notes.clone().unwrap_or_default(),
+        "totalVentas": (summary.total_sales_cents as f64) / 100.0,
+        "cantidadVentas": summary.sales_count,
+        "totalEfectivo": ((summary.cash_sales_cents + summary.customer_payments_cash_cents) as f64) / 100.0,
+        "totalTarjeta": (summary.card_sales_cents as f64) / 100.0,
+        "totalDigital": ((summary.transfer_sales_cents + summary.other_sales_cents + summary.customer_payments_other_cents) as f64) / 100.0,
+        "totalIva": (summary.total_tax_cents as f64) / 100.0
     });
 
     conn.execute(
@@ -558,7 +566,7 @@ pub async fn close_shift(
     db: State<'_, Db>,
     input: CloseShiftInput,
 ) -> AppResult<CashShift> {
-    let (closed_shift, erp_url, terminal_token, erp_user_id) = {
+    let (closed_shift, erp_url, terminal_token, erp_user_id, pending_sales_or_payments, queued_payload_str) = {
         let conn = db.conn()?;
         let closed = close_shift_in_conn(&conn, &input)?;
         let erp_u = get_setting(&conn, "erp_url");
@@ -571,24 +579,47 @@ pub async fn close_shift(
             )
             .ok()
             .flatten();
-        (closed, erp_u, token, erp_uid)
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_queue WHERE status = 'pending' AND entity_type IN ('sale', 'customer_payment', 'sale_return')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let payload_str: Option<String> = conn
+            .query_row(
+                "SELECT payload FROM sync_queue WHERE entity_type = 'cash_session' AND entity_id = ?1 ORDER BY id DESC LIMIT 1",
+                params![closed.id],
+                |r| r.get(0),
+            )
+            .ok();
+        (closed, erp_u, token, erp_uid, pending_count, payload_str)
     };
 
-    // Intentar sincronizar inmediatamente con el ERP (Z-Report contable)
-    if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
+    // Si hay ventas o abonos pendientes en cola, despachar primero el outbox completo en orden
+    // para que las ventas lleguen al ERP antes que el cierre Z-Report.
+    if pending_sales_or_payments > 0 {
+        let _ = crate::commands::sync::dispatch_outbox_internal(&db).await;
+    } else if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
         let clean_url = url.trim_end_matches('/');
         let api_url = format!("{}/api/pos/v1/sync/cierre-turno", clean_url);
         let client = Client::builder().timeout(Duration::from_secs(8)).build()?;
 
-        let body = json!({
-            "folioTurno": closed_shift.folio,
-            "erpUserId": uid,
-            "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
-            "baseInicial": (closed_shift.opening_cents as f64) / 100.0,
-            "fechaApertura": closed_shift.opened_at,
-            "fechaCierre": closed_shift.closed_at.clone().unwrap_or_default(),
-            "observaciones": input.notes.clone().unwrap_or_default()
-        });
+        let mut body = queued_payload_str
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .unwrap_or_else(|| {
+                json!({
+                    "folioTurno": closed_shift.folio,
+                    "erpUserId": uid,
+                    "efectivoDeclarado": (input.declared_cents as f64) / 100.0,
+                    "baseInicial": (closed_shift.opening_cents as f64) / 100.0,
+                    "fechaApertura": closed_shift.opened_at,
+                    "fechaCierre": closed_shift.closed_at.clone().unwrap_or_default(),
+                    "observaciones": input.notes.clone().unwrap_or_default()
+                })
+            });
+        body["erpUserId"] = json!(uid);
 
         if let Ok(res) = client
             .post(&api_url)
