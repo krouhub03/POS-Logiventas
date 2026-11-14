@@ -1250,6 +1250,58 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
         rows.filter_map(|r| r.ok()).collect()
     };
 
+    // Pre-calcular deltas de cartera (CxC) pendientes en sync_queue para evitar sobreescritura/doble conteo
+    let mut pending_credit_by_customer: std::collections::HashMap<i64, i64> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending'",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        for payload_str in rows.flatten() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                if let Some(cid) = parsed["customerId"].as_i64().filter(|&id| id > 0) {
+                    if let Some(payments) = parsed["payments"].as_array() {
+                        let credit_sum: i64 = payments
+                            .iter()
+                            .filter(|p| {
+                                let m = p["method"].as_str().unwrap_or_default().to_lowercase();
+                                let erp = p["erpCode"].as_str().unwrap_or_default().to_uppercase();
+                                m == "credit"
+                                    || erp == "CREDITO"
+                                    || m.contains("credito")
+                                    || m.contains("fiar")
+                            })
+                            .filter_map(|p| p["amountCents"].as_i64())
+                            .sum();
+                        if credit_sum > 0 {
+                            *pending_credit_by_customer.entry(cid).or_insert(0) += credit_sum;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut pending_payment_by_customer: std::collections::HashMap<i64, i64> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT payload FROM sync_queue WHERE entity_type = 'customer_payment' AND status = 'pending'",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        for payload_str in rows.flatten() {
+            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+                if let Some(cid) = parsed["customerId"].as_i64().filter(|&id| id > 0) {
+                    let amt = parsed["amountCents"].as_i64().unwrap_or(0);
+                    if amt > 0 {
+                        *pending_payment_by_customer.entry(cid).or_insert(0) += amt;
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(list) = customers {
         for c in list {
             let erp_id = c["erpId"]
@@ -1275,6 +1327,21 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                 .as_i64()
                 .or_else(|| c["credit_limit_cents"].as_i64())
                 .unwrap_or(0);
+            let erp_balance_cents = c["currentBalanceCents"]
+                .as_i64()
+                .or_else(|| c["current_balance_cents"].as_i64())
+                .unwrap_or(0)
+                .max(0);
+            let is_credit_blocked: i32 = if c["isCreditBlocked"]
+                .as_bool()
+                .or_else(|| c["is_credit_blocked"].as_bool())
+                .unwrap_or(false)
+            {
+                1
+            } else {
+                0
+            };
+            let notes = c["notes"].as_str().map(str::trim).filter(|s| !s.is_empty());
             let credit_days = c["creditDays"]
                 .as_i64()
                 .or_else(|| c["credit_days"].as_i64())
@@ -1313,10 +1380,14 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
             }
 
             if let Some(local_id) = local_id_opt {
+                let pending_credit = pending_credit_by_customer.get(&local_id).copied().unwrap_or(0);
+                let pending_payment = pending_payment_by_customer.get(&local_id).copied().unwrap_or(0);
+                let effective_balance_cents = (erp_balance_cents + pending_credit - pending_payment).max(0);
+
                 if pending_customer_ids.contains(&local_id) {
                     let _ = tx.execute(
-                        "UPDATE customers SET erp_id = COALESCE(erp_id, ?1) WHERE id = ?2",
-                        params![erp_id, local_id],
+                        "UPDATE customers SET erp_id = COALESCE(erp_id, ?1), current_balance_cents = ?2 WHERE id = ?3",
+                        params![erp_id, effective_balance_cents, local_id],
                     );
                 } else {
                     tx.execute(
@@ -1324,8 +1395,9 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                          SET erp_id = ?1, name = ?2, tax_id = COALESCE(?3, tax_id), \
                              email = COALESCE(?4, email), phone = COALESCE(?5, phone), \
                              address = COALESCE(?6, address), credit_limit_cents = ?7, \
-                             credit_days = ?8, active = ?9 \
-                         WHERE id = ?10",
+                             current_balance_cents = ?8, is_credit_blocked = ?9, \
+                             credit_days = ?10, notes = COALESCE(?11, notes), active = ?12 \
+                         WHERE id = ?13",
                         params![
                             erp_id,
                             name,
@@ -1334,7 +1406,10 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                             phone,
                             address,
                             credit_limit_cents,
+                            effective_balance_cents,
+                            is_credit_blocked,
                             credit_days,
+                            notes,
                             active,
                             local_id,
                         ],
@@ -1342,8 +1417,8 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                 }
             } else {
                 tx.execute(
-                    "INSERT INTO customers (erp_id, name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, active) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 0, ?8, ?9)",
+                    "INSERT INTO customers (erp_id, name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, notes, active) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         erp_id,
                         name,
@@ -1352,7 +1427,10 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                         phone,
                         address,
                         credit_limit_cents,
+                        erp_balance_cents,
+                        is_credit_blocked,
                         credit_days,
+                        notes,
                         active,
                     ],
                 )?;
@@ -1487,8 +1565,19 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
 
         for r in rows {
             let (id, payload_str) = r?;
-            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
                 let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                if parsed["customerErpId"].is_null() {
+                    if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
+                        if let Ok(Some(erp_id)) = conn.query_row(
+                            "SELECT erp_id FROM customers WHERE id = ?1",
+                            params![cid],
+                            |row| row.get::<_, Option<String>>(0),
+                        ) {
+                            parsed["customerErpId"] = serde_json::json!(erp_id);
+                        }
+                    }
+                }
                 pending.push((id, folio));
                 json_list.push(parsed);
             }
@@ -1585,8 +1674,19 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
 
         for r in rows {
             let (id, payload_str) = r?;
-            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
                 let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                if parsed["customerErpId"].is_null() {
+                    if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
+                        if let Ok(Some(erp_id)) = conn.query_row(
+                            "SELECT erp_id FROM customers WHERE id = ?1",
+                            params![cid],
+                            |row| row.get::<_, Option<String>>(0),
+                        ) {
+                            parsed["customerErpId"] = serde_json::json!(erp_id);
+                        }
+                    }
+                }
                 pending.push((id, folio));
                 json_list.push(parsed);
             }
@@ -1683,8 +1783,19 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
 
         for r in rows {
             let (id, payload_str) = r?;
-            if let Ok(parsed) = serde_json::from_str::<Value>(&payload_str) {
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
                 let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                if parsed["customerErpId"].is_null() {
+                    if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
+                        if let Ok(Some(erp_id)) = conn.query_row(
+                            "SELECT erp_id FROM customers WHERE id = ?1",
+                            params![cid],
+                            |row| row.get::<_, Option<String>>(0),
+                        ) {
+                            parsed["customerErpId"] = serde_json::json!(erp_id);
+                        }
+                    }
+                }
                 pending.push((id, folio));
                 json_list.push(parsed);
             }

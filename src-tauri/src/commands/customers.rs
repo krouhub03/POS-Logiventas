@@ -46,6 +46,52 @@ pub struct UpdateCustomerCreditInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateCustomerInput {
+    pub id: i64,
+    pub name: String,
+    pub tax_id: Option<String>,
+    pub email: Option<String>,
+    pub phone: Option<String>,
+    pub address: Option<String>,
+    pub credit_limit_cents: Option<i64>,
+    pub credit_days: Option<i32>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCustomerCreditSaleDto {
+    pub id: String,
+    pub folio: String,
+    pub total_cents: i64,
+    pub credit_amount_cents: i64,
+    pub created_at: String,
+    pub concepto: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCustomerPaymentDto {
+    pub id: String,
+    pub folio: String,
+    pub amount_cents: i64,
+    pub method: String,
+    pub created_at: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerRemoteMovementsDto {
+    pub current_balance_cents: i64,
+    pub credit_limit_cents: i64,
+    pub is_credit_blocked: bool,
+    pub credit_sales: Vec<RemoteCustomerCreditSaleDto>,
+    pub payments: Vec<RemoteCustomerPaymentDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordCustomerPaymentInput {
     pub customer_id: i64,
     pub user_id: i64,
@@ -712,6 +758,172 @@ pub fn get_customer_credit_sales_in_conn(
     }
 
     Ok(sales)
+}
+
+#[tauri::command]
+pub async fn update_customer(
+    db: State<'_, Db>,
+    input: UpdateCustomerInput,
+) -> Result<CustomerDto, String> {
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err("El nombre del cliente es obligatorio".to_string());
+    }
+
+    let conn = db.conn().map_err(|e| e.to_string())?;
+    let clean_tax_id = input.tax_id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let clean_email = input.email.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let clean_phone = input.phone.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let clean_address = input.address.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let clean_notes = input.notes.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    // Verificar que la cédula/NIT no pertenezca a otro cliente distinto
+    if let Some(tid) = clean_tax_id {
+        let duplicate: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM customers WHERE tax_id = ?1 AND id != ?2 LIMIT 1",
+                params![tid, input.id],
+                |r| r.get(0),
+            )
+            .ok();
+        if duplicate.is_some() {
+            return Err(format!("Ya existe otro cliente registrado con el documento {tid}"));
+        }
+    }
+
+    conn.execute(
+        "UPDATE customers \
+         SET name = ?1, tax_id = ?2, email = ?3, phone = ?4, address = ?5, \
+             credit_limit_cents = COALESCE(?6, credit_limit_cents), \
+             credit_days = COALESCE(?7, credit_days), \
+             notes = COALESCE(?8, notes), \
+             updated_at = datetime('now') \
+         WHERE id = ?9",
+        params![
+            name,
+            clean_tax_id,
+            clean_email,
+            clean_phone,
+            clean_address,
+            input.credit_limit_cents,
+            input.credit_days,
+            clean_notes,
+            input.id,
+        ],
+    )
+    .map_err(|e| format!("Error actualizando cliente: {}", e))?;
+
+    let sql = format!("SELECT {CUSTOMER_COLUMNS} FROM customers WHERE id = ?1");
+    let updated = conn
+        .query_row(&sql, params![input.id], map_customer)
+        .map_err(|e| format!("Error consultando cliente actualizado: {}", e))?;
+
+    let payload = serde_json::json!({
+        "localId": updated.id,
+        "erpId": updated.erp_id,
+        "name": updated.name,
+        "taxId": updated.tax_id,
+        "email": updated.email,
+        "phone": updated.phone,
+        "address": updated.address,
+        "creditLimitCents": updated.credit_limit_cents,
+        "creditDays": updated.credit_days,
+        "isCreditBlocked": updated.is_credit_blocked,
+        "notes": updated.notes,
+        "active": updated.active
+    });
+
+    let _ = conn.execute(
+        "INSERT INTO sync_queue (entity_type, entity_id, payload, status) \
+         VALUES ('customer', ?1, ?2, 'pending')",
+        params![updated.id, payload.to_string()],
+    );
+
+    Ok(updated)
+}
+
+fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+#[tauri::command]
+pub async fn get_customer_remote_movements(
+    db: State<'_, Db>,
+    erp_id: String,
+) -> Result<CustomerRemoteMovementsDto, String> {
+    let trimmed = erp_id.trim();
+    if trimmed.is_empty() {
+        return Err("Cliente sin erpId".to_string());
+    }
+
+    let (erp_url, token) = {
+        let conn = db.conn().map_err(|e| e.to_string())?;
+        let erp_url = get_setting(&conn, "erp_url")
+            .or_else(|| get_setting(&conn, "erp_api_url"))
+            .unwrap_or_else(|| "http://localhost:3000".into());
+        let token = get_setting(&conn, "terminal_token").unwrap_or_default();
+        (erp_url, token)
+    };
+
+    if token.is_empty() {
+        return Err("Terminal no vinculada".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!(
+        "{}/api/pos/v1/sync/clientes/{}/movimientos",
+        erp_url.trim_end_matches('/'),
+        trimmed
+    );
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Sin conexión al consultar movimientos remotos: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Error HTTP {} al consultar movimientos remotos", resp.status()));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let data = &json["data"];
+    let cust = &data["customer"];
+
+    let credit_sales = data["creditSales"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| serde_json::from_value::<RemoteCustomerCreditSaleDto>(item.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let payments = data["payments"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| serde_json::from_value::<RemoteCustomerPaymentDto>(item.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(CustomerRemoteMovementsDto {
+        current_balance_cents: cust["currentBalanceCents"].as_i64().unwrap_or(0),
+        credit_limit_cents: cust["creditLimitCents"].as_i64().unwrap_or(0),
+        is_credit_blocked: cust["isCreditBlocked"].as_bool().unwrap_or(false),
+        credit_sales,
+        payments,
+    })
 }
 
 #[cfg(test)]

@@ -586,6 +586,44 @@ export interface UpdateCustomerCreditInput {
   notes?: string | null;
 }
 
+export interface UpdateCustomerInput {
+  id: number;
+  name: string;
+  taxId?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  creditLimitCents?: number;
+  creditDays?: number;
+  notes?: string | null;
+}
+
+export interface RemoteCustomerCreditSale {
+  id: string;
+  folio: string;
+  totalCents: number;
+  creditAmountCents: number;
+  createdAt: string;
+  concepto: string;
+}
+
+export interface RemoteCustomerPayment {
+  id: string;
+  folio: string;
+  amountCents: number;
+  method: string;
+  createdAt: string;
+  notes?: string | null;
+}
+
+export interface CustomerRemoteMovements {
+  currentBalanceCents: number;
+  creditLimitCents: number;
+  isCreditBlocked: boolean;
+  creditSales: RemoteCustomerCreditSale[];
+  payments: RemoteCustomerPayment[];
+}
+
 export interface RecordCustomerPaymentInput {
   customerId: number;
   userId: number;

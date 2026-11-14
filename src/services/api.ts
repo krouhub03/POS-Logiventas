@@ -42,6 +42,8 @@ import type {
   TerminalStatus,
   TodaySalesSummary,
   UpdateCustomerCreditInput,
+  UpdateCustomerInput,
+  CustomerRemoteMovements,
   UpdateProductInput,
   VerifyStockResult,
   PlanInfo,
@@ -253,6 +255,7 @@ export const api = {
     get: (id: number) => invoke<Customer>("get_customer", { id }),
     search: (query: string) => invoke<Customer[]>("search_customers", { query }),
     create: (input: CreateCustomerInput) => invoke<Customer>("create_customer", { input }),
+    update: (input: UpdateCustomerInput) => invoke<Customer>("update_customer", { input }),
     updateCredit: (input: UpdateCustomerCreditInput) =>
       invoke<Customer>("update_customer_credit", { input }),
     recordPayment: (input: RecordCustomerPaymentInput) =>
@@ -261,6 +264,8 @@ export const api = {
       invoke<CustomerPayment[]>("get_customer_payments", { customerId }),
     getCreditSales: (customerId: number, limit?: number) =>
       invoke<CustomerCreditSale[]>("get_customer_credit_sales", { customerId, limit }),
+    getRemoteMovements: (erpId: string) =>
+      invoke<CustomerRemoteMovements>("get_customer_remote_movements", { erpId }),
     printStatement: (customerId: number) =>
       invoke<string>("print_customer_statement", { customerId }),
   },

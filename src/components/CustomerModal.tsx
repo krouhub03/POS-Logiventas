@@ -52,6 +52,7 @@ export function CustomerModal({
   const [newAddress, setNewAddress] = useState("");
   const [newCreditLimitStr, setNewCreditLimitStr] = useState("");
   const [newCreditDays, setNewCreditDays] = useState(30);
+  const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
 
   // Formulario de Abono a Cartera
@@ -101,32 +102,80 @@ export function CustomerModal({
     setActiveTab("creditSales");
     setExpandedSaleId(null);
 
-    // Cargar compras anotadas al crédito
+    // Cargar compras anotadas al crédito (locales + remotas multi-caja)
     setLoadingSales(true);
-    api.customers
-      .getCreditSales(customer.id)
-      .then((list) => {
-        setCreditSales(list);
-        if (list.length > 0) {
-          setExpandedSaleId(list[0].id);
-        }
-      })
-      .catch((err) => {
-        console.warn("Error cargando compras a crédito del cliente:", err);
-        setCreditSales([]);
-      })
-      .finally(() => setLoadingSales(false));
-
-    // Cargar historial de abonos
     setLoadingPayments(true);
-    api.customers
-      .getPayments(customer.id)
-      .then((list) => setCustomerPayments(list))
-      .catch((err) => {
-        console.warn("Error cargando historial de abonos del cliente:", err);
-        setCustomerPayments([]);
+
+    const localSalesPromise = api.customers.getCreditSales(customer.id).catch(() => [] as CustomerCreditSale[]);
+    const localPaymentsPromise = api.customers.getPayments(customer.id).catch(() => [] as CustomerPayment[]);
+    const remotePromise = customer.erpId
+      ? api.customers.getRemoteMovements(customer.erpId).catch(() => null)
+      : Promise.resolve(null);
+
+    Promise.all([localSalesPromise, localPaymentsPromise, remotePromise])
+      .then(([localSales, localPayments, remote]) => {
+        const mergedSales = [...localSales];
+        if (remote?.creditSales?.length) {
+          const seenFolios = new Set(localSales.map((s) => s.folio));
+          for (const rs of remote.creditSales) {
+            if (!seenFolios.has(rs.folio)) {
+              mergedSales.push({
+                id: -Math.abs(mergedSales.length + 1),
+                folio: rs.folio,
+                customerId: customer.id,
+                cashierName: "Otra Caja / ERP",
+                subtotalCents: rs.totalCents,
+                discountCents: 0,
+                taxCents: 0,
+                totalCents: rs.totalCents,
+                creditAmountCents: rs.creditAmountCents,
+                otherPaymentsCents: Math.max(0, rs.totalCents - rs.creditAmountCents),
+                returnStatus: "none",
+                returnedCents: 0,
+                createdAt: rs.createdAt,
+                itemsCount: 0,
+                items: [],
+              });
+            }
+          }
+          mergedSales.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        }
+        setCreditSales(mergedSales);
+        if (mergedSales.length > 0) {
+          setExpandedSaleId(mergedSales[0].id);
+        }
+
+        const mergedPayments = [...localPayments];
+        if (remote?.payments?.length) {
+          const seenPaymentFolios = new Set(localPayments.map((p) => p.folio));
+          for (const rp of remote.payments) {
+            if (!seenPaymentFolios.has(rp.folio)) {
+              mergedPayments.push({
+                id: -Math.abs(mergedPayments.length + 1),
+                folio: rp.folio,
+                customerId: customer.id,
+                customerName: customer.name,
+                sessionId: null,
+                userId: 0,
+                paymentMethodId: null,
+                method: rp.method,
+                amountCents: rp.amountCents,
+                previousBalanceCents: 0,
+                newBalanceCents: 0,
+                reference: "Sincronizado ERP",
+                notes: rp.notes ?? null,
+                createdAt: rp.createdAt,
+              });
+            }
+          }
+          mergedPayments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        }
+        setCustomerPayments(mergedPayments);
       })
-      .finally(() => setLoadingPayments(false));
+      .finally(() => {
+        setLoadingSales(false);
+        setLoadingPayments(false);
+      });
   };
 
   const handleReprintSaleTicket = async (saleId: number, e: React.MouseEvent) => {
@@ -176,6 +225,7 @@ export function CustomerModal({
       setNewAddress("");
       setNewCreditLimitStr("");
       setNewCreditDays(30);
+      setEditingCustomerId(null);
 
       setTimeout(() => searchInputRef.current?.focus(), 50);
 
@@ -310,6 +360,23 @@ export function CustomerModal({
     }
   };
 
+  const handleOpenEdit = (customer: Customer) => {
+    setError(null);
+    setSuccessMsg(null);
+    setEditingCustomerId(customer.id);
+    setNewName(customer.name || "");
+    setNewTaxId(customer.taxId || "");
+    setNewPhone(customer.phone || "");
+    setNewEmail(customer.email || "");
+    setNewAddress(customer.address || "");
+    setNewCreditLimitStr(
+      customer.creditLimitCents > 0 ? String(customer.creditLimitCents / 100) : ""
+    );
+    setNewCreditDays(customer.creditDays || 30);
+    setMode("create");
+    setTimeout(() => newNameInputRef.current?.focus(), 50);
+  };
+
   const handleCreateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -324,21 +391,44 @@ export function CustomerModal({
     setCreating(true);
     try {
       const creditLimitCents = newCreditLimitStr.trim() ? toCents(newCreditLimitStr) : 0;
-      const input: CreateCustomerInput = {
-        name,
-        taxId: newTaxId.trim() || undefined,
-        phone: newPhone.trim() || undefined,
-        email: newEmail.trim() || undefined,
-        address: newAddress.trim() || undefined,
-        creditLimitCents,
-        creditDays: newCreditDays,
-      };
 
-      const created = await api.customers.create(input);
-      // Empujar inmediatamente a la nube sin bloquear la caja
-      api.sync.dispatchOutbox().catch(() => {});
-      onSelect(created);
-      onClose();
+      if (editingCustomerId !== null) {
+        const updated = await api.customers.update({
+          id: editingCustomerId,
+          name,
+          taxId: newTaxId.trim() || null,
+          phone: newPhone.trim() || null,
+          email: newEmail.trim() || null,
+          address: newAddress.trim() || null,
+          creditLimitCents,
+          creditDays: newCreditDays,
+        });
+        api.sync.dispatchOutbox().catch(() => {});
+        setDetailCustomer(updated);
+        setCustomers((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        if (currentCustomer?.id === updated.id) {
+          onSelect(updated);
+        }
+        setEditingCustomerId(null);
+        setSuccessMsg("✓ Cliente actualizado y encolado para sincronización.");
+        setMode("details");
+      } else {
+        const input: CreateCustomerInput = {
+          name,
+          taxId: newTaxId.trim() || undefined,
+          phone: newPhone.trim() || undefined,
+          email: newEmail.trim() || undefined,
+          address: newAddress.trim() || undefined,
+          creditLimitCents,
+          creditDays: newCreditDays,
+        };
+
+        const created = await api.customers.create(input);
+        // Empujar inmediatamente a la nube sin bloquear la caja
+        api.sync.dispatchOutbox().catch(() => {});
+        onSelect(created);
+        onClose();
+      }
     } catch (err: unknown) {
       setError(String(err));
     } finally {
@@ -677,14 +767,24 @@ export function CustomerModal({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={(e) => handleOpenPayment(detailCustomer, e)}
-                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/70 transition-colors cursor-pointer flex items-center justify-center gap-1.5 self-start sm:self-center"
-              >
-                <span>💵</span>
-                <span>Registrar Abono</span>
-              </button>
+              <div className="flex items-center gap-2 self-start sm:self-center">
+                <button
+                  type="button"
+                  onClick={() => handleOpenEdit(detailCustomer)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-200/80 hover:bg-slate-300/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <span>✏️</span>
+                  <span>Editar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleOpenPayment(detailCustomer, e)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700/70 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <span>💵</span>
+                  <span>Registrar Abono</span>
+                </button>
+              </div>
             </div>
 
             {/* KPIs FINANCIEROS DE CARTERA */}
@@ -1421,7 +1521,11 @@ export function CustomerModal({
                 disabled={creating || !newName.trim()}
                 className="flex-2 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
               >
-                {creating ? "Guardando…" : "Guardar y Asignar Cliente (Enter)"}
+                {creating
+                  ? "Guardando…"
+                  : editingCustomerId !== null
+                    ? "Guardar Cambios (Enter)"
+                    : "Guardar y Asignar Cliente (Enter)"}
               </button>
             </div>
           </form>
