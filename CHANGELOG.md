@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.13] - 2026-11-15
+### Agregado
+- Sincronización de cantidades agregadas desde edición/ajuste y navegación con flechas en modales
+
+### Cambios recientes
+- fix(sync,ui): sincronizar deltas de stock al editar producto, proteger ajustes pendientes y navegar botones con flechas
+---
 ## [0.2.12] - 2026-11-14
 ### Agregado
 - Corrección de error FOREIGN KEY al procesar ventas y User-Agent en sincronización ERP
