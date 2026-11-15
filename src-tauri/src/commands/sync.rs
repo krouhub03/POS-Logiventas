@@ -2684,6 +2684,21 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
         }
     }
 
+    // 5. Ajustes / entradas / salidas manuales de inventario pendientes en sync_queue
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT im.product_id, COALESCE(SUM(im.quantity), 0) \
+         FROM inventory_movements im \
+         JOIN sync_queue sq ON sq.entity_type = 'inventory_movement' AND sq.entity_id = im.id \
+         WHERE sq.status != 'synced' \
+         GROUP BY im.product_id",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
+            for (pid, qty) in rows.flatten() {
+                *map.entry(pid).or_insert(0.0) += qty;
+            }
+        }
+    }
+
     map
 }
 
@@ -2737,7 +2752,18 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
         )
         .unwrap_or(0.0);
 
-    (direct_returned + combo_returned) - (direct_sold + combo_sold)
+    let manual_adjustments: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(im.quantity), 0) \
+             FROM inventory_movements im \
+             JOIN sync_queue sq ON sq.entity_type = 'inventory_movement' AND sq.entity_id = im.id \
+             WHERE im.product_id = ?1 AND sq.status != 'synced'",
+            params![local_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
+    (direct_returned + combo_returned + manual_adjustments) - (direct_sold + combo_sold)
 }
 
 #[cfg(test)]

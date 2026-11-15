@@ -655,6 +655,14 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     let mut conn = db.conn()?;
     let tx = conn.transaction()?;
 
+    let prev_stock: f64 = tx
+        .query_row(
+            "SELECT stock FROM products WHERE id = ?1",
+            params![input.id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+
     // Si se marca como combo, verificar que no sea ya insumo hijo de otro combo
     if is_bundle {
         let used_as_child: i64 = tx
@@ -711,6 +719,60 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
             input.id,
         ],
     )?;
+
+    // Si el cajero modificó la cantidad desde la edición del producto, registrar y encolar el delta
+    // relativo en 'inventory_movement' para que el ERP y las demás cajas reciban el cambio.
+    let stock_diff = stock - prev_stock;
+    if controls_stock && !is_bundle && stock_diff.abs() > f64::EPSILON {
+        let default_wh: String = tx
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'default_warehouse_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "bod-default".to_string());
+        let caja_id: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_id'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_code: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_codigo'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+        let caja_name: Option<String> = tx
+            .query_row("SELECT value FROM settings WHERE key = 'caja_nombre'", [], |r| r.get(0))
+            .ok()
+            .filter(|s: &String| !s.trim().is_empty());
+
+        let reason = "Ajuste desde edición de producto";
+        tx.execute(
+            "INSERT INTO inventory_movements (product_id, kind, quantity, reference, warehouse_id, balance_before, balance_after, unit_cost_cents, caja_id, caja_code, caja_name) \
+             VALUES (?1, 'adjustment', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![input.id, stock_diff, reason, default_wh, prev_stock, stock, cost_cents, caja_id, caja_code, caja_name],
+        )?;
+        let movement_id = tx.last_insert_rowid();
+
+        let now_nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let sync_uuid = format!("MOV-{}-{}", input.id, now_nanos);
+
+        let sync_payload = serde_json::json!({
+            "uuid": sync_uuid,
+            "sku": input.sku.trim(),
+            "delta": stock_diff,
+            "warehouseId": default_wh,
+            "motivo": reason,
+            "costoCents": cost_cents,
+            "cajaId": caja_id,
+        });
+
+        tx.execute(
+            "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('inventory_movement', ?1, ?2, 'pending')",
+            params![movement_id, sync_payload.to_string()],
+        )?;
+    }
 
     if let Some(ref local_path) = input.image_local_path {
         tx.execute(

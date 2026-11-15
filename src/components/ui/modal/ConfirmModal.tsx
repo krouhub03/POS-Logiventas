@@ -25,26 +25,45 @@ export function ConfirmModal({
   onCancel,
 }: ConfirmModalProps) {
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => confirmBtnRef.current?.focus(), 50);
 
       const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === "Enter") {
-          // Si el usuario tiene el foco explícitamente en el botón de cancelar, permitir cancelación
-          if (document.activeElement && document.activeElement.getAttribute("data-modal-cancel") === "true") {
-            return;
-          }
+        if (
+          e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown"
+        ) {
           e.preventDefault();
           e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (document.activeElement === confirmBtnRef.current) {
+            cancelBtnRef.current?.focus();
+          } else {
+            confirmBtnRef.current?.focus();
+          }
+          return;
+        }
+
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (document.activeElement === cancelBtnRef.current || document.activeElement?.getAttribute("data-modal-cancel") === "true") {
+            onCancel();
+            return;
+          }
           onConfirm();
         }
       };
-      window.addEventListener("keydown", handleKeyDown);
-      return () => window.removeEventListener("keydown", handleKeyDown);
+      window.addEventListener("keydown", handleKeyDown, true);
+      return () => window.removeEventListener("keydown", handleKeyDown, true);
     }
-  }, [isOpen, onConfirm]);
+  }, [isOpen, onConfirm, onCancel]);
 
   const variantConfig = {
     danger: {
@@ -82,10 +101,11 @@ export function ConfirmModal({
 
       <ModalFooter className="justify-center gap-3">
         <button
+          ref={cancelBtnRef}
           type="button"
           data-modal-cancel="true"
           onClick={onCancel}
-          className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer"
+          className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-400 dark:focus:ring-slate-500"
         >
           {cancelText} (Esc)
         </button>
@@ -93,7 +113,7 @@ export function ConfirmModal({
           ref={confirmBtnRef}
           type="button"
           onClick={onConfirm}
-          className={`px-5 py-2 rounded-xl ${variantConfig.confirmBtn} text-xs font-black shadow-md transition-all cursor-pointer`}
+          className={`px-5 py-2 rounded-xl ${variantConfig.confirmBtn} text-xs font-black shadow-md transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500`}
         >
           {confirmText} (Enter)
         </button>
