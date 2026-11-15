@@ -181,7 +181,7 @@ export function SalesStationPage({
   onNavigateToReports,
 }: SalesStationPageProps) {
   const { theme, toggleTheme } = useTheme();
-  const { confirm, alert: modalAlert } = useModals();
+  const { confirm, alert: modalAlert, isAnyModalOpen } = useModals();
 
   // Tabs de Tickets: Persistidos permanentemente en localStorage (mínimo 1 ticket siempre)
   const [tickets, setTickets] = useState<TicketTab[]>(getInitialTickets);
@@ -1534,7 +1534,7 @@ export function SalesStationPage({
   // Manejador global de atajos de teclado estilo Eleventa
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingQtyLineId !== null) return;
+    if (isAnyModalOpen || isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingQtyLineId !== null) return;
     if (editingTicketId !== null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1682,12 +1682,12 @@ export function SalesStationPage({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, onNavigateToReports, barcodeInput, tickets, activeTicketId]);
+  }, [isActive, isAnyModalOpen, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId, cartLines, selectedLineIndex, onLockTerminal, onNavigateToSettings, onNavigateToReports, barcodeInput, tickets, activeTicketId]);
 
   // Re-enfocar automáticamente el input si se hace clic en cualquier zona libre de la estación
   useEffect(() => {
     if (!isActive) return;
-    if (isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
+    if (isAnyModalOpen || isSearchOpen || isCobroOpen || isVariosOpen || isCustomerModalOpen || isRecentSalesOpen || isReceiptModalOpen || isUserProfileModalOpen || editingTicketId !== null || editingQtyLineId !== null) return;
 
     const handleGlobalClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
@@ -1703,7 +1703,7 @@ export function SalesStationPage({
     };
     window.addEventListener("click", handleGlobalClick);
     return () => window.removeEventListener("click", handleGlobalClick);
-  }, [isActive, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId]);
+  }, [isActive, isAnyModalOpen, isSearchOpen, isCobroOpen, isVariosOpen, isCustomerModalOpen, isRecentSalesOpen, isReceiptModalOpen, isUserProfileModalOpen, editingTicketId, editingQtyLineId]);
 
   // Temporizador de auto-bloqueo de terminal por inactividad
   useEffect(() => {

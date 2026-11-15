@@ -26,6 +26,7 @@ export interface AlertOptions {
 interface ModalContextValue {
   confirm: (options: ConfirmOptions | string) => Promise<boolean>;
   alert: (options: AlertOptions | string) => Promise<void>;
+  isAnyModalOpen: boolean;
 }
 
 const ModalContext = createContext<ModalContextValue | null>(null);
@@ -77,8 +78,10 @@ export function ModalProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const isAnyModalOpen = Boolean(confirmState?.isOpen || alertState?.isOpen);
+
   return (
-    <ModalContext.Provider value={{ confirm, alert }}>
+    <ModalContext.Provider value={{ confirm, alert, isAnyModalOpen }}>
       {children}
 
       {/* Modal de confirmación activo */}
