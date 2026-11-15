@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.14] - 2026-11-15
+### Agregado
+- Mejoras en modales y estación de ventas
+
+### Cambios recientes
+- fix(ui): mejoras en modales y estacion de ventas
+---
 ## [0.2.13] - 2026-11-15
 ### Agregado
 - Sincronización de cantidades agregadas desde edición/ajuste y navegación con flechas en modales
