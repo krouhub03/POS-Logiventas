@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.16] - 2026-11-16
+### Agregado
+- Corrección de desincronización de inventario multi-caja, protección de cantidad y sincronización completa al inicio
+
+### Cambios recientes
+- fix(sync,customers): ignorar ajustes rechazados en deltas, limite de stock, catalogo completo al inicio y clientes
+---
 ## [0.2.15] - 2026-11-16
 ### Agregado
 - Sincronización incremental de inventario entre cajas y edición de productos sin stock
