@@ -691,15 +691,40 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
     }
 
     // Validar y registrar pagos a crédito sobre cartera de cliente
-    let credit_amount_cents: i64 = input
-        .payments
-        .iter()
-        .filter(|p| {
-            let m = p.method.to_lowercase();
-            m == "credit" || m == "credito" || m.contains("crédito") || m.contains("credito")
-        })
-        .map(|p| p.amount_cents)
-        .sum();
+    let mut credit_amount_cents: i64 = 0;
+    for p in &input.payments {
+        let m = p.method.to_lowercase();
+        let is_credit_by_name = m == "credit"
+            || m == "credito"
+            || m.contains("crédito")
+            || m.contains("credito")
+            || m.contains("fiar")
+            || m.contains("cartera");
+        let is_credit_by_db = if !is_credit_by_name {
+            tx.query_row(
+                "SELECT type, erp_code FROM payment_methods WHERE code = ?1 OR erp_code = ?1 OR id = ?1 LIMIT 1",
+                params![p.method],
+                |r| {
+                    let t: Option<String> = r.get(0)?;
+                    let erp: Option<String> = r.get(1)?;
+                    Ok(
+                        t.as_deref().map(|s| s.eq_ignore_ascii_case("CREDITO")).unwrap_or(false)
+                            || erp
+                                .as_deref()
+                                .map(|s| s.to_uppercase().contains("CREDITO"))
+                                .unwrap_or(false),
+                    )
+                },
+            )
+            .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if is_credit_by_name || is_credit_by_db {
+            credit_amount_cents += p.amount_cents;
+        }
+    }
 
     if credit_amount_cents > 0 {
         let customer_id = input.customer_id.ok_or_else(|| {
@@ -721,12 +746,23 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
             )));
         }
 
+        if credit_limit <= 0 {
+            return Err(AppError::Validation(format!(
+                "El cliente '{}' no tiene cupo de crédito autorizado ($0.00). Asígnele un cupo de crédito mayor a cero para poder fiarle.",
+                customer_name
+            )));
+        }
+
         let nuevo_saldo = current_balance + credit_amount_cents;
-        if credit_limit > 0 && nuevo_saldo > credit_limit {
+        if nuevo_saldo > credit_limit {
             let cupo_disponible = (credit_limit - current_balance).max(0);
             return Err(AppError::Validation(format!(
-                "El cliente '{}' excede su cupo de crédito. Cupo total: {}, Saldo deudor: {}, Cupo disponible: {}, Solicitado: {}",
-                customer_name, credit_limit, current_balance, cupo_disponible, credit_amount_cents
+                "El cliente '{}' no tiene cupo suficiente. Cupo autorizado: ${:.2}, Saldo deudor: ${:.2}, Cupo disponible: ${:.2}, Solicitado a crédito: ${:.2}",
+                customer_name,
+                credit_limit as f64 / 100.0,
+                current_balance as f64 / 100.0,
+                cupo_disponible as f64 / 100.0,
+                credit_amount_cents as f64 / 100.0
             )));
         }
 
@@ -826,19 +862,19 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         })
     }).collect();
 
-    let customer_info: Option<(String, Option<String>)> = if let Some(cid) = input.customer_id {
+    let customer_info: Option<(String, Option<String>, Option<String>)> = if let Some(cid) = input.customer_id {
         tx.query_row(
-            "SELECT name, tax_id FROM customers WHERE id = ?1",
+            "SELECT name, tax_id, erp_id FROM customers WHERE id = ?1",
             params![cid],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok()
     } else {
         None
     };
 
-    let (customer_name, customer_tax_id) = match customer_info {
-        Some((name, tax_id)) => (Some(name), tax_id),
-        None => (None, None),
+    let (customer_name, customer_tax_id, customer_erp_id) = match customer_info {
+        Some((name, tax_id, erp_id)) => (Some(name), tax_id, erp_id),
+        None => (None, None, None),
     };
 
     let cashier_info: Option<(Option<String>, String)> = if let Some(uid) = input.user_id {
@@ -863,6 +899,7 @@ pub fn create_sale_in_conn(conn: &mut Connection, input: CreateSaleInput) -> App
         "erpUserId": cajero_erp_id,
         "cajeroNombre": cajero_nombre,
         "customerId": input.customer_id,
+        "customerErpId": customer_erp_id,
         "customerName": customer_name,
         "customerTaxId": customer_tax_id,
         "subtotalCents": subtotal_cents,
@@ -2070,6 +2107,43 @@ mod tests {
             )
             .unwrap();
         assert_eq!(new_balance, 5000000);
+
+        // 3. Cliente sin cupo autorizado (credit_limit_cents = 0) -> Debe bloquearse toda venta a crédito
+        conn.execute(
+            "INSERT INTO customers (id, name, tax_id, credit_limit_cents, current_balance_cents, is_credit_blocked, active)
+             VALUES (9, 'Cliente Sin Cupo', '111222333', 0, 0, 0, 1)",
+            [],
+        )
+        .unwrap();
+
+        let no_credit_limit = create_sale_in_conn(
+            &mut conn,
+            CreateSaleInput {
+                user_id: Some(1),
+                customer_id: Some(9),
+                items: vec![CartItemInput {
+                    product_id: Some(30),
+                    sku: None,
+                    barcode: None,
+                    description: "Arroz 5kg".into(),
+                    quantity: 1.0,
+                    unit_price_cents: 2000000,
+                    tax_rate_bp: Some(0),
+                    tax_fixed_cents: Some(0),
+                    discount_cents: Some(0),
+                }],
+                payments: vec![PaymentInput {
+                    method: "credito_cliente".into(),
+                    amount_cents: 2000000,
+                    reference: None,
+                }],
+                client_tx_id: None,
+            },
+        );
+        assert!(
+            no_credit_limit.is_err(),
+            "No debe permitir registrar ventas a crédito a clientes sin cupo ($0)"
+        );
     }
 
     #[test]

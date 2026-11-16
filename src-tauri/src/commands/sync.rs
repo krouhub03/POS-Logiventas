@@ -1366,7 +1366,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
         std::collections::HashMap::new();
     {
         let mut stmt = tx.prepare(
-            "SELECT payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending'",
+            "SELECT payload FROM sync_queue WHERE entity_type = 'sale' AND status IN ('pending', 'in_flight')",
         )?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         for payload_str in rows.flatten() {
@@ -1380,8 +1380,11 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                                 let erp = p["erpCode"].as_str().unwrap_or_default().to_uppercase();
                                 m == "credit"
                                     || erp == "CREDITO"
+                                    || erp.contains("CREDITO")
                                     || m.contains("credito")
+                                    || m.contains("crédito")
                                     || m.contains("fiar")
+                                    || m.contains("cartera")
                             })
                             .filter_map(|p| p["amountCents"].as_i64())
                             .sum();
@@ -1398,7 +1401,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
         std::collections::HashMap::new();
     {
         let mut stmt = tx.prepare(
-            "SELECT payload FROM sync_queue WHERE entity_type = 'customer_payment' AND status = 'pending'",
+            "SELECT payload FROM sync_queue WHERE entity_type = 'customer_payment' AND status IN ('pending', 'in_flight')",
         )?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         for payload_str in rows.flatten() {
@@ -1663,6 +1666,13 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     // ── 1. Despacho de Ventas ('sale') ─────────────────────────────────────
     let (pending_sales, ventas_json) = {
         let conn = db.conn()?;
+        // Auto-recuperar ventas que hayan caído en 'failed' por error transitorio de servidor o Prisma findUnique
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'pending', attempts = 0 \
+             WHERE entity_type = 'sale' AND status = 'failed' AND attempts <= 15 \
+               AND (last_error LIKE '%findUnique%' OR last_error LIKE '%403%' OR last_error LIKE '%500%' OR last_error LIKE '%Transaction%')",
+            [],
+        );
         let mut stmt = conn.prepare(
             "SELECT id, payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending' ORDER BY id ASC LIMIT 30"
         )?;
@@ -1772,6 +1782,12 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     // ── 2. Despacho de Abonos de Cartera ('customer_payment') ───────────────
     let (pending_payments, abonos_json) = {
         let conn = db.conn()?;
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'pending', attempts = 0 \
+             WHERE entity_type = 'customer_payment' AND status = 'failed' AND attempts <= 15 \
+               AND (last_error LIKE '%findUnique%' OR last_error LIKE '%403%' OR last_error LIKE '%500%' OR last_error LIKE '%Transaction%')",
+            [],
+        );
         let mut stmt = conn.prepare(
             "SELECT id, payload FROM sync_queue WHERE entity_type = 'customer_payment' AND status = 'pending' ORDER BY id ASC LIMIT 30"
         )?;
@@ -2776,7 +2792,7 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
         "SELECT si.product_id, COALESCE(SUM(si.quantity), 0) \
          FROM sale_items si \
          JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-         WHERE sq.status != 'synced' \
+         WHERE sq.status IN ('pending', 'in_flight') \
          GROUP BY si.product_id",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
@@ -2792,7 +2808,7 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
          FROM sale_items si \
          JOIN product_components pc ON pc.parent_product_id = si.product_id \
          JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-         WHERE sq.status != 'synced' \
+         WHERE sq.status IN ('pending', 'in_flight') \
          GROUP BY pc.child_product_id",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
@@ -2807,7 +2823,7 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
         "SELECT sri.product_id, COALESCE(SUM(sri.quantity), 0) \
          FROM sale_return_items sri \
          JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
-         WHERE sri.inventory_disposition = 'restock' AND sq.status != 'synced' \
+         WHERE sri.inventory_disposition = 'restock' AND sq.status IN ('pending', 'in_flight') \
          GROUP BY sri.product_id",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
@@ -2823,7 +2839,7 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
          FROM sale_return_items sri \
          JOIN product_components pc ON pc.parent_product_id = sri.product_id \
          JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
-         WHERE sri.inventory_disposition = 'restock' AND sq.status != 'synced' \
+         WHERE sri.inventory_disposition = 'restock' AND sq.status IN ('pending', 'in_flight') \
          GROUP BY pc.child_product_id",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
@@ -2863,7 +2879,7 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
             "SELECT COALESCE(SUM(si.quantity), 0) \
              FROM sale_items si \
              JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-             WHERE si.product_id = ?1 AND sq.status != 'synced'",
+             WHERE si.product_id = ?1 AND sq.status IN ('pending', 'in_flight')",
             params![local_id],
             |r| r.get(0),
         )
@@ -2875,7 +2891,7 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
              FROM sale_items si \
              JOIN product_components pc ON pc.parent_product_id = si.product_id \
              JOIN sync_queue sq ON sq.entity_type = 'sale' AND sq.entity_id = si.sale_id \
-             WHERE pc.child_product_id = ?1 AND sq.status != 'synced'",
+             WHERE pc.child_product_id = ?1 AND sq.status IN ('pending', 'in_flight')",
             params![local_id],
             |r| r.get(0),
         )
@@ -2886,7 +2902,7 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
             "SELECT COALESCE(SUM(sri.quantity), 0) \
              FROM sale_return_items sri \
              JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
-             WHERE sri.product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status != 'synced'",
+             WHERE sri.product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status IN ('pending', 'in_flight')",
             params![local_id],
             |r| r.get(0),
         )
@@ -2898,7 +2914,7 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
              FROM sale_return_items sri \
              JOIN product_components pc ON pc.parent_product_id = sri.product_id \
              JOIN sync_queue sq ON sq.entity_type = 'sale_return' AND sq.entity_id = sri.return_id \
-             WHERE pc.child_product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status != 'synced'",
+             WHERE pc.child_product_id = ?1 AND sri.inventory_disposition = 'restock' AND sq.status IN ('pending', 'in_flight')",
             params![local_id],
             |r| r.get(0),
         )

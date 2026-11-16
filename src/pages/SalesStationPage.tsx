@@ -1388,6 +1388,7 @@ export function SalesStationPage({
         message: err instanceof Error ? err.message : String(err),
         variant: "error",
       });
+      throw err;
     } finally {
       isProcessingSaleRef.current = false;
     }

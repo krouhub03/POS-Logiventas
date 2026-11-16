@@ -67,6 +67,10 @@ pub struct RemoteCustomerCreditSaleDto {
     pub credit_amount_cents: i64,
     pub created_at: String,
     pub concepto: String,
+    #[serde(default)]
+    pub items_count: i64,
+    #[serde(default)]
+    pub items: Vec<CustomerSaleItemDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -855,7 +859,45 @@ pub async fn get_customer_remote_movements(
     db: State<'_, Db>,
     erp_id: String,
 ) -> Result<CustomerRemoteMovementsDto, String> {
-    let trimmed = erp_id.trim();
+    let mut resolved_erp_id = erp_id.trim().to_string();
+    if resolved_erp_id.starts_with("local:") {
+        let local_id: i64 = resolved_erp_id
+            .trim_start_matches("local:")
+            .parse()
+            .unwrap_or(0);
+        if local_id > 0 {
+            let existing_erp: Option<String> = {
+                let conn = db.conn().map_err(|e| e.to_string())?;
+                conn.query_row(
+                    "SELECT erp_id FROM customers WHERE id = ?1",
+                    params![local_id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+            };
+            if let Some(eid) = existing_erp.filter(|s| !s.trim().is_empty()) {
+                resolved_erp_id = eid;
+            } else {
+                let _ = crate::commands::sync::sync_customers_internal(&db).await;
+                let synced_erp: Option<String> = {
+                    let conn = db.conn().map_err(|e| e.to_string())?;
+                    conn.query_row(
+                        "SELECT erp_id FROM customers WHERE id = ?1",
+                        params![local_id],
+                        |r| r.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                };
+                resolved_erp_id = synced_erp.unwrap_or_default();
+            }
+        } else {
+            resolved_erp_id.clear();
+        }
+    }
+
+    let trimmed = resolved_erp_id.trim();
     if trimmed.is_empty() {
         return Err("Cliente sin erpId".to_string());
     }
@@ -874,7 +916,8 @@ pub async fn get_customer_remote_movements(
     }
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(4))
+        .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
+        .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| e.to_string())?;
 

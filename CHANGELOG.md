@@ -5,6 +5,18 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.17] - 2026-11-16
+### Agregado
+- Búsqueda de productos insensible a mayúsculas, minúsculas, tildes y `ñ` (`pos_norm`) en catálogo y modal F10.
+- Validación estricta y visual de cupo de crédito disponible en cobro simple y mixto, bloqueando ventas cuando el cupo es `$0` o insuficiente.
+- Sincronización multi-caja del historial detallado de compras y productos anotados a crédito por cliente.
+
+### Corregido
+- Corrección de bloqueo HTTP 403 al consultar movimientos remotos de cartera (`User-Agent` oficial en peticiones HTTP).
+- Aislamiento del foco de teclado entre el modal de clientes y el modal de cobro para impedir que la edición del cupo altere el importe del cobro.
+- Auto-recuperación de ventas y abonos retenidos en `sync_queue` y exclusión de elementos fallidos en el cálculo de deltas de stock local.
+---
+
 ## [0.2.16] - 2026-11-16
 ### Agregado
 - Corrección de desincronización de inventario multi-caja, protección de cantidad y sincronización completa al inicio

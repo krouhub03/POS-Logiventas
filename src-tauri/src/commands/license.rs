@@ -66,6 +66,7 @@ pub async fn validate_license(db: State<'_, Db>) -> AppResult<bool> {
     }
 
     let client = reqwest::Client::builder()
+        .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(AppError::Network)?;

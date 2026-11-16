@@ -165,7 +165,10 @@ pub async fn open_shift(
     if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
         let clean_url = url.trim_end_matches('/');
         let api_url = format!("{}/api/pos/v1/sync/turno", clean_url);
-        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+        let client = Client::builder()
+            .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
+            .timeout(Duration::from_secs(5))
+            .build()?;
 
         let body = json!({
             "folioTurno": shift.folio,
@@ -603,7 +606,10 @@ pub async fn close_shift(
     } else if let (Some(url), Some(token), Some(ref uid)) = (erp_url, terminal_token, erp_user_id.as_ref()) {
         let clean_url = url.trim_end_matches('/');
         let api_url = format!("{}/api/pos/v1/sync/cierre-turno", clean_url);
-        let client = Client::builder().timeout(Duration::from_secs(8)).build()?;
+        let client = Client::builder()
+            .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
+            .timeout(Duration::from_secs(8))
+            .build()?;
 
         let mut body = queued_payload_str
             .as_deref()

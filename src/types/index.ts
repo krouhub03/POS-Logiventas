@@ -605,6 +605,8 @@ export interface RemoteCustomerCreditSale {
   creditAmountCents: number;
   createdAt: string;
   concepto: string;
+  itemsCount?: number;
+  items?: CustomerSaleItem[];
 }
 
 export interface RemoteCustomerPayment {

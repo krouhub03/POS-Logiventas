@@ -120,20 +120,35 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     selectedMethodCode.toLowerCase().includes("cartera");
 
   // Verificar si algún método a crédito en modo mixto tiene asignado monto
-  const hasCreditInSplit = Object.entries(splitMap).some(([code, data]) => {
+  const creditInSplitCents = Object.entries(splitMap).reduce((acc, [code, data]) => {
     const mCents = toCents(data.amountInput || 0);
-    if (mCents <= 0) return false;
+    if (mCents <= 0) return acc;
     const mObj = availableMethods.find((m) => m.code === code);
-    return (
+    const isCred =
       mObj?.type === "CREDITO" ||
       code.toLowerCase().includes("credit") ||
       code.toLowerCase().includes("credito") ||
       code.toLowerCase().includes("fiar") ||
-      code.toLowerCase().includes("cartera")
-    );
-  });
+      code.toLowerCase().includes("cartera");
+    return isCred ? acc + mCents : acc;
+  }, 0);
 
+  const hasCreditInSplit = creditInSplitCents > 0;
   const requiresCustomer = isCreditMethod || (isSplitMode && hasCreditInSplit);
+  const creditAmountToChargeCents = isSplitMode
+    ? creditInSplitCents
+    : isCreditMethod
+      ? totalCents
+      : 0;
+  const customerAvailableCreditCents = customer
+    ? Math.max(0, (customer.creditLimitCents || 0) - (customer.currentBalanceCents || 0))
+    : 0;
+  const isCustomerCreditExceeded =
+    requiresCustomer &&
+    customer != null &&
+    (customer.isCreditBlocked ||
+      (customer.creditLimitCents || 0) <= 0 ||
+      creditAmountToChargeCents > customerAvailableCreditCents);
 
   // Cálculos en modo mixto (Split Ledger)
   const totalAsignadoMixtoCents = Object.values(splitMap).reduce(
@@ -341,6 +356,25 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       return;
     }
 
+    if (requiresCustomer && customer) {
+      if (customer.isCreditBlocked) {
+        setError(`🔒 El cliente "${customer.name}" se encuentra bloqueado para compras a crédito.`);
+        return;
+      }
+      if ((customer.creditLimitCents || 0) <= 0) {
+        setError(
+          `❌ El cliente "${customer.name}" no tiene cupo de crédito autorizado ($0.00). No es posible registrar ventas a crédito sin cupo.`
+        );
+        return;
+      }
+      if (creditAmountToChargeCents > customerAvailableCreditCents) {
+        setError(
+          `❌ Cupo insuficiente para "${customer.name}". Cupo disponible: ${formatCents(customerAvailableCreditCents)} (Cupo total: ${formatCents(customer.creditLimitCents)} | Deuda actual: ${formatCents(customer.currentBalanceCents || 0)}) y se requieren ${formatCents(creditAmountToChargeCents)} a crédito.`
+        );
+        return;
+      }
+    }
+
     // Caso 1: Modo Mixto
     if (isSplitMode) {
       if (totalAsignadoMixtoCents < totalCents) {
@@ -426,6 +460,8 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isCustomerModalOpen) return;
+
       if (e.key === "Escape") {
         onClose();
         return;
@@ -433,7 +469,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
 
       // Atajo Enter para confirmar cobro
       if (e.key === "Enter") {
-        if (isCustomerModalOpen || loading || isSubmittingRef.current) return;
+        if (loading || isSubmittingRef.current) return;
         e.preventDefault();
         e.stopPropagation();
         handleSubmitRef.current();
@@ -496,17 +532,17 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
     return "🏷️";
   };
 
-  const isFormValid = (
-    isSplitMode
+  const isFormValid =
+    (isSplitMode
       ? totalAsignadoMixtoCents >= totalCents
-      : pagoCents >= totalCents && (isCashMethod || pagoCents === totalCents)
-  ) && (!requiresCustomer || !!customer);
+      : pagoCents >= totalCents && (isCashMethod || pagoCents === totalCents)) &&
+    (!requiresCustomer || (!!customer && !isCustomerCreditExceeded));
 
   return (
     <div
       className="fixed inset-0 z-50 bg-black/60 dark:bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 transition-colors"
       onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
+        if (e.key === "Escape" && !isCustomerModalOpen) onClose();
       }}
     >
       <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 w-full max-h-[92vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 transition-all ${isSplitMode ? "max-w-4xl" : "max-w-2xl"}`}>
@@ -607,34 +643,69 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
           </div>
 
           {/* AVISO DINÁMICO EXCLUSIVO PARA CRÉDITO DE CLIENTES */}
-          {isCreditMethod && !isSplitMode && (
-            <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/80 flex items-center justify-between gap-3 animate-in fade-in duration-150">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <span className="text-2xl shrink-0">📋</span>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-amber-900 dark:text-amber-200 truncate">
-                    {customer ? `Titular: ${customer.name}` : "Venta a Crédito: Requiere Cliente Titular (CxC)"}
-                  </div>
-                  <div className="text-[11px] text-amber-700 dark:text-amber-400 font-mono mt-0.5">
-                    {customer ? (
-                      <span>
-                        Cupo: <b>{formatCents(customer.creditLimitCents || 0)}</b> | Deuda actual:{" "}
-                        <b>{formatCents(customer.currentBalanceCents || 0)}</b>
-                      </span>
-                    ) : (
-                      "Asigna el cliente al que se le cargará esta cuenta por cobrar"
-                    )}
+          {requiresCustomer && (
+            <div
+              className={`p-3.5 rounded-2xl border flex flex-col gap-2 animate-in fade-in duration-150 ${
+                isCustomerCreditExceeded
+                  ? "bg-rose-50 dark:bg-rose-950/50 border-rose-400 dark:border-rose-700"
+                  : "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700/80"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-2xl shrink-0">{isCustomerCreditExceeded ? "🚫" : "📋"}</span>
+                  <div className="min-w-0">
+                    <div
+                      className={`text-xs font-bold truncate ${
+                        isCustomerCreditExceeded
+                          ? "text-rose-900 dark:text-rose-200"
+                          : "text-amber-900 dark:text-amber-200"
+                      }`}
+                    >
+                      {customer ? `Titular: ${customer.name}` : "Venta a Crédito: Requiere Cliente Titular (CxC)"}
+                    </div>
+                    <div
+                      className={`text-[11px] font-mono mt-0.5 ${
+                        isCustomerCreditExceeded
+                          ? "text-rose-700 dark:text-rose-300"
+                          : "text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      {customer ? (
+                        <span>
+                          Cupo: <b>{formatCents(customer.creditLimitCents || 0)}</b> | Deuda:{" "}
+                          <b>{formatCents(customer.currentBalanceCents || 0)}</b> | Disponible:{" "}
+                          <b>{formatCents(customerAvailableCreditCents)}</b>
+                        </span>
+                      ) : (
+                        "Asigna el cliente al que se le cargará esta cuenta por cobrar"
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsCustomerModalOpen(true)}
+                  className={`shrink-0 px-3 py-1.5 rounded-xl text-white text-xs font-bold shadow-sm cursor-pointer transition-colors ${
+                    isCustomerCreditExceeded
+                      ? "bg-rose-600 hover:bg-rose-500"
+                      : "bg-amber-600 hover:bg-amber-500"
+                  }`}
+                >
+                  {customer ? "Ver / Cambiar Cliente" : "Asignar Cliente"}
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setIsCustomerModalOpen(true)}
-                className="shrink-0 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-sm cursor-pointer transition-colors"
-              >
-                {customer ? "Cambiar Cliente" : "Asignar Cliente"}
-              </button>
+              {isCustomerCreditExceeded && customer && (
+                <div className="text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-100/80 dark:bg-rose-900/40 px-3 py-1.5 rounded-xl border border-rose-300 dark:border-rose-800">
+                  {customer.isCreditBlocked
+                    ? `🔒 El cliente "${customer.name}" tiene el crédito bloqueado.`
+                    : (customer.creditLimitCents || 0) <= 0
+                      ? `❌ El cliente "${customer.name}" no tiene cupo autorizado ($0.00). No se permite registrar esta venta a crédito.`
+                      : `❌ El cupo disponible (${formatCents(customerAvailableCreditCents)}) no alcanza para cubrir el crédito solicitado (${formatCents(creditAmountToChargeCents)}). Faltan ${formatCents(creditAmountToChargeCents - customerAvailableCreditCents)}.`}
+                </div>
+              )}
             </div>
           )}
 
@@ -895,14 +966,23 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                    Importe Entregado ($)
+                    {isCreditMethod
+                      ? "Monto a Cargar a Crédito ($)"
+                      : isCashMethod
+                        ? "Importe Entregado ($)"
+                        : "Importe Exacto a Cobrar ($)"}
                   </label>
                   <input
                     ref={inputRef}
                     type="number"
                     step="any"
+                    readOnly={!isCashMethod}
                     value={pagoInput}
-                    onChange={(e) => setPagoInput(e.target.value)}
+                    onChange={(e) => {
+                      if (isCashMethod) {
+                        setPagoInput(e.target.value);
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
@@ -917,7 +997,11 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                         return;
                       }
                     }}
-                    className="w-full bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-left text-slate-900 dark:text-white font-mono font-black text-xl focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className={`w-full border-2 rounded-xl py-2 px-3 text-left font-mono font-black text-xl focus:outline-none ${
+                      isCashMethod
+                        ? "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 focus:border-emerald-500 text-slate-900 dark:text-white focus:ring-1 focus:ring-emerald-500"
+                        : "bg-slate-100 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 cursor-not-allowed"
+                    }`}
                     placeholder="0.00"
                   />
                 </div>
@@ -1015,6 +1099,8 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
                   ? "Procesando…"
                   : requiresCustomer && !customer
                   ? "Asignar Cliente para Crédito"
+                  : isCustomerCreditExceeded
+                  ? "Cupo de Crédito Insuficiente"
                   : isSplitMode
                   ? autoPrint
                     ? "Confirmar e Imprimir (Enter)"
@@ -1039,7 +1125,6 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         onSelect={(selected) => {
           setCustomer(selected);
           setError(null);
-          setTimeout(() => inputRef.current?.focus(), 50);
         }}
       />
     </div>

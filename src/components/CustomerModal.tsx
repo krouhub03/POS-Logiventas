@@ -108,9 +108,8 @@ export function CustomerModal({
 
     const localSalesPromise = api.customers.getCreditSales(customer.id).catch(() => [] as CustomerCreditSale[]);
     const localPaymentsPromise = api.customers.getPayments(customer.id).catch(() => [] as CustomerPayment[]);
-    const remotePromise = customer.erpId
-      ? api.customers.getRemoteMovements(customer.erpId).catch(() => null)
-      : Promise.resolve(null);
+    const remoteTarget = customer.erpId || `local:${customer.id}`;
+    const remotePromise = api.customers.getRemoteMovements(remoteTarget).catch(() => null);
 
     Promise.all([localSalesPromise, localPaymentsPromise, remotePromise])
       .then(([localSales, localPayments, remote]) => {
@@ -119,6 +118,7 @@ export function CustomerModal({
           const seenFolios = new Set(localSales.map((s) => s.folio));
           for (const rs of remote.creditSales) {
             if (!seenFolios.has(rs.folio)) {
+              const remoteItems = Array.isArray(rs.items) ? rs.items : [];
               mergedSales.push({
                 id: -Math.abs(mergedSales.length + 1),
                 folio: rs.folio,
@@ -133,8 +133,8 @@ export function CustomerModal({
                 returnStatus: "none",
                 returnedCents: 0,
                 createdAt: rs.createdAt,
-                itemsCount: 0,
-                items: [],
+                itemsCount: rs.itemsCount ?? remoteItems.length,
+                items: remoteItems,
               });
             }
           }
@@ -171,6 +171,26 @@ export function CustomerModal({
           mergedPayments.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         }
         setCustomerPayments(mergedPayments);
+
+        // Si el servidor remoto o la suma consolidada reporta saldo actualizado, sincronizar la vista
+        if (remote) {
+          const totalSalesCredit = mergedSales.reduce((acc, s) => acc + Math.max(0, s.creditAmountCents - (s.returnedCents || 0)), 0);
+          const totalPaidAbonos = mergedPayments.reduce((acc, p) => acc + p.amountCents, 0);
+          const calculatedNetDebt = Math.max(0, totalSalesCredit - totalPaidAbonos);
+          const effectiveBalance = Math.max(remote.currentBalanceCents || 0, calculatedNetDebt, customer.currentBalanceCents || 0);
+          const effectiveLimit = remote.creditLimitCents > 0 && !customer.creditLimitCents ? remote.creditLimitCents : customer.creditLimitCents;
+
+          if (effectiveBalance !== customer.currentBalanceCents || effectiveLimit !== customer.creditLimitCents) {
+            const syncedCustomer: Customer = {
+              ...customer,
+              currentBalanceCents: effectiveBalance,
+              creditLimitCents: effectiveLimit,
+              isCreditBlocked: remote.isCreditBlocked ?? customer.isCreditBlocked,
+            };
+            setDetailCustomer(syncedCustomer);
+            setCustomers((prev) => prev.map((c) => (c.id === customer.id ? syncedCustomer : c)));
+          }
+        }
       })
       .finally(() => {
         setLoadingSales(false);
@@ -654,12 +674,12 @@ export function CustomerModal({
                             </span>
                             {hasDebt && (
                               <span className="text-[10px] font-mono bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 px-2 py-0.2 rounded font-bold">
-                                Saldo: {formatCents(c.currentBalanceCents)}
+                                Deuda: {formatCents(c.currentBalanceCents)}
                               </span>
                             )}
-                            {hasCreditLimit && !hasDebt && (
+                            {hasCreditLimit && (
                               <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 px-1.5 py-0.2 rounded">
-                                Cupo: {formatCents(c.creditLimitCents)}
+                                Cupo Disp: {formatCents(Math.max(0, c.creditLimitCents - (c.currentBalanceCents || 0)))}
                               </span>
                             )}
                           </div>
@@ -817,7 +837,7 @@ export function CustomerModal({
                 <span className="text-sm font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">
                   {(detailCustomer.creditLimitCents || 0) > 0
                     ? formatCents(detailCustomer.creditLimitCents)
-                    : "Sin tope"}
+                    : "Sin cupo ($0)"}
                 </span>
               </div>
 
@@ -834,7 +854,7 @@ export function CustomerModal({
                             (detailCustomer.currentBalanceCents || 0)
                         )
                       )
-                    : "Disponible"}
+                    : "$0.00"}
                 </span>
               </div>
 
@@ -934,7 +954,7 @@ export function CustomerModal({
                   <div className="py-8 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-4">
                     <span className="text-2xl block mb-1">🛒</span>
                     <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      El cliente no tiene compras anotadas al crédito registradas en esta terminal.
+                      El cliente no tiene compras anotadas al crédito registradas.
                     </p>
                   </div>
                 ) : (
@@ -1029,15 +1049,21 @@ export function CustomerModal({
                               <span className="text-slate-500">
                                 Folio Ticket: <strong className="font-mono text-slate-800 dark:text-slate-200">{sale.folio}</strong>
                               </span>
-                              <button
-                                type="button"
-                                onClick={(e) => handleReprintSaleTicket(sale.id, e)}
-                                disabled={printingTicketId === sale.id}
-                                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                              >
-                                <span>🖨️</span>
-                                <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
-                              </button>
+                              {sale.id > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleReprintSaleTicket(sale.id, e)}
+                                  disabled={printingTicketId === sale.id}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                >
+                                  <span>🖨️</span>
+                                  <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  Sincronizado de otra caja
+                                </span>
+                              )}
                             </div>
                           </div>
                         )}
