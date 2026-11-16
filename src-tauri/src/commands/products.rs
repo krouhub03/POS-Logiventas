@@ -324,17 +324,23 @@ pub fn delete_category(db: State<'_, Db>, id: i64, reassign_to_id: Option<i64>) 
 }
 
 /// Lista productos activos. `search` filtra por nombre, SKU, código de barras o tags (#frio, etc.).
+/// Soporta búsqueda insensible a mayúsculas, minúsculas y tildes (ej: "doña", "dOÑA", "dona" o "DOÑA").
 #[tauri::command]
 pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec<Product>> {
     let conn = db.conn()?;
-    let pattern = format!("%{}%", search.unwrap_or_default().trim());
+    let query_raw = search.unwrap_or_default().trim().to_string();
+    let norm_pattern = format!("%{}%", crate::db::normalize_search_text(&query_raw));
+    let raw_pattern = format!("%{}%", query_raw);
     let sql = format!(
         "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
-         WHERE p.active = 1 AND (p.name LIKE ?1 OR p.sku LIKE ?1 OR p.barcode LIKE ?1 OR p.tags LIKE ?1) \
+         WHERE p.active = 1 AND (\
+             pos_norm(p.name) LIKE ?1 OR pos_norm(p.sku) LIKE ?1 OR pos_norm(p.barcode) LIKE ?1 OR pos_norm(p.tags) LIKE ?1 \
+             OR p.name LIKE ?2 COLLATE NOCASE OR p.sku LIKE ?2 COLLATE NOCASE OR p.barcode LIKE ?2 COLLATE NOCASE OR p.tags LIKE ?2 COLLATE NOCASE\
+         ) \
          ORDER BY p.name LIMIT 20000"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut products = stmt.query_map(params![pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;
+    let mut products = stmt.query_map(params![norm_pattern, raw_pattern], map_product)?.collect::<Result<Vec<_>, _>>()?;
 
     for p in &mut products {
         enrich_bundle_product(&conn, p);
@@ -344,6 +350,7 @@ pub fn list_products(db: State<'_, Db>, search: Option<String>) -> AppResult<Vec
 }
 
 /// Búsqueda paginada y optimizada de productos, servicios y combos con filtros y conteos dinámicos.
+/// Soporta búsqueda insensible a mayúsculas, minúsculas y tildes en nombres, códigos y categorías.
 #[tauri::command]
 pub fn search_products_paged(
     db: State<'_, Db>,
@@ -358,25 +365,38 @@ pub fn search_products_paged(
     let mut base_conditions = vec!["p.active = 1".to_string()];
     let mut base_params: Vec<rusqlite::types::Value> = Vec::new();
 
-    // Filtro por texto (query)
+    // Filtro por texto (query insensible a mayúsculas, minúsculas y tildes)
     if let Some(ref q) = input.query {
         let q_trimmed = q.trim();
         if !q_trimmed.is_empty() {
-            let pattern = format!("%{}%", q_trimmed);
-            base_conditions.push("(p.name LIKE ? COLLATE NOCASE OR p.sku LIKE ? COLLATE NOCASE OR p.barcode LIKE ? COLLATE NOCASE OR p.tags LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE)".to_string());
-            base_params.push(pattern.clone().into());
-            base_params.push(pattern.clone().into());
-            base_params.push(pattern.clone().into());
-            base_params.push(pattern.clone().into());
-            base_params.push(pattern.into());
+            let norm_pattern = format!("%{}%", crate::db::normalize_search_text(q_trimmed));
+            let raw_pattern = format!("%{}%", q_trimmed);
+            base_conditions.push(
+                "(\
+                    pos_norm(p.name) LIKE ? OR pos_norm(p.sku) LIKE ? OR pos_norm(p.barcode) LIKE ? OR pos_norm(p.tags) LIKE ? OR pos_norm(c.name) LIKE ? \
+                    OR p.name LIKE ? COLLATE NOCASE OR p.sku LIKE ? COLLATE NOCASE OR p.barcode LIKE ? COLLATE NOCASE OR p.tags LIKE ? COLLATE NOCASE OR c.name LIKE ? COLLATE NOCASE\
+                )".to_string(),
+            );
+            base_params.push(norm_pattern.clone().into());
+            base_params.push(norm_pattern.clone().into());
+            base_params.push(norm_pattern.clone().into());
+            base_params.push(norm_pattern.clone().into());
+            base_params.push(norm_pattern.into());
+            base_params.push(raw_pattern.clone().into());
+            base_params.push(raw_pattern.clone().into());
+            base_params.push(raw_pattern.clone().into());
+            base_params.push(raw_pattern.clone().into());
+            base_params.push(raw_pattern.into());
         }
     }
 
-    // Filtro por categoría (insensible a mayúsculas/minúsculas)
+    // Filtro por categoría (insensible a mayúsculas/minúsculas y acentos)
     if let Some(ref cat) = input.category {
         let cat_trimmed = cat.trim();
         if !cat_trimmed.is_empty() && cat_trimmed != "all" {
-            base_conditions.push("c.name = ? COLLATE NOCASE".to_string());
+            let norm_cat = crate::db::normalize_search_text(cat_trimmed);
+            base_conditions.push("(pos_norm(c.name) = ? OR c.name = ? COLLATE NOCASE)".to_string());
+            base_params.push(norm_cat.into());
             base_params.push(cat_trimmed.to_string().into());
         }
     }
@@ -385,9 +405,11 @@ pub fn search_products_paged(
     if let Some(ref tag) = input.tag {
         let tag_clean = tag.trim().trim_start_matches('#');
         if !tag_clean.is_empty() && tag_clean != "all" {
-            let tag_pattern = format!("%{}%", tag_clean);
-            base_conditions.push("p.tags LIKE ? COLLATE NOCASE".to_string());
-            base_params.push(tag_pattern.into());
+            let norm_tag = format!("%{}%", crate::db::normalize_search_text(tag_clean));
+            let raw_tag = format!("%{}%", tag_clean);
+            base_conditions.push("(pos_norm(p.tags) LIKE ? OR p.tags LIKE ? COLLATE NOCASE)".to_string());
+            base_params.push(norm_tag.into());
+            base_params.push(raw_tag.into());
         }
     }
 
@@ -469,14 +491,18 @@ pub fn search_products_paged(
 pub fn find_product_by_barcode(db: State<'_, Db>, barcode: String) -> AppResult<Option<Product>> {
     let conn = db.conn()?;
     let code = barcode.trim();
+    let norm_code = crate::db::normalize_search_text(code);
     let sql = format!(
         "SELECT {PRODUCT_COLUMNS} FROM {PRODUCT_FROM} \
-         WHERE p.active = 1 AND (p.barcode = ?1 COLLATE NOCASE OR p.sku = ?1 COLLATE NOCASE) \
+         WHERE p.active = 1 AND (\
+             p.barcode = ?1 COLLATE NOCASE OR p.sku = ?1 COLLATE NOCASE \
+             OR pos_norm(p.barcode) = ?2 OR pos_norm(p.sku) = ?2\
+         ) \
          ORDER BY CASE WHEN p.barcode = ?1 COLLATE NOCASE THEN 0 ELSE 1 END \
          LIMIT 1"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query_map(params![code], map_product)?;
+    let mut rows = stmt.query_map(params![code, norm_code], map_product)?;
     let mut product = rows.next().transpose()?;
     if let Some(ref mut p) = product {
         enrich_bundle_product(&conn, p);
@@ -1481,6 +1507,55 @@ mod tests {
             },
         );
         assert!(neg_err.is_err(), "No debe permitir existencia negativa");
+    }
+
+    #[test]
+    fn test_search_products_case_and_accent_insensitive_matching() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::register_custom_functions(&conn).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (101, 'SKU-LECHE-1', '7702495110310', 'DOÑA LECHE 1000ML', 'pza', 490000, 430000, 15.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO products (id, sku, barcode, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (102, 'SKU-CAFE-1', '7702495110999', 'CAFÉ SELLO ROJO 500G', 'pza', 1800000, 1400000, 20.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let norm_search = |q: &str| -> Vec<i64> {
+            let norm_pattern = format!("%{}%", crate::db::normalize_search_text(q.trim()));
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id FROM products WHERE active = 1 AND (\
+                        pos_norm(name) LIKE ?1 OR pos_norm(sku) LIKE ?1 OR pos_norm(barcode) LIKE ?1\
+                    )",
+                )
+                .unwrap();
+            let rows = stmt.query_map(params![norm_pattern], |r| r.get(0)).unwrap();
+            rows.filter_map(Result::ok).collect()
+        };
+
+        // Búsquedas de DOÑA LECHE con minúsculas, mayúsculas, combinadas y sin tilde (n)
+        assert_eq!(norm_search("doña"), vec![101]);
+        assert_eq!(norm_search("DOÑA"), vec![101]);
+        assert_eq!(norm_search("dOÑA"), vec![101]);
+        assert_eq!(norm_search("dona"), vec![101]);
+        assert_eq!(norm_search("leche"), vec![101]);
+        assert_eq!(norm_search("LECHE"), vec![101]);
+
+        // Búsquedas de CAFÉ con tilde, sin tilde, minúsculas y mayúsculas
+        assert_eq!(norm_search("cafe"), vec![102]);
+        assert_eq!(norm_search("café"), vec![102]);
+        assert_eq!(norm_search("CAFÉ"), vec![102]);
+        assert_eq!(norm_search("CAFE"), vec![102]);
+        assert_eq!(norm_search("sello"), vec![102]);
     }
 }
 

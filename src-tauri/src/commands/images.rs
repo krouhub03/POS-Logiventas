@@ -57,7 +57,7 @@ pub async fn download_pending_images_internal(app: &AppHandle, db: &Db) -> AppRe
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, sku, image_url, image_hash FROM products \
-             WHERE image_sync_status = 'pending_download' AND image_url IS NOT NULL AND active = 1 \
+             WHERE image_sync_status IN ('pending_download', 'failed') AND image_url IS NOT NULL AND active = 1 \
              LIMIT 15",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -77,7 +77,8 @@ pub async fn download_pending_images_internal(app: &AppHandle, db: &Db) -> AppRe
 
     let images_dir = get_images_dir(app);
     let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
     {
         Ok(c) => c,
@@ -202,6 +203,7 @@ pub async fn upload_pending_images_db(db: &Db) -> AppResult<usize> {
     }
 
     let client = match reqwest::Client::builder()
+        .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
         .timeout(std::time::Duration::from_secs(30))
         .build()
     {
