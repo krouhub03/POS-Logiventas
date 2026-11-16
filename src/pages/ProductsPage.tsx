@@ -603,6 +603,11 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
       await loadProducts();
     } catch (e: unknown) {
       console.warn("Aviso: No se pudo conectar al ERP para actualizar catálogo:", e);
+      modalAlert({
+        title: "Error de Sincronización",
+        message: `No se pudo sincronizar el catálogo con el ERP: ${String(e)}`,
+        variant: "error",
+      });
     } finally {
       setSyncingCatalog(false);
     }
@@ -961,11 +966,11 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
       return;
     }
 
-    if (!formIsService && !formIsBundle && (!formStock || formStock <= 0)) {
+    if (!formIsService && !formIsBundle && (Number.isNaN(formStock) || formStock < 0)) {
       modalAlert({
-        title: "Inventario Requerido",
-        message: "No se permite registrar productos físicos sin inventario. Ingrese una existencia mayor a 0.",
-        variant: "error",
+        title: "Existencia Inválida",
+        message: "La existencia no puede ser negativa.",
+        variant: "warning",
       });
       return;
     }
@@ -3354,7 +3359,7 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
                             <input
                               type="number"
                               step="any"
-                              min="0.01"
+                              min="0"
                               required
                               value={formStock}
                               onChange={(e) => setFormStock(Number(e.target.value))}

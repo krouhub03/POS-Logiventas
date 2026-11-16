@@ -338,17 +338,22 @@ pub async fn release_stock_reservation(
 
 /// 📥 Sincroniza el catálogo completo de productos y existencias desde el ERP hacia SQLite.
 pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
-    let (erp_url, token) = {
+    sync_catalog_internal_mode(db, false).await
+}
+
+pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<usize> {
+    let (erp_url, token, last_catalog_sync_at) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
         let token = get_setting(&conn, "terminal_token").ok_or_else(|| {
             AppError::Auth("Terminal no vinculada con el ERP".into())
         })?;
-        (erp_url, token)
+        let last_catalog_sync_at = get_setting(&conn, "last_catalog_sync_at").unwrap_or_default();
+        (erp_url, token, last_catalog_sync_at)
     };
 
     let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(90))
         .build()?;
 
     // 0. Despachar Outbox primero para que el ERP consolide ventas antes de retornarnos el stock
@@ -437,32 +442,48 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         }
     }
 
+    let mut upload_error: Option<String> = None;
     if !unsynced_products.is_empty() {
         let post_url = format!("{}/api/pos/v1/sync/productos", erp_url.trim_end_matches('/'));
         for chunk in unsynced_products.chunks(50) {
-            if let Ok(res) = client
+            match client
                 .post(&post_url)
                 .header("Authorization", format!("Bearer {token}"))
                 .json(&serde_json::json!({ "products": chunk }))
                 .send()
                 .await
             {
-                if res.status().is_success() {
-                    if let Ok(json) = res.json::<Value>().await {
-                        if let Some(arr) = json["data"]["productos"].as_array() {
-                            let conn = db.conn()?;
-                            for item in arr {
-                                let sku = item["sku"].as_str().unwrap_or_default();
-                                let erp_id = item["erpId"].as_str().unwrap_or_default();
-                                if !sku.is_empty() && !erp_id.is_empty() {
-                                    let _ = conn.execute(
-                                        "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE sku = ?2",
-                                        params![erp_id, sku],
-                                    );
+                Ok(res) => {
+                    if res.status().is_success() {
+                        if let Ok(json) = res.json::<Value>().await {
+                            if let Some(arr) = json["data"]["productos"].as_array() {
+                                let conn = db.conn()?;
+                                for item in arr {
+                                    let sku = item["sku"].as_str().unwrap_or_default();
+                                    let status = item["status"].as_str().unwrap_or("ok");
+                                    if status == "rechazado" {
+                                        let msg = item["mensaje"].as_str().unwrap_or("Producto rechazado por el ERP");
+                                        upload_error = Some(format!("SKU {sku}: {msg}"));
+                                        continue;
+                                    }
+                                    let erp_id = item["erpId"].as_str().unwrap_or_default();
+                                    if !sku.is_empty() && !erp_id.is_empty() {
+                                        let _ = conn.execute(
+                                            "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE sku = ?2",
+                                            params![erp_id, sku],
+                                        );
+                                    }
                                 }
                             }
                         }
+                    } else {
+                        let status_code = res.status();
+                        let err_body = res.text().await.unwrap_or_default();
+                        upload_error = Some(format!("Error HTTP {status_code} al subir productos al ERP: {err_body}"));
                     }
+                }
+                Err(e) => {
+                    upload_error = Some(format!("Error de red al subir productos al ERP: {e}"));
                 }
             }
         }
@@ -471,13 +492,15 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     // 2.1 Subir imágenes pendientes de productos modificados o creados hacia el ERP
     let _ = crate::commands::images::upload_pending_images_db(db).await;
 
-    // 3. Descargar catálogo completo desde el ERP
+    // 3. Descargar catálogo (incremental si ya tenemos last_catalog_sync_at y no es forzado)
     let url = format!("{}/api/pos/v1/sync/productos", erp_url.trim_end_matches('/'));
-    let res = client
+    let mut get_req = client
         .get(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .send()
-        .await?;
+        .header("Authorization", format!("Bearer {token}"));
+    if !force_full && !last_catalog_sync_at.is_empty() {
+        get_req = get_req.query(&[("since", &last_catalog_sync_at)]);
+    }
+    let res = get_req.send().await?;
 
     if !res.status().is_success() {
         let err_text = res.text().await.unwrap_or_default();
@@ -494,6 +517,9 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
             }
         }
     }
+
+    let is_incremental = json["data"]["incremental"].as_bool().unwrap_or(false);
+    let server_timestamp = json["data"]["timestamp"].as_str().map(|s| s.to_string());
 
     let products_array = json["data"]["products"]
         .as_array()
@@ -672,7 +698,7 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
         };
 
         if let Some(local_id) = local_match {
-            tx.prepare_cached(
+            let upd_res = tx.prepare_cached(
                 "UPDATE products SET
                     erp_id = ?1,
                     sku = ?2,
@@ -725,9 +751,13 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 final_img_hash,
                 final_sync_status,
                 local_id
-            ])?;
+            ]);
+            if let Err(e) = upd_res {
+                eprintln!("[sync_catalog] Error actualizando producto SKU {sku} (id={local_id}): {e}");
+                continue;
+            }
         } else {
-            tx.prepare_cached(
+            let ins_res = tx.prepare_cached(
                 "INSERT INTO products (
                     erp_id, sku, barcode, name, unit, is_service,
                     price_cents, cost_cents, tax_rate_bp, stock, min_stock, active, needs_erp_upload,
@@ -758,7 +788,11 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
                 final_local_path,
                 final_img_hash,
                 final_sync_status,
-            ])?;
+            ]);
+            if let Err(e) = ins_res {
+                eprintln!("[sync_catalog] Error insertando producto SKU {sku}: {e}");
+                continue;
+            }
         }
 
         total_synced += 1;
@@ -842,33 +876,51 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     }
 
     // Desactivar en SQLite cualquier producto que ya no esté activo o haya sido eliminado en el ERP
-    let erp_active_ids: std::collections::HashSet<String> = products_array
-        .iter()
-        .filter(|p| p["active"].as_i64().unwrap_or(1) == 1)
-        .filter_map(|p| p["id"].as_str().map(|s| s.to_string()))
-        .collect();
-
-    {
-        let mut stmt = tx.prepare("SELECT id, erp_id FROM products WHERE erp_id IS NOT NULL AND active = 1")?;
-        let local_products: Vec<(i64, String)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .filter_map(|r| r.ok())
+    // (solo en sincronización completa, nunca en incremental)
+    if !is_incremental {
+        let erp_active_ids: std::collections::HashSet<String> = products_array
+            .iter()
+            .filter(|p| p["active"].as_i64().unwrap_or(1) == 1)
+            .filter_map(|p| p["id"].as_str().map(|s| s.to_string()))
             .collect();
 
-        for (local_id, erp_id) in local_products {
-            if !erp_active_ids.contains(&erp_id) {
-                let _ = tx.execute(
-                    "UPDATE products SET active = 0, updated_at = datetime('now') WHERE id = ?1",
-                    params![local_id],
-                );
+        {
+            let mut stmt = tx.prepare("SELECT id, erp_id FROM products WHERE erp_id IS NOT NULL AND active = 1")?;
+            let local_products: Vec<(i64, String)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            for (local_id, erp_id) in local_products {
+                if !erp_active_ids.contains(&erp_id) {
+                    let _ = tx.execute(
+                        "UPDATE products SET active = 0, updated_at = datetime('now') WHERE id = ?1",
+                        params![local_id],
+                    );
+                }
             }
         }
     }
 
-        tx.execute(
-            "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', datetime('now')) ON CONFLICT(key) DO UPDATE SET value = datetime('now')",
-            [],
-        )?;
+        if let Some(ref ts) = server_timestamp {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('last_catalog_sync_at', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                params![ts],
+            )?;
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                params![ts],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('last_catalog_sync_at', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(key) DO UPDATE SET value = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+                [],
+            )?;
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('last_sync_timestamp', strftime('%Y-%m-%dT%H:%M:%SZ', 'now')) ON CONFLICT(key) DO UPDATE SET value = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+                [],
+            )?;
+        }
 
         tx.commit()?;
         Ok::<usize, AppError>(total_synced)
@@ -879,12 +931,16 @@ pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     let _ = sync_warehouses_internal(db).await;
     let _ = sync_customers_internal(db).await;
 
+    if let Some(err_msg) = upload_error {
+        return Err(AppError::Validation(err_msg));
+    }
+
     Ok(total_synced)
 }
 
 #[tauri::command]
 pub async fn sync_catalog_from_erp(app: AppHandle, db: State<'_, Db>) -> AppResult<usize> {
-    let count = sync_catalog_internal(&db).await?;
+    let count = sync_catalog_internal_mode(&db, true).await?;
     let _ = crate::commands::images::download_pending_images_internal(&app, &db).await;
     Ok(count)
 }
@@ -1953,6 +2009,10 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     // ── 4b. Despacho de Movimientos de Inventario ('inventory_movement') ────
     let pending_movements = {
         let conn = db.conn()?;
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'pending' WHERE entity_type = 'inventory_movement' AND status = 'failed' AND attempts < 15 AND last_error LIKE '%no encontrado%'",
+            [],
+        );
         let mut stmt = conn.prepare(
             "SELECT id, payload FROM sync_queue WHERE entity_type = 'inventory_movement' AND status = 'pending' ORDER BY id ASC LIMIT 50"
         )?;
@@ -2379,7 +2439,8 @@ pub async fn dispatch_sync_outbox(db: State<'_, Db>) -> AppResult<OutboxBatchRes
 }
 
 /// 📡 Consulta deltas de inventario al ERP y actualiza el stock local en SQLite.
-pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
+/// Retorna `(cantidad_actualizada, requiere_sync_catalogo)`.
+pub async fn pull_inventory_deltas_with_hint(db: &Db) -> AppResult<(usize, bool)> {
     let (erp_url, token, last_sync) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
@@ -2389,11 +2450,11 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
     };
 
     if token.is_empty() {
-        return Ok(0);
+        return Ok((0, false));
     }
 
     let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
-        .timeout(Duration::from_millis(3000))
+        .timeout(Duration::from_secs(10))
         .build()?;
 
     let url = format!("{}/api/pos/v1/sync/inventario/deltas", erp_url.trim_end_matches('/'));
@@ -2405,13 +2466,14 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
     let res = req.send().await;
     let res = match res {
         Ok(r) if r.status().is_success() => r,
-        _ => return Ok(0),
+        _ => return Ok((0, false)),
     };
 
     let json: Value = res.json().await.unwrap_or_default();
+    let mut needs_catalog_sync = json["data"]["hasCatalogUpdates"].as_bool().unwrap_or(false);
     let deltas = match json["data"]["deltas"].as_array() {
         Some(d) => d,
-        None => return Ok(0),
+        None => return Ok((0, needs_catalog_sync)),
     };
 
     let mut conn = db.conn()?;
@@ -2450,6 +2512,9 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
                         count += 1;
                     }
                 }
+            } else {
+                // Producto nuevo creado en el ERP u otra caja que aún no existe en este SQLite local
+                needs_catalog_sync = true;
             }
         }
     }
@@ -2461,6 +2526,11 @@ pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
     }
 
     tx.commit()?;
+    Ok((count, needs_catalog_sync))
+}
+
+pub async fn pull_inventory_deltas_internal(db: &Db) -> AppResult<usize> {
+    let (count, _) = pull_inventory_deltas_with_hint(db).await?;
     Ok(count)
 }
 
@@ -2571,13 +2641,13 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
             // 1. Despachar Outbox si hay ventas o movimientos pendientes
             let _ = dispatch_outbox_internal(&db).await;
 
-            // 2. Si hay ajustes de stock o productos locales pendientes de subir al ERP
+            // 2. Si hay ajustes de stock o productos locales pendientes de subir al ERP (incluyendo stock = 0)
             let has_pending_products = db
                 .conn()
                 .ok()
                 .and_then(|c| {
                     c.query_row(
-                        "SELECT COUNT(*) FROM products WHERE active = 1 AND needs_erp_upload = 1 AND (erp_id IS NOT NULL OR is_service = 1 OR is_bundle = 1 OR stock > 0)",
+                        "SELECT COUNT(*) FROM products WHERE active = 1 AND needs_erp_upload = 1",
                         [],
                         |r| r.get::<_, i64>(0),
                     )
@@ -2586,17 +2656,40 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
                 .unwrap_or(0)
                 > 0;
 
-            // Sincronización completa de catálogo: cada 10 minutos (60 ticks de 10s)
-            // o si hay productos pendientes locales con un cooldown mínimo de 30s (3 ticks)
-            let should_sync_catalog = (loop_count >= last_catalog_sync_loop + 60)
+            // Sincronización completa de catálogo al arrancar (loop 1) o cada 10 minutos (60 ticks);
+            // incremental en 30s si hay productos pendientes locales o cuando deltas detecte productos nuevos.
+            let should_full_catalog_sync = loop_count >= last_catalog_sync_loop + 60;
+            let should_incremental_sync = (loop_count == 1)
                 || (has_pending_products && loop_count >= last_catalog_sync_loop + 3);
 
-            if should_sync_catalog {
-                last_catalog_sync_loop = loop_count;
-                let _ = sync_catalog_internal(&db).await;
+            if should_full_catalog_sync || should_incremental_sync {
+                let force_full = should_full_catalog_sync;
+                match sync_catalog_internal_mode(&db, force_full).await {
+                    Ok(_) => {
+                        last_catalog_sync_loop = loop_count;
+                    }
+                    Err(e) => {
+                        eprintln!("[sync-daemon] Error en sync_catalog (force_full={force_full}): {e}");
+                        // Reintentar en ~60s (6 ticks) si falló, no esperar 10 minutos
+                        last_catalog_sync_loop = loop_count.saturating_sub(54);
+                    }
+                }
             } else {
                 // 3. Traer deltas de existencias desde el ERP cada ciclo ligero (10 segundos)
-                let _ = pull_inventory_deltas_internal(&db).await;
+                match pull_inventory_deltas_with_hint(&db).await {
+                    Ok((_, true)) => {
+                        // Llegó un producto nuevo o cambio de catálogo en el ERP: descargar incrementalmente ya
+                        if let Err(e) = sync_catalog_internal_mode(&db, false).await {
+                            eprintln!("[sync-daemon] Error en sync_catalog incremental disparado por deltas: {e}");
+                        } else {
+                            last_catalog_sync_loop = loop_count;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[sync-daemon] Error en pull_inventory_deltas: {e}");
+                    }
+                    _ => {}
+                }
             }
 
             // 4. Sincronización asíncrona de clientes, bodegas e imágenes (cada 30 segundos y en el primer ciclo)
