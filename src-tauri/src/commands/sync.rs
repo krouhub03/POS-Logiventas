@@ -337,6 +337,7 @@ pub async fn release_stock_reservation(
 }
 
 /// 📥 Sincroniza el catálogo completo de productos y existencias desde el ERP hacia SQLite.
+#[allow(dead_code)]
 pub async fn sync_catalog_internal(db: &Db) -> AppResult<usize> {
     sync_catalog_internal_mode(db, false).await
 }
