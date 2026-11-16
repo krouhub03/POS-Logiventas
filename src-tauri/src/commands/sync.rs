@@ -1254,6 +1254,60 @@ pub async fn sync_warehouses(db: State<'_, Db>) -> AppResult<usize> {
 
 /// 👥 Sincroniza bidireccionalmente los clientes de la empresa (primero sube pendientes locales y luego descarga del ERP).
 pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
+    // 0. Auto-encolar clientes locales activos que no tengan erp_id ni estén ya pendientes en sync_queue
+    if let Ok(conn) = db.conn() {
+        let missing_rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, i32, i32, Option<String>, i32)> = {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.name, c.tax_id, c.email, c.phone, c.address, \
+                        COALESCE(c.credit_limit_cents, 0), COALESCE(c.credit_days, 30), \
+                        COALESCE(c.is_credit_blocked, 0), c.notes, COALESCE(c.active, 1) \
+                 FROM customers c \
+                 WHERE c.erp_id IS NULL AND c.active = 1 \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM sync_queue sq \
+                     WHERE sq.entity_type = 'customer' AND sq.entity_id = c.id AND sq.status = 'pending' \
+                   )",
+            )?;
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                    r.get(9)?,
+                    r.get(10)?,
+                ))
+            })?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+
+        for (cid, name, tax_id, email, phone, address, credit_limit_cents, credit_days, is_blocked, notes, active) in missing_rows {
+            let payload = serde_json::json!({
+                "localId": cid,
+                "erpId": serde_json::Value::Null,
+                "name": name,
+                "taxId": tax_id,
+                "email": email,
+                "phone": phone,
+                "address": address,
+                "creditLimitCents": credit_limit_cents,
+                "creditDays": credit_days,
+                "isCreditBlocked": is_blocked == 1,
+                "notes": notes,
+                "active": active == 1,
+            });
+            let _ = conn.execute(
+                "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('customer', ?1, ?2, 'pending')",
+                params![cid, payload.to_string()],
+            );
+        }
+    }
+
     // 1. Empujar primero cualquier cliente nuevo o modificado en esta caja
     let _ = dispatch_outbox_internal(db).await;
 
@@ -2388,10 +2442,10 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                             }
                         } else {
                             let _ = conn.execute(
-                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = 'ERP no retornó confirmación para el cliente' WHERE id = ?1",
                                 params![queue_id],
                             );
-                            total_synced += 1;
+                            total_failed += 1;
                         }
                     }
                 } else {
@@ -2658,9 +2712,10 @@ pub fn start_sync_daemon(app: tauri::AppHandle, db: Db) {
 
             // Sincronización completa de catálogo al arrancar (loop 1) o cada 10 minutos (60 ticks);
             // incremental en 30s si hay productos pendientes locales o cuando deltas detecte productos nuevos.
-            let should_full_catalog_sync = loop_count >= last_catalog_sync_loop + 60;
-            let should_incremental_sync = (loop_count == 1)
-                || (has_pending_products && loop_count >= last_catalog_sync_loop + 3);
+            // La completa al arrancar autocorrige existencias locales desfasadas (no presentes en deltas).
+            let should_full_catalog_sync = loop_count == 1 || loop_count >= last_catalog_sync_loop + 60;
+            let should_incremental_sync =
+                has_pending_products && loop_count >= last_catalog_sync_loop + 3;
 
             if should_full_catalog_sync || should_incremental_sync {
                 let force_full = should_full_catalog_sync;
@@ -2777,12 +2832,15 @@ pub fn compute_all_pending_stock_deltas(conn: &rusqlite::Connection) -> std::col
         }
     }
 
-    // 5. Ajustes / entradas / salidas manuales de inventario pendientes en sync_queue
+    // 5. Ajustes / entradas / salidas manuales de inventario pendientes en sync_queue.
+    // Solo se consideran los que aún pueden llegar al ERP ('pending' / 'in_flight'): un movimiento
+    // en 'failed' fue rechazado definitivamente (ej. desborde numérico por un código de barras
+    // escaneado en el campo de cantidad) y sumarlo aquí desfasaría el stock de forma permanente.
     if let Ok(mut stmt) = conn.prepare(
         "SELECT im.product_id, COALESCE(SUM(im.quantity), 0) \
          FROM inventory_movements im \
          JOIN sync_queue sq ON sq.entity_type = 'inventory_movement' AND sq.entity_id = im.id \
-         WHERE sq.status != 'synced' \
+         WHERE sq.status IN ('pending', 'in_flight') \
          GROUP BY im.product_id",
     ) {
         if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))) {
@@ -2850,7 +2908,7 @@ pub fn compute_pending_stock_delta(conn: &rusqlite::Connection, local_id: i64) -
             "SELECT COALESCE(SUM(im.quantity), 0) \
              FROM inventory_movements im \
              JOIN sync_queue sq ON sq.entity_type = 'inventory_movement' AND sq.entity_id = im.id \
-             WHERE im.product_id = ?1 AND sq.status != 'synced'",
+             WHERE im.product_id = ?1 AND sq.status IN ('pending', 'in_flight')",
             params![local_id],
             |r| r.get(0),
         )
@@ -2867,6 +2925,75 @@ mod tests {
         CartItemInput, CreateSaleInput, CreateSaleReturnInput, CreateSaleReturnItemInput,
         PaymentInput,
     };
+
+    #[test]
+    fn test_failed_inventory_movement_does_not_skew_pending_delta() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO products (id, erp_id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (90, 'erp-prod-90', 'SKU-90', 'Leche', 'pza', 490000, 430000, 15.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // Movimiento absurdo (código de barras escaneado como cantidad) rechazado por el ERP
+        conn.execute(
+            "INSERT INTO inventory_movements (id, product_id, kind, quantity) VALUES (500, 90, 'adjustment', 7702495110310.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_queue (entity_type, entity_id, payload, status, attempts) VALUES ('inventory_movement', 500, '{}', 'failed', 10)",
+            [],
+        )
+        .unwrap();
+
+        // Movimiento válido aún pendiente de subir
+        conn.execute(
+            "INSERT INTO inventory_movements (id, product_id, kind, quantity) VALUES (501, 90, 'adjustment', 3.0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('inventory_movement', 501, '{}', 'pending')",
+            [],
+        )
+        .unwrap();
+
+        let map = compute_all_pending_stock_deltas(&conn);
+        assert!((map.get(&90).copied().unwrap_or(0.0) - 3.0).abs() < 1e-9);
+        assert!((compute_pending_stock_delta(&conn, 90) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_adjust_stock_rejects_scanned_barcode_quantity() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        crate::db::migrations::run(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO products (id, sku, name, unit, price_cents, cost_cents, stock, is_service, controls_stock, active)
+             VALUES (91, 'SKU-91', 'Leche', 'pza', 490000, 430000, 15.0, 0, 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let res = crate::commands::products::adjust_stock_in_conn(
+            &mut conn,
+            crate::models::product::StockAdjustmentInput {
+                product_id: 91,
+                new_stock: 7702495110325.0,
+                reason: "Entrada".into(),
+                user_id: None,
+                warehouse_id: None,
+            },
+        );
+        assert!(res.is_err());
+        let stock: f64 = conn.query_row("SELECT stock FROM products WHERE id = 91", [], |r| r.get(0)).unwrap();
+        assert!((stock - 15.0).abs() < 1e-9);
+    }
 
     #[test]
     fn test_sync_catalog_preserves_pending_sales_and_pending_returns() {

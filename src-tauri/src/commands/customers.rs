@@ -796,8 +796,7 @@ pub async fn update_customer(
          SET name = ?1, tax_id = ?2, email = ?3, phone = ?4, address = ?5, \
              credit_limit_cents = COALESCE(?6, credit_limit_cents), \
              credit_days = COALESCE(?7, credit_days), \
-             notes = COALESCE(?8, notes), \
-             updated_at = datetime('now') \
+             notes = COALESCE(?8, notes) \
          WHERE id = ?9",
         params![
             name,

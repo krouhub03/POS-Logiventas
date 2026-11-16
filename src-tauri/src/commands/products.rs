@@ -14,6 +14,22 @@ const PRODUCT_COLUMNS: &str = "p.id, p.sku, p.barcode, p.name, p.category_id, p.
      p.image_url, p.image_local_path, p.image_hash, p.image_sync_status, p.wholesale_price_cents, p.max_stock";
 const PRODUCT_FROM: &str = "products p LEFT JOIN categories c ON c.id = p.category_id";
 
+/// Existencia máxima admitida por producto en una sola bodega.
+/// Protege contra códigos de barras escaneados por error en campos de cantidad
+/// (ej. 7702495110310) que desbordan el `Decimal(12,4)` del ERP y quedan
+/// atascados en la cola de sincronización desfasando el inventario entre cajas.
+pub const MAX_STOCK_QUANTITY: f64 = 1_000_000.0;
+
+pub fn validate_stock_quantity(qty: f64, field: &str) -> AppResult<()> {
+    if !qty.is_finite() || qty > MAX_STOCK_QUANTITY {
+        return Err(AppError::Validation(format!(
+            "{field} inválida ({qty}). El máximo permitido es {MAX_STOCK_QUANTITY:.0}. \
+             Verifique que no haya escaneado un código de barras en el campo de cantidad."
+        )));
+    }
+    Ok(())
+}
+
 /// Calcula dinámicamente el stock disponible de un combo basado en sus componentes hijos.
 pub fn calculate_bundle_stock(conn: &rusqlite::Connection, parent_id: i64) -> rusqlite::Result<Option<f64>> {
     let mut stmt = conn.prepare(
@@ -516,6 +532,7 @@ pub fn create_product(db: State<'_, Db>, input: NewProduct) -> AppResult<Product
         .unwrap_or(if is_service { "serv" } else { "pza" });
 
     let stock = if is_service || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0).max(0.0) };
+    validate_stock_quantity(stock, "Existencia")?;
     let min_stock = if is_service || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let max_stock = if is_service || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
     let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
@@ -647,6 +664,7 @@ pub fn update_product(db: State<'_, Db>, input: UpdateProductInput) -> AppResult
     let tax_fixed_cents = input.tax_fixed_cents.unwrap_or(0);
 
     let stock = if !controls_stock || is_bundle { 0.0 } else { input.stock.unwrap_or(0.0).max(0.0) };
+    validate_stock_quantity(stock, "Existencia")?;
     let min_stock = if !controls_stock || is_bundle { 0.0 } else { input.min_stock.unwrap_or(0.0) };
     let max_stock = if !controls_stock || is_bundle { 0.0 } else { input.max_stock.unwrap_or(0.0).max(0.0) };
     let wholesale_price_cents = input.wholesale_price_cents.unwrap_or(0).max(0);
@@ -824,6 +842,7 @@ pub fn adjust_stock_in_conn(
     if input.new_stock < 0.0 {
         return Err(AppError::Validation("La existencia no puede ser negativa".into()));
     }
+    validate_stock_quantity(input.new_stock, "Existencia")?;
 
     let tx = conn.transaction()?;
 

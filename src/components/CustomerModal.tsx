@@ -51,7 +51,7 @@ export function CustomerModal({
   const [newEmail, setNewEmail] = useState("");
   const [newAddress, setNewAddress] = useState("");
   const [newCreditLimitStr, setNewCreditLimitStr] = useState("");
-  const [newCreditDays, setNewCreditDays] = useState(30);
+  const [newCreditDaysStr, setNewCreditDaysStr] = useState("30");
   const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -224,7 +224,7 @@ export function CustomerModal({
       setNewEmail("");
       setNewAddress("");
       setNewCreditLimitStr("");
-      setNewCreditDays(30);
+      setNewCreditDaysStr("30");
       setEditingCustomerId(null);
 
       setTimeout(() => searchInputRef.current?.focus(), 50);
@@ -372,7 +372,7 @@ export function CustomerModal({
     setNewCreditLimitStr(
       customer.creditLimitCents > 0 ? String(customer.creditLimitCents / 100) : ""
     );
-    setNewCreditDays(customer.creditDays || 30);
+    setNewCreditDaysStr(String(customer.creditDays || 30));
     setMode("create");
     setTimeout(() => newNameInputRef.current?.focus(), 50);
   };
@@ -385,6 +385,12 @@ export function CustomerModal({
     if (!name) {
       setError("El nombre o razón social es obligatorio.");
       newNameInputRef.current?.focus();
+      return;
+    }
+
+    const parsedCreditDays = parseInt(newCreditDaysStr, 10);
+    if (!Number.isFinite(parsedCreditDays) || parsedCreditDays < 1) {
+      setError("El plazo de pago debe ser de al menos 1 día.");
       return;
     }
 
@@ -401,7 +407,7 @@ export function CustomerModal({
           email: newEmail.trim() || null,
           address: newAddress.trim() || null,
           creditLimitCents,
-          creditDays: newCreditDays,
+          creditDays: parsedCreditDays,
         });
         api.sync.dispatchOutbox().catch(() => {});
         setDetailCustomer(updated);
@@ -420,7 +426,7 @@ export function CustomerModal({
           email: newEmail.trim() || undefined,
           address: newAddress.trim() || undefined,
           creditLimitCents,
-          creditDays: newCreditDays,
+          creditDays: parsedCreditDays,
         };
 
         const created = await api.customers.create(input);
@@ -1464,8 +1470,9 @@ export function CustomerModal({
                     <input
                       type="number"
                       min="1"
-                      value={newCreditDays}
-                      onChange={(e) => setNewCreditDays(Number(e.target.value) || 30)}
+                      value={newCreditDaysStr}
+                      onChange={(e) => setNewCreditDaysStr(e.target.value)}
+                      placeholder="30"
                       className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 focus:border-emerald-500 rounded-xl py-2 px-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none"
                     />
                   </div>
