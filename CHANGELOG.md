@@ -5,6 +5,13 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.15] - 2026-11-16
+### Agregado
+- Sincronización incremental de inventario entre cajas y edición de productos sin stock
+
+### Cambios recientes
+- fix(sync,products): incremental catalog sync, delta trigger and zero-stock edits
+---
 ## [0.2.14] - 2026-11-15
 ### Agregado
 - Mejoras en modales y estación de ventas
