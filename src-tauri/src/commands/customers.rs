@@ -606,7 +606,7 @@ pub async fn get_customer_payments(
         .prepare(
             "SELECT cp.id, cp.folio, cp.customer_id, c.name, cp.session_id, cp.user_id, \
                     cp.payment_method_id, pm.name, cp.amount_cents, cp.previous_balance_cents, \
-                    cp.new_balance_cents, cp.reference, cp.notes, cp.created_at \
+                    cp.new_balance_cents, cp.reference, cp.notes, COALESCE(datetime(cp.created_at, 'localtime'), cp.created_at) \
              FROM customer_payments cp \
              JOIN customers c ON c.id = cp.customer_id \
              LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id \

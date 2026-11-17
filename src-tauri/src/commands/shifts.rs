@@ -22,7 +22,9 @@ fn get_setting(conn: &rusqlite::Connection, key: &str) -> Option<String> {
 
 pub fn internal_get_active_shift(conn: &rusqlite::Connection) -> AppResult<Option<CashShift>> {
     let mut stmt = conn.prepare(
-        "SELECT cs.id, cs.folio, cs.user_id, u.full_name, cs.opened_at, cs.closed_at,
+        "SELECT cs.id, cs.folio, cs.user_id, u.full_name,
+                COALESCE(datetime(cs.opened_at, 'localtime'), cs.opened_at),
+                CASE WHEN cs.closed_at IS NOT NULL THEN COALESCE(datetime(cs.closed_at, 'localtime'), cs.closed_at) ELSE NULL END,
                 cs.opening_cents, cs.closing_cents, cs.expected_cents, cs.declared_cents,
                 cs.difference_cents, cs.notes, cs.status, cs.erp_turno_id
          FROM cash_sessions cs
@@ -92,7 +94,7 @@ pub fn open_shift_in_conn(
     )?;
 
     let count_today: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM cash_sessions WHERE opened_at >= date('now', 'localtime')",
+        "SELECT COUNT(*) FROM cash_sessions WHERE date(opened_at, 'localtime') >= date('now', 'localtime')",
         [],
         |r| r.get(0),
     )?;

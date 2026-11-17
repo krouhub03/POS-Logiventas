@@ -323,18 +323,33 @@ El runner aplica secuencialmente las 22 migraciones dentro de transacciones indi
 ## 🔄 5. Motor de Sincronización Local y Reserva de Stock (`commands/sync.rs`)
 
 1. **Demonio Asíncrono en Rust (`start_sync_daemon`)**:
-   - Se lanza al iniciar la aplicación en `lib.rs` mediante `tauri::async_runtime::spawn` con un ciclo de 15 segundos.
-   - En cada ciclo:
-     1. Despacha ventas pendientes en `sync_queue` (`dispatch_sync_outbox`).
-     2. Sube productos creados localmente con `needs_erp_upload = 1` y descarga cambios del catálogo remoto (`sync_catalog_from_erp`).
-     3. Descarga deltas incrementales de inventario (`pull_inventory_deltas`) para reflejar ventas ocurridas en otras cajas.
-     4. Emite el evento `sync-status-changed` hacia React con `{ isOnline, pendingCount, lastSyncedAt, lastError }`.
+   - Se lanza al iniciar la aplicación en `lib.rs` mediante `tauri::async_runtime::spawn` con un ciclo continuo de **10 segundos** (`tokio::time::interval`).
+   - Tras una pausa inicial de 3 segundos para el arranque gráfico:
+     1. **Despacho Priorizado del Outbox (`dispatch_outbox_internal`)**: Procesa `sync_queue` por orden estricto de prelación:
+        - `customer`: Clientes nuevos para asegurar existencia antes de sus créditos.
+        - `sale`: Ventas de mostrador (priorizando ventas con cliente / CxC) en lotes de 20 con idempotencia por folio en ERP (`pg_advisory_xact_lock`).
+        - `customer_payment`: Abonos a cartera para reconciliar saldos deudores (`POST /api/pos/v1/sync/abonos`).
+        - `sale_return`: Devoluciones y notas crédito (`POST /api/pos/v1/sync/devoluciones`).
+        - `user_pin`: Actualización de credenciales de usuario.
+        - `inventory_movement`: Entradas/salidas manuales de inventario auditadas en Kardex.
+        - `cash_session`: Cierre de turno y arqueo Z-Report (`POST /api/pos/v1/sync/cierre-turno`) para emisión del asiento contable NIIF consolidado en lote.
+     2. **Subida Ascendente y Descarga de Catálogo (`sync_catalog_internal_mode`)**:
+        - Sube productos creados localmente (`needs_erp_upload = 1`) en lotes de 50 a `POST /api/pos/v1/sync/productos`.
+        - Sube imágenes pendientes mediante `upload_pending_images_db`.
+        - Descarga el catálogo: **Completo** en el arranque o cada 10 minutos (60 ticks); **Incremental** (`?since=...`) si el endpoint de deltas detecta cambios de catálogo (`hasCatalogUpdates: true`).
+     3. **Preservación de Ventas Offline (`compute_all_pending_stock_deltas`)**:
+        - Previene que la descarga del catálogo sobreescriba existencias vendidas sin conexión:
+          $$\text{Stock Efectivo} = \max(0, \text{Stock ERP} + \Delta\text{Ventas Pendientes})$$
+     4. **Deltas de Inventario en Tiempo Real (`pull_inventory_deltas_with_hint`)**:
+        - Cada 10 segundos consulta `GET /api/pos/v1/sync/inventario/deltas?since=...` para absorber compras, traspasos o ventas concurrentes de otras cajas sin recargar el catálogo entero.
+     5. Emite el evento `sync-status-changed` hacia React con `{ isOnline, pendingCount, lastSyncedAt, lastError }`.
 
 2. **Prevención de Colisiones en Stock Crítico (`verify_and_reserve_stock`)**:
    - Al presionar `F12` para cobrar, el POS evalúa primero las existencias en SQLite local.
-   - Si algún producto físico tiene stock crítico ($\le \text{umbral}$, por defecto `2.0`), solicita una reserva temporal de 90 segundos al servidor antes de abrir el modal de cobro.
-   - Si el cajero cierra el modal sin cobrar (`Esc`), el POS invoca `release_stock_reservation` para liberar las unidades inmediatamente.
-   - Si no hay internet, aplica la política local (`offline_stock_policy`: `permissive` por defecto) para jamás detener la fila en mostrador.
+   - Si algún producto físico tiene stock crítico ($\le \text{umbral}$, por defecto `2.0`) y no tiene deltas pendientes locales, solicita una **reserva temporal con 90 segundos TTL** en el ERP (`POST /api/pos/v1/sync/inventario/verificar-reserva`).
+   - Si otra caja intenta cobrar la misma unidad simultáneamente, el ERP la rechaza (`PRODUCTO_AGOTADO`).
+   - Si el cajero cancela el ticket (`Esc`), el POS libera las unidades de inmediato (`release_stock_reservation`).
+   - Si no hay conexión a internet, la política permisiva de retail aprueba la venta localmente para jamás bloquear la fila de clientes en mostrador.
 
 ---
 

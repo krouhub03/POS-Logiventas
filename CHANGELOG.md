@@ -5,6 +5,15 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.19] - 2026-11-16
+### Corregido
+- Sincronización horaria exacta con el reloj del computador: conversión unificada `COALESCE(datetime(col, 'localtime'), col)` en listado de últimas ventas, turnos de caja, kardex e historial de abonos.
+- Resuelto desfase de +5 horas en visualización de tickets locales en `RecentSalesModal` mediante normalizador de timestamps local/UTC (`formatSaleDate`).
+- Corrección del filtro de corte de "Ventas de Hoy" (`date(created_at, 'localtime') = date('now', 'localtime')`), evitando que las ventas del día desaparezcan después de las 7:00 PM por cruce de día en UTC.
+- Alineación del runtime del servidor ERP a la zona horaria `America/Bogota` (GMT-5).
+
+---
+
 ## [0.2.18] - 2026-11-16
 ### Agregado
 - Consulta y buscador de ventas multicaja en la nube (`RecentSalesModal` F5) con selector de ámbito `[ Esta Caja (Local) | Todas las Cajas (Nube) ]`, permitiendo consultar e imprimir tickets emitidos en cualquier terminal de la empresa.

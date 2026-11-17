@@ -20,6 +20,23 @@ interface RecentSalesModalProps {
   onSaleReturned?: (ret: SaleReturnDto) => void;
 }
 
+function formatSaleDate(raw?: string | null): string {
+  if (!raw) return "-";
+  try {
+    const normalized = raw.includes("T") || raw.endsWith("Z") ? raw : raw.replace(" ", "T");
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return raw;
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return raw;
+  }
+}
+
 export function RecentSalesModal({
   isOpen,
   currentUserId,
@@ -320,12 +337,7 @@ export function RecentSalesModal({
                         {s.folio}
                       </td>
                       <td className="py-2.5 px-3 font-sans text-slate-500 text-[11px]">
-                        {new Date(s.createdAt).toLocaleString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatSaleDate(s.createdAt)}
                       </td>
                       <td className="py-2.5 px-3 font-sans text-slate-700 dark:text-slate-300">
                         <div className="font-medium truncate max-w-[130px]">

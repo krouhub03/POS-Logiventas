@@ -979,7 +979,7 @@ pub fn list_recent_sales(
         "SELECT s.id, s.folio, s.customer_id, c.name, c.tax_id, u.full_name,
                 s.subtotal_cents, s.discount_cents, s.tax_cents, s.total_cents,
                 COALESCE(s.reprint_count, 0), COALESCE(s.return_status, 'none'),
-                COALESCE(s.returned_cents, 0), s.created_at,
+                COALESCE(s.returned_cents, 0), COALESCE(datetime(s.created_at, 'localtime'), s.created_at),
                 (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as items_count,
                 COALESCE(s.paid_cents, (SELECT SUM(p.amount_cents) FROM payments p WHERE p.sale_id = s.id), s.total_cents) as paid_cents,
                 COALESCE((SELECT GROUP_CONCAT(DISTINCT p.method) FROM payments p WHERE p.sale_id = s.id), 'cash') as payment_methods_raw
@@ -1746,7 +1746,7 @@ pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSumma
     let (total_sales_count, total_cents): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total_cents - COALESCE(returned_cents, 0)), 0)
          FROM sales
-         WHERE status = 'completed' AND date(created_at) = date('now')",
+         WHERE status = 'completed' AND date(created_at, 'localtime') = date('now', 'localtime')",
         [],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
@@ -1758,7 +1758,7 @@ pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSumma
          LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
          WHERE s.status = 'completed'
            AND (LOWER(p.method) IN ('cash', 'efectivo') OR UPPER(COALESCE(pm.type, '')) = 'EFECTIVO')
-           AND date(s.created_at) = date('now')",
+           AND date(s.created_at, 'localtime') = date('now', 'localtime')",
         [],
         |r| r.get(0),
     )?;
@@ -1767,7 +1767,7 @@ pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSumma
         .query_row(
             "SELECT COALESCE(SUM(total_cents), 0)
              FROM sale_returns
-             WHERE refund_method = 'cash' AND date(created_at) = date('now')",
+             WHERE refund_method = 'cash' AND date(created_at, 'localtime') = date('now', 'localtime')",
             [],
             |r| r.get(0),
         )
@@ -1780,7 +1780,7 @@ pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSumma
          LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
          WHERE s.status = 'completed'
            AND (LOWER(p.method) IN ('card', 'tarjeta') OR UPPER(COALESCE(pm.type, '')) = 'TARJETA')
-           AND date(s.created_at) = date('now')",
+           AND date(s.created_at, 'localtime') = date('now', 'localtime')",
         [],
         |r| r.get(0),
     )?;
@@ -1792,7 +1792,7 @@ pub fn get_today_summary_in_conn(conn: &Connection) -> AppResult<TodaySalesSumma
          LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method
          WHERE s.status = 'completed'
            AND (LOWER(p.method) IN ('transfer', 'transferencia') OR UPPER(COALESCE(pm.type, '')) = 'TRANSFERENCIA')
-           AND date(s.created_at) = date('now')",
+           AND date(s.created_at, 'localtime') = date('now', 'localtime')",
         [],
         |r| r.get(0),
     )?;

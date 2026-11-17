@@ -1198,7 +1198,7 @@ pub fn list_inventory_movements(
 
     let sql = format!(
         "SELECT m.id, m.product_id, p.name, p.sku, m.kind, m.quantity, \
-                m.reference, m.user_id, m.created_at, \
+                m.reference, m.user_id, COALESCE(datetime(m.created_at, 'localtime'), m.created_at), \
                 m.warehouse_id, w.code, w.name, \
                 COALESCE(m.balance_before, 0.0), COALESCE(m.balance_after, 0.0), COALESCE(m.unit_cost_cents, 0), \
                 COALESCE(m.caja_id, pt.id, (SELECT value FROM settings WHERE key = 'caja_id')), \
