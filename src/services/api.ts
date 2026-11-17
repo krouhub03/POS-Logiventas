@@ -177,6 +177,11 @@ export const api = {
         statusFilter: params?.statusFilter,
         limit: params?.limit,
       }),
+    listRemote: (params?: { query?: string; limit?: number }) =>
+      invoke<SaleSummaryItem[]>("list_remote_sales", {
+        query: params?.query,
+        limit: params?.limit,
+      }),
     getDetail: (saleId: number) =>
       invoke<SaleReceipt>("get_sale_detail", { saleId }),
     reprintSale: (saleId: number) =>

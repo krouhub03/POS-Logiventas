@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection};
+use serde::Deserialize;
 use tauri::State;
 
 use crate::db::Db;
@@ -1038,6 +1039,127 @@ pub fn list_recent_sales(
     for row in rows {
         list.push(row?);
     }
+    Ok(list)
+}
+
+#[tauri::command]
+pub async fn list_remote_sales(
+    db: State<'_, Db>,
+    query: Option<String>,
+    limit: Option<i64>,
+) -> AppResult<Vec<SaleSummaryItem>> {
+    let (erp_url, token): (String, String) = {
+        let conn = db.conn()?;
+        let url: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'erp_url' OR key = 'erp_api_url' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "http://localhost:3000".into());
+        let tok: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'terminal_token' LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        (url, tok)
+    };
+
+    if token.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let client = match reqwest::Client::builder()
+        .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let url = format!("{}/api/pos/v1/sync/ventas", erp_url.trim_end_matches('/'));
+    let max_rows = limit.unwrap_or(50).clamp(1, 100).to_string();
+    let q_str = query.unwrap_or_default();
+    let mut query_params = vec![("limit", max_rows.as_str())];
+    if !q_str.trim().is_empty() {
+        query_params.push(("query", q_str.trim()));
+    }
+
+    let resp = match client
+        .get(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .query(&query_params)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(Vec::new()),
+    };
+
+    #[derive(Deserialize)]
+    struct RemoteResponse {
+        data: Option<RemoteData>,
+    }
+    #[derive(Deserialize)]
+    struct RemoteData {
+        ventas: Option<Vec<RemoteSaleDto>>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RemoteSaleDto {
+        folio: String,
+        cashier_name: Option<String>,
+        customer_name: Option<String>,
+        customer_tax_id: Option<String>,
+        subtotal_cents: Option<i64>,
+        discount_cents: Option<i64>,
+        tax_cents: Option<i64>,
+        total_cents: Option<i64>,
+        paid_cents: Option<i64>,
+        change_cents: Option<i64>,
+        items_count: Option<i64>,
+        reprint_count: Option<i64>,
+        return_status: Option<String>,
+        returned_cents: Option<i64>,
+        payment_summary: Option<String>,
+        created_at: Option<String>,
+    }
+
+    let parsed: RemoteResponse = resp.json().await.unwrap_or(RemoteResponse { data: None });
+    let mut list = Vec::new();
+
+    if let Some(data) = parsed.data {
+        if let Some(ventas) = data.ventas {
+            for (idx, v) in ventas.into_iter().enumerate() {
+                let total_cents = v.total_cents.unwrap_or(0);
+                let paid_cents = v.paid_cents.unwrap_or(total_cents);
+                list.push(SaleSummaryItem {
+                    id: 900_000_000 + idx as i64,
+                    folio: v.folio,
+                    customer_id: None,
+                    customer_name: v.customer_name,
+                    customer_tax_id: v.customer_tax_id,
+                    cashier_name: v.cashier_name,
+                    subtotal_cents: v.subtotal_cents.unwrap_or(total_cents),
+                    discount_cents: v.discount_cents.unwrap_or(0),
+                    tax_cents: v.tax_cents.unwrap_or(0),
+                    total_cents,
+                    paid_cents,
+                    change_cents: v.change_cents.unwrap_or((paid_cents - total_cents).max(0)),
+                    reprint_count: v.reprint_count.unwrap_or(0),
+                    return_status: v.return_status.unwrap_or_else(|| "none".into()),
+                    returned_cents: v.returned_cents.unwrap_or(0),
+                    created_at: v.created_at.unwrap_or_default(),
+                    items_count: v.items_count.unwrap_or(1),
+                    payment_summary: v.payment_summary.unwrap_or_else(|| "Efectivo".into()),
+                });
+            }
+        }
+    }
+
     Ok(list)
 }
 

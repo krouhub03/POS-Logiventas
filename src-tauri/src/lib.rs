@@ -119,6 +119,7 @@ pub fn run() {
             commands::sales::get_last_sale,
             commands::sales::get_today_summary,
             commands::sales::list_recent_sales,
+            commands::sales::list_remote_sales,
             commands::sales::get_sale_detail,
             commands::sales::register_sale_reprint,
             commands::sales::create_sale_return,

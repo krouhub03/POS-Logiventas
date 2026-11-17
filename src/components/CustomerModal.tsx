@@ -172,13 +172,38 @@ export function CustomerModal({
         }
         setCustomerPayments(mergedPayments);
 
-        // Si el servidor remoto o la suma consolidada reporta saldo actualizado, sincronizar la vista
+        // Si el servidor remoto o la suma consolidada cronológica reporta saldo actualizado, sincronizar la vista
         if (remote) {
-          const totalSalesCredit = mergedSales.reduce((acc, s) => acc + Math.max(0, s.creditAmountCents - (s.returnedCents || 0)), 0);
-          const totalPaidAbonos = mergedPayments.reduce((acc, p) => acc + p.amountCents, 0);
-          const calculatedNetDebt = Math.max(0, totalSalesCredit - totalPaidAbonos);
-          const effectiveBalance = Math.max(remote.currentBalanceCents || 0, calculatedNetDebt, customer.currentBalanceCents || 0);
-          const effectiveLimit = remote.creditLimitCents > 0 && !customer.creditLimitCents ? remote.creditLimitCents : customer.creditLimitCents;
+          const timeline: Array<{ dateMs: number; kind: "sale" | "payment"; amountCents: number }> = [
+            ...mergedSales.map((s) => ({
+              dateMs: new Date(s.createdAt).getTime() || 0,
+              kind: "sale" as const,
+              amountCents: Math.max(0, s.creditAmountCents - (s.returnedCents || 0)),
+            })),
+            ...mergedPayments.map((p) => ({
+              dateMs: new Date(p.createdAt).getTime() || 0,
+              kind: "payment" as const,
+              amountCents: p.amountCents,
+            })),
+          ].sort((a, b) => a.dateMs - b.dateMs);
+
+          let chronologicalDebt = 0;
+          for (const ev of timeline) {
+            if (ev.kind === "payment") {
+              chronologicalDebt = Math.max(0, chronologicalDebt - ev.amountCents);
+            } else {
+              chronologicalDebt += ev.amountCents;
+            }
+          }
+
+          const effectiveBalance =
+            timeline.length > 0
+              ? Math.max(remote.currentBalanceCents || 0, chronologicalDebt)
+              : remote.currentBalanceCents ?? customer.currentBalanceCents ?? 0;
+          const effectiveLimit =
+            remote.creditLimitCents > 0
+              ? remote.creditLimitCents
+              : customer.creditLimitCents;
 
           if (effectiveBalance !== customer.currentBalanceCents || effectiveLimit !== customer.creditLimitCents) {
             const syncedCustomer: Customer = {

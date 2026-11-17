@@ -5,6 +5,20 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.18] - 2026-11-16
+### Agregado
+- Consulta y buscador de ventas multicaja en la nube (`RecentSalesModal` F5) con selector de ámbito `[ Esta Caja (Local) | Todas las Cajas (Nube) ]`, permitiendo consultar e imprimir tickets emitidos en cualquier terminal de la empresa.
+- Sincronización y caché local persistente (`customer_remote_movements`) de compras anotadas a crédito, ítems y abonos de todos los clientes en todas las cajas conectadas.
+- Despacho prioritario de cuentas de clientes y ventas a crédito en la cola `sync_queue` con bloqueo anti-concurrencia atómico (`OutboxDispatchGuard`).
+
+### Corregido
+- Protección anti-duplicados en Kardex y contabilidad mediante candado transaccional PostgreSQL (`pg_advisory_xact_lock`) por folio, impidiendo que reintentos de red multipliquen salidas de inventario.
+- Purga y saneamiento de 5.512 movimientos duplicados en Kardex y restitución de 6.157 unidades físicas en el inventario de bodegas.
+- Reactivación automática de clientes, ventas a crédito y abonos retenidos por timeout de red sin envío a Dead-Letter.
+- Reconciliación cronológica de saldos de cartera entre cajas conectadas y el ERP.
+
+---
+
 ## [0.2.17] - 2026-11-16
 ### Agregado
 - Búsqueda de productos insensible a mayúsculas, minúsculas, tildes y `ñ` (`pos_norm`) en catálogo y modal F10.

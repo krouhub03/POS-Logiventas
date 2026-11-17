@@ -37,6 +37,7 @@ export function RecentSalesModal({
   const [sales, setSales] = useState<SaleSummaryItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [scope, setScope] = useState<"local" | "remote">("local");
   const [loading, setLoading] = useState(false);
   const [selectedSaleId, setSelectedSaleId] = useState<number | null>(null);
 
@@ -49,21 +50,31 @@ export function RecentSalesModal({
   const fetchSales = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.sales.listRecent({
-        query: searchQuery.trim() || undefined,
-        statusFilter: statusFilter !== "all" ? statusFilter : undefined,
-        limit: 100,
-      });
+      let data: SaleSummaryItem[] = [];
+      if (scope === "remote") {
+        data = await api.sales.listRemote({
+          query: searchQuery.trim() || undefined,
+          limit: 100,
+        });
+      } else {
+        data = await api.sales.listRecent({
+          query: searchQuery.trim() || undefined,
+          statusFilter: statusFilter !== "all" ? statusFilter : undefined,
+          limit: 100,
+        });
+      }
       setSales(data);
-      if (data.length > 0 && selectedSaleId === null) {
+      if (data.length > 0) {
         setSelectedSaleId(data[0].id);
+      } else {
+        setSelectedSaleId(null);
       }
     } catch (err) {
       console.error("Error al cargar historial de ventas:", err);
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter, selectedSaleId]);
+  }, [searchQuery, statusFilter, scope]);
 
   useEffect(() => {
     if (isOpen) {
@@ -87,6 +98,42 @@ export function RecentSalesModal({
 
   const handleOpenReceipt = async (saleId: number) => {
     try {
+      if (saleId >= 900_000_000) {
+        const s = sales.find((x) => x.id === saleId);
+        if (s) {
+          setViewingReceipt({
+            id: s.id,
+            folio: s.folio,
+            customerId: s.customerId,
+            customerName: s.customerName,
+            customerTaxId: s.customerTaxId,
+            cashierName: s.cashierName,
+            subtotalCents: s.subtotalCents,
+            discountCents: s.discountCents,
+            taxCents: s.taxCents,
+            totalCents: s.totalCents,
+            paidCents: s.paidCents,
+            changeCents: s.changeCents,
+            reprintCount: s.reprintCount,
+            lastReprintedAt: null,
+            returnStatus: s.returnStatus,
+            returnedCents: s.returnedCents,
+            createdAt: s.createdAt,
+            itemsCount: s.itemsCount,
+            items: [],
+            payments: [
+              {
+                id: 1,
+                method: s.paymentSummary,
+                methodName: s.paymentSummary,
+                amountCents: s.paidCents,
+              },
+            ],
+            returns: [],
+          });
+          return;
+        }
+      }
       const detail = await api.sales.getDetail(saleId);
       setViewingReceipt(detail);
     } catch (err) {
@@ -138,6 +185,34 @@ export function RecentSalesModal({
 
         {/* Barra de Filtros y Búsqueda */}
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-slate-900">
+          {/* Selector de Ámbito: Local vs Nube */}
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setScope("local")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                scope === "local"
+                  ? "bg-white dark:bg-slate-900 text-slate-800 dark:text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white"
+              }`}
+              title="Ventas realizadas localmente en esta caja física"
+            >
+              💻 Esta Caja
+            </button>
+            <button
+              type="button"
+              onClick={() => setScope("remote")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                scope === "remote"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-800 dark:hover:text-white"
+              }`}
+              title="Ventas sincronizadas de todas las cajas conectadas a la empresa"
+            >
+              ☁️ Todas las Cajas
+            </button>
+          </div>
+
           <div className="relative flex-1 min-w-[260px]">
             <input
               ref={searchInputRef}

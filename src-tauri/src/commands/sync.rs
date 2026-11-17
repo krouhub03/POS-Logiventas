@@ -1255,8 +1255,14 @@ pub async fn sync_warehouses(db: State<'_, Db>) -> AppResult<usize> {
 
 /// 👥 Sincroniza bidireccionalmente los clientes de la empresa (primero sube pendientes locales y luego descarga del ERP).
 pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
-    // 0. Auto-encolar clientes locales activos que no tengan erp_id ni estén ya pendientes en sync_queue
+    // 0. Reactivar registros fallidos de clientes/ventas/abonos y auto-encolar clientes locales sin erp_id
     if let Ok(conn) = db.conn() {
+        let _ = conn.execute(
+            "UPDATE sync_queue SET status = 'pending', attempts = 0 \
+             WHERE entity_type IN ('customer', 'sale', 'customer_payment') AND status = 'failed'",
+            [],
+        );
+
         let missing_rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, i32, i32, Option<String>, i32)> = {
             let mut stmt = conn.prepare(
                 "SELECT c.id, c.name, c.tax_id, c.email, c.phone, c.address, \
@@ -1309,7 +1315,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
         }
     }
 
-    // 1. Empujar primero cualquier cliente nuevo o modificado en esta caja
+    // 1. Empujar primero cualquier cliente nuevo o modificado y sus ventas/abonos en esta caja
     let _ = dispatch_outbox_internal(db).await;
 
     let (erp_url, token) = {
@@ -1326,7 +1332,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
     }
 
     let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(20))
         .build()?;
 
     let url = format!("{}/api/pos/v1/sync/clientes", erp_url.trim_end_matches('/'));
@@ -1493,7 +1499,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                     .ok();
             }
 
-            if let Some(local_id) = local_id_opt {
+            let resolved_local_id = if let Some(local_id) = local_id_opt {
                 let pending_credit = pending_credit_by_customer.get(&local_id).copied().unwrap_or(0);
                 let pending_payment = pending_payment_by_customer.get(&local_id).copied().unwrap_or(0);
                 let effective_balance_cents = (erp_balance_cents + pending_credit - pending_payment).max(0);
@@ -1504,6 +1510,19 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                         params![erp_id, effective_balance_cents, local_id],
                     );
                 } else {
+                    let local_limit: i64 = tx
+                        .query_row(
+                            "SELECT COALESCE(credit_limit_cents, 0) FROM customers WHERE id = ?1",
+                            params![local_id],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    let final_limit_cents = if credit_limit_cents > 0 {
+                        credit_limit_cents
+                    } else {
+                        local_limit
+                    };
+
                     tx.execute(
                         "UPDATE customers \
                          SET erp_id = ?1, name = ?2, tax_id = COALESCE(?3, tax_id), \
@@ -1519,7 +1538,7 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                             email,
                             phone,
                             address,
-                            credit_limit_cents,
+                            final_limit_cents,
                             effective_balance_cents,
                             is_credit_blocked,
                             credit_days,
@@ -1528,7 +1547,30 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                             local_id,
                         ],
                     )?;
+
+                    // Si la caja tenía un cupo autorizado local mayor a 0 que aún no estaba en el ERP, encolarlo para propagarlo a todas las cajas
+                    if local_limit > 0 && credit_limit_cents == 0 {
+                        let sync_payload = serde_json::json!({
+                            "localId": local_id,
+                            "erpId": erp_id,
+                            "name": name,
+                            "taxId": tax_id,
+                            "email": email,
+                            "phone": phone,
+                            "address": address,
+                            "creditLimitCents": local_limit,
+                            "creditDays": credit_days,
+                            "isCreditBlocked": is_credit_blocked == 1,
+                            "notes": notes,
+                            "active": active == 1,
+                        });
+                        let _ = tx.execute(
+                            "INSERT INTO sync_queue (entity_type, entity_id, payload, status) VALUES ('customer', ?1, ?2, 'pending')",
+                            params![local_id, sync_payload.to_string()],
+                        );
+                    }
                 }
+                local_id
             } else {
                 tx.execute(
                     "INSERT INTO customers (erp_id, name, tax_id, email, phone, address, credit_limit_cents, current_balance_cents, is_credit_blocked, credit_days, notes, active) \
@@ -1548,6 +1590,19 @@ pub async fn sync_customers_internal(db: &Db) -> AppResult<usize> {
                         active,
                     ],
                 )?;
+                tx.last_insert_rowid()
+            };
+
+            if c["creditSales"].is_array() || c["payments"].is_array() {
+                let cache_key = format!("customer_remote_movements_{}", resolved_local_id);
+                let cache_val = serde_json::json!({
+                    "currentBalanceCents": erp_balance_cents,
+                    "creditLimitCents": credit_limit_cents,
+                    "isCreditBlocked": is_credit_blocked == 1,
+                    "creditSales": c["creditSales"],
+                    "payments": c["payments"],
+                });
+                let _ = set_setting(&tx, &cache_key, &cache_val.to_string());
             }
 
             count += 1;
@@ -1642,8 +1697,36 @@ pub async fn query_remote_kardex(
     Ok(json["data"].clone())
 }
 
+static IS_DISPATCHING_OUTBOX: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+struct OutboxDispatchGuard;
+
+impl Drop for OutboxDispatchGuard {
+    fn drop(&mut self) {
+        IS_DISPATCHING_OUTBOX.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// 📤 Despacha las ventas pendientes en la cola outbox (sync_queue) hacia el ERP.
 pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
+    if IS_DISPATCHING_OUTBOX
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        return Ok(OutboxBatchResult {
+            dispatched: 0,
+            synced: 0,
+            failed: 0,
+        });
+    }
+    let _guard = OutboxDispatchGuard;
+
     let (erp_url, token) = {
         let conn = db.conn()?;
         let erp_url = get_setting(&conn, "erp_url").unwrap_or_else(|| "http://localhost:3000".into());
@@ -1656,50 +1739,55 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     }
 
     let client = reqwest::Client::builder().user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(45))
         .build()?;
 
     let mut total_dispatched = 0;
     let mut total_synced = 0;
     let mut total_failed = 0;
 
-    // ── 1. Despacho de Ventas ('sale') ─────────────────────────────────────
-    let (pending_sales, ventas_json) = {
+    // ── 0. Despacho Prioritario de Clientes ('customer') ───────────────────
+    let (pending_customers, clientes_json) = {
         let conn = db.conn()?;
-        // Auto-recuperar ventas que hayan caído en 'failed' por error transitorio de servidor o Prisma findUnique
         let _ = conn.execute(
-            "UPDATE sync_queue SET status = 'pending', attempts = 0 \
-             WHERE entity_type = 'sale' AND status = 'failed' AND attempts <= 15 \
-               AND (last_error LIKE '%findUnique%' OR last_error LIKE '%403%' OR last_error LIKE '%500%' OR last_error LIKE '%Transaction%')",
+            "UPDATE sync_queue SET status = 'pending', attempts = 0 WHERE entity_type = 'customer' AND status = 'failed'",
             [],
         );
         let mut stmt = conn.prepare(
-            "SELECT id, payload FROM sync_queue WHERE entity_type = 'sale' AND status = 'pending' ORDER BY id ASC LIMIT 30"
+            "SELECT id, COALESCE(entity_id, 0), payload FROM sync_queue WHERE entity_type = 'customer' AND status = 'pending' ORDER BY id ASC LIMIT 30",
         )?;
 
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })?;
 
         let mut pending = Vec::new();
         let mut json_list = Vec::new();
 
         for r in rows {
-            let (id, payload_str) = r?;
+            let (queue_id, entity_id, payload_str) = r?;
             if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
-                let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
-                if parsed["customerErpId"].is_null() {
-                    if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
-                        if let Ok(Some(erp_id)) = conn.query_row(
-                            "SELECT erp_id FROM customers WHERE id = ?1",
-                            params![cid],
-                            |row| row.get::<_, Option<String>>(0),
-                        ) {
-                            parsed["customerErpId"] = serde_json::json!(erp_id);
-                        }
+                let local_id = parsed["localId"]
+                    .as_i64()
+                    .filter(|&id| id > 0)
+                    .unwrap_or(entity_id);
+                parsed["localId"] = serde_json::json!(local_id);
+
+                if parsed["erpId"].is_null() && local_id > 0 {
+                    if let Ok(Some(existing_erp_id)) = conn.query_row(
+                        "SELECT erp_id FROM customers WHERE id = ?1",
+                        params![local_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    ) {
+                        parsed["erpId"] = serde_json::json!(existing_erp_id);
                     }
                 }
-                pending.push((id, folio));
+
+                pending.push((queue_id, local_id));
                 json_list.push(parsed);
             }
         }
@@ -1707,7 +1795,166 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         (pending, json_list)
     };
 
-    if !pending_sales.is_empty() {
+    if !pending_customers.is_empty() {
+        total_dispatched += pending_customers.len();
+        let url = format!("{}/api/pos/v1/sync/clientes", erp_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&serde_json::json!({ "clientes": clientes_json }))
+            .send()
+            .await;
+
+        match resp {
+            Ok(res) => {
+                let is_success = res.status().is_success();
+                let res_text = res.text().await.unwrap_or_default();
+                let conn = db.conn()?;
+
+                if is_success {
+                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
+                    let resultados_map: std::collections::HashMap<i64, (String, Option<String>, Option<String>)> =
+                        json["data"]["resultados"]
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|item| {
+                                        let local_id = item["localId"].as_i64()?;
+                                        let status = item["status"].as_str().unwrap_or("failed").to_string();
+                                        let erp_id = item["erpId"].as_str().map(|s| s.to_string());
+                                        let err = item["error"].as_str().map(|s| s.to_string());
+                                        Some((local_id, (status, erp_id, err)))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                    for (queue_id, local_id) in &pending_customers {
+                        if let Some((status, erp_id_opt, err_opt)) = resultados_map.get(local_id) {
+                            if status == "synced" {
+                                if let Some(erp_id) = erp_id_opt {
+                                    let _ = conn.execute(
+                                        "UPDATE customers SET erp_id = ?1 WHERE id = ?2",
+                                        params![erp_id, local_id],
+                                    );
+                                }
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                    params![queue_id],
+                                );
+                                total_synced += 1;
+                            } else {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
+                                    params![
+                                        err_opt.clone().unwrap_or_else(|| "Error al sincronizar cliente".into()),
+                                        queue_id
+                                    ],
+                                );
+                                total_failed += 1;
+                            }
+                        }
+                    }
+                } else {
+                    for (queue_id, _) in &pending_customers {
+                        let _ = conn.execute(
+                            "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
+                            params![res_text, queue_id],
+                        );
+                    }
+                    total_failed += pending_customers.len();
+                }
+            }
+            Err(e) => {
+                let conn = db.conn()?;
+                let err_str = e.to_string();
+                for (queue_id, _) in &pending_customers {
+                    let _ = conn.execute(
+                        "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
+                        params![err_str, queue_id],
+                    );
+                }
+                total_failed += pending_customers.len();
+            }
+        }
+    }
+
+    // ── 1. Despacho de Ventas ('sale') priorizando ventas de clientes (CxC) ──
+    for _batch_iter in 0..3 {
+        let (pending_sales, ventas_json, has_customer_sales) = {
+            let conn = db.conn()?;
+            let _ = conn.execute(
+                "UPDATE sync_queue SET status = 'pending', attempts = 0 WHERE entity_type = 'sale' AND status = 'failed'",
+                [],
+            );
+            let mut stmt = conn.prepare(
+                "SELECT sq.id, sq.payload, s.customer_id \
+                 FROM sync_queue sq \
+                 LEFT JOIN sales s ON s.id = sq.entity_id \
+                 WHERE sq.entity_type = 'sale' AND sq.status = 'pending' \
+                 ORDER BY CASE WHEN s.customer_id IS NOT NULL OR (sq.payload LIKE '%\"customerId\":%' AND sq.payload NOT LIKE '%\"customerId\":null%') THEN 0 ELSE 1 END ASC, \
+                          sq.id ASC \
+                 LIMIT 20",
+            )?;
+
+            let rows = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            })?;
+
+            let mut pending = Vec::new();
+            let mut json_list = Vec::new();
+            let mut any_cust = false;
+
+            for r in rows {
+                let (id, payload_str, sale_cust_id) = r?;
+                if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
+                    let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
+                    let resolved_cid = parsed["customerId"]
+                        .as_i64()
+                        .filter(|&c| c > 0)
+                        .or(sale_cust_id);
+
+                    if let Some(cid) = resolved_cid {
+                        any_cust = true;
+                        parsed["customerId"] = serde_json::json!(cid);
+                        if let Ok((cname, ctax, cerp)) = conn.query_row(
+                            "SELECT name, tax_id, erp_id FROM customers WHERE id = ?1",
+                            params![cid],
+                            |row| {
+                                Ok((
+                                    row.get::<_, String>(0)?,
+                                    row.get::<_, Option<String>>(1)?,
+                                    row.get::<_, Option<String>>(2)?,
+                                ))
+                            },
+                        ) {
+                            if parsed["customerErpId"].is_null() {
+                                parsed["customerErpId"] = serde_json::json!(cerp);
+                            }
+                            if parsed["customerName"].is_null() {
+                                parsed["customerName"] = serde_json::json!(cname);
+                            }
+                            if parsed["customerTaxId"].is_null() {
+                                parsed["customerTaxId"] = serde_json::json!(ctax);
+                            }
+                        }
+                    }
+                    pending.push((id, folio));
+                    json_list.push(parsed);
+                }
+            }
+
+            (pending, json_list, any_cust)
+        };
+
+        if pending_sales.is_empty() {
+            break;
+        }
+
         total_dispatched += pending_sales.len();
         let url = format!("{}/api/pos/v1/sync/ventas", erp_url.trim_end_matches('/'));
         let resp = client
@@ -1717,12 +1964,14 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
             .send()
             .await;
 
+        let mut batch_ok = false;
         match resp {
             Ok(res) => {
                 let is_success = res.status().is_success();
                 let res_text = res.text().await.unwrap_or_default();
                 let conn = db.conn()?;
                 if is_success {
+                    batch_ok = true;
                     let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
                     let resultados_map: std::collections::HashMap<String, (String, Option<String>)> = json["data"]["resultados"]
                         .as_array()
@@ -1737,28 +1986,26 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                         .unwrap_or_default();
 
                     for (id, folio) in &pending_sales {
-                        let (status, err) = resultados_map.get(folio)
-                            .cloned()
-                            .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este ticket".to_string())));
-
-                        if status == "synced" || status == "skipped" {
-                            let _ = conn.execute(
-                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
-                                params![id],
-                            );
-                            total_synced += 1;
-                        } else {
-                            let _ = conn.execute(
-                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                                params![err.unwrap_or_else(|| "Fallo al procesar venta en ERP".to_string()), id],
-                            );
-                            total_failed += 1;
+                        if let Some((status, err)) = resultados_map.get(folio) {
+                            if status == "synced" || status == "skipped" {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                    params![id],
+                                );
+                                total_synced += 1;
+                            } else {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
+                                    params![err.clone().unwrap_or_else(|| "Fallo al procesar venta en ERP".to_string()), id],
+                                );
+                                total_failed += 1;
+                            }
                         }
                     }
                 } else {
                     for (id, _) in &pending_sales {
                         let _ = conn.execute(
-                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
                             params![res_text, id],
                         );
                     }
@@ -1770,12 +2017,16 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                 let err_str = e.to_string();
                 for (id, _) in &pending_sales {
                     let _ = conn.execute(
-                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
                         params![err_str, id],
                     );
                 }
                 total_failed += pending_sales.len();
             }
+        }
+
+        if !batch_ok || !has_customer_sales {
+            break;
         }
     }
 
@@ -1783,9 +2034,7 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
     let (pending_payments, abonos_json) = {
         let conn = db.conn()?;
         let _ = conn.execute(
-            "UPDATE sync_queue SET status = 'pending', attempts = 0 \
-             WHERE entity_type = 'customer_payment' AND status = 'failed' AND attempts <= 15 \
-               AND (last_error LIKE '%findUnique%' OR last_error LIKE '%403%' OR last_error LIKE '%500%' OR last_error LIKE '%Transaction%')",
+            "UPDATE sync_queue SET status = 'pending', attempts = 0 WHERE entity_type = 'customer_payment' AND status = 'failed'",
             [],
         );
         let mut stmt = conn.prepare(
@@ -1803,14 +2052,26 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
             let (id, payload_str) = r?;
             if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
                 let folio = parsed["folio"].as_str().unwrap_or_default().to_string();
-                if parsed["customerErpId"].is_null() {
-                    if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
-                        if let Ok(Some(erp_id)) = conn.query_row(
-                            "SELECT erp_id FROM customers WHERE id = ?1",
-                            params![cid],
-                            |row| row.get::<_, Option<String>>(0),
-                        ) {
-                            parsed["customerErpId"] = serde_json::json!(erp_id);
+                if let Some(cid) = parsed["customerId"].as_i64().filter(|&c| c > 0) {
+                    if let Ok((cname, ctax, cerp)) = conn.query_row(
+                        "SELECT name, tax_id, erp_id FROM customers WHERE id = ?1",
+                        params![cid],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    ) {
+                        if parsed["customerErpId"].is_null() {
+                            parsed["customerErpId"] = serde_json::json!(cerp);
+                        }
+                        if parsed["customerName"].is_null() {
+                            parsed["customerName"] = serde_json::json!(cname);
+                        }
+                        if parsed["customerTaxId"].is_null() {
+                            parsed["customerTaxId"] = serde_json::json!(ctax);
                         }
                     }
                 }
@@ -1852,28 +2113,26 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                         .unwrap_or_default();
 
                     for (id, folio) in &pending_payments {
-                        let (status, err) = resultados_map.get(folio)
-                            .cloned()
-                            .unwrap_or_else(|| ("failed".to_string(), Some("Sin respuesta del ERP para este recibo de abono".to_string())));
-
-                        if status == "synced" || status == "skipped" {
-                            let _ = conn.execute(
-                                "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
-                                params![id],
-                            );
-                            total_synced += 1;
-                        } else {
-                            let _ = conn.execute(
-                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                                params![err.unwrap_or_else(|| "Fallo al procesar abono en ERP".to_string()), id],
-                            );
-                            total_failed += 1;
+                        if let Some((status, err)) = resultados_map.get(folio) {
+                            if status == "synced" || status == "skipped" {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
+                                    params![id],
+                                );
+                                total_synced += 1;
+                            } else {
+                                let _ = conn.execute(
+                                    "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
+                                    params![err.clone().unwrap_or_else(|| "Fallo al procesar abono en ERP".to_string()), id],
+                                );
+                                total_failed += 1;
+                            }
                         }
                     }
                 } else {
                     for (id, _) in &pending_payments {
                         let _ = conn.execute(
-                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                            "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
                             params![res_text, id],
                         );
                     }
@@ -1885,7 +2144,7 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
                 let err_str = e.to_string();
                 for (id, _) in &pending_payments {
                     let _ = conn.execute(
-                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
+                        "UPDATE sync_queue SET last_error = ?1 WHERE id = ?2",
                         params![err_str, id],
                     );
                 }
@@ -2353,146 +2612,10 @@ pub async fn dispatch_outbox_internal(db: &Db) -> AppResult<OutboxBatchResult> {
         }
     }
 
-    // ── 6. Despacho de Clientes ('customer') ───────────────────────────────
-    let (pending_customers, clientes_json) = {
-        let conn = db.conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, COALESCE(entity_id, 0), payload FROM sync_queue WHERE entity_type = 'customer' AND status = 'pending' ORDER BY id ASC LIMIT 30",
-        )?;
-
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })?;
-
-        let mut pending = Vec::new();
-        let mut json_list = Vec::new();
-
-        for r in rows {
-            let (queue_id, entity_id, payload_str) = r?;
-            if let Ok(mut parsed) = serde_json::from_str::<Value>(&payload_str) {
-                let local_id = parsed["localId"]
-                    .as_i64()
-                    .filter(|&id| id > 0)
-                    .unwrap_or(entity_id);
-                parsed["localId"] = serde_json::json!(local_id);
-
-                // Si el cliente ya obtuvo erp_id en una sincronización previa, inyectarlo
-                if parsed["erpId"].is_null() && local_id > 0 {
-                    if let Ok(Some(existing_erp_id)) = conn.query_row(
-                        "SELECT erp_id FROM customers WHERE id = ?1",
-                        params![local_id],
-                        |row| row.get::<_, Option<String>>(0),
-                    ) {
-                        parsed["erpId"] = serde_json::json!(existing_erp_id);
-                    }
-                }
-
-                pending.push((queue_id, local_id));
-                json_list.push(parsed);
-            }
-        }
-
-        (pending, json_list)
-    };
-
-    if !pending_customers.is_empty() {
-        total_dispatched += pending_customers.len();
-        let url = format!("{}/api/pos/v1/sync/clientes", erp_url.trim_end_matches('/'));
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {token}"))
-            .json(&serde_json::json!({ "clientes": clientes_json }))
-            .send()
-            .await;
-
-        match resp {
-            Ok(res) => {
-                let is_success = res.status().is_success();
-                let res_text = res.text().await.unwrap_or_default();
-                let conn = db.conn()?;
-
-                if is_success {
-                    let json: Value = serde_json::from_str(&res_text).unwrap_or_default();
-                    let resultados_map: std::collections::HashMap<i64, (String, Option<String>, Option<String>)> =
-                        json["data"]["resultados"]
-                            .as_array()
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|item| {
-                                        let local_id = item["localId"].as_i64()?;
-                                        let status = item["status"].as_str().unwrap_or("failed").to_string();
-                                        let erp_id = item["erpId"].as_str().map(|s| s.to_string());
-                                        let err = item["error"].as_str().map(|s| s.to_string());
-                                        Some((local_id, (status, erp_id, err)))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                    for (queue_id, local_id) in &pending_customers {
-                        if let Some((status, erp_id_opt, err_opt)) = resultados_map.get(local_id) {
-                            if status == "synced" {
-                                if let Some(erp_id) = erp_id_opt {
-                                    let _ = conn.execute(
-                                        "UPDATE customers SET erp_id = ?1 WHERE id = ?2",
-                                        params![erp_id, local_id],
-                                    );
-                                }
-                                let _ = conn.execute(
-                                    "UPDATE sync_queue SET status = 'synced', synced_at = datetime('now'), last_error = NULL WHERE id = ?1",
-                                    params![queue_id],
-                                );
-                                total_synced += 1;
-                            } else {
-                                let _ = conn.execute(
-                                    "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                                    params![
-                                        err_opt.clone().unwrap_or_else(|| "Error al sincronizar cliente".into()),
-                                        queue_id
-                                    ],
-                                );
-                                total_failed += 1;
-                            }
-                        } else {
-                            let _ = conn.execute(
-                                "UPDATE sync_queue SET attempts = attempts + 1, last_error = 'ERP no retornó confirmación para el cliente' WHERE id = ?1",
-                                params![queue_id],
-                            );
-                            total_failed += 1;
-                        }
-                    }
-                } else {
-                    for (queue_id, _) in &pending_customers {
-                        let _ = conn.execute(
-                            "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                            params![res_text, queue_id],
-                        );
-                    }
-                    total_failed += pending_customers.len();
-                }
-            }
-            Err(e) => {
-                let conn = db.conn()?;
-                let err_str = e.to_string();
-                for (queue_id, _) in &pending_customers {
-                    let _ = conn.execute(
-                        "UPDATE sync_queue SET attempts = attempts + 1, last_error = ?1 WHERE id = ?2",
-                        params![err_str, queue_id],
-                    );
-                }
-                total_failed += pending_customers.len();
-            }
-        }
-    }
-
-    // ── 7. Saneamiento Dead-Letter para registros estancados (>= 10 intentos) ──
+    // ── 7. Saneamiento Dead-Letter para registros no críticos estancados (>= 15 intentos) ──
     if let Ok(conn) = db.conn() {
         let _ = conn.execute(
-            "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 10",
+            "UPDATE sync_queue SET status = 'failed' WHERE status = 'pending' AND attempts >= 15 AND entity_type NOT IN ('customer', 'sale', 'customer_payment')",
             [],
         );
     }

@@ -61,11 +61,17 @@ pub struct UpdateCustomerInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteCustomerCreditSaleDto {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub folio: String,
+    #[serde(default)]
     pub total_cents: i64,
+    #[serde(default)]
     pub credit_amount_cents: i64,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub concepto: String,
     #[serde(default)]
     pub items_count: i64,
@@ -76,21 +82,32 @@ pub struct RemoteCustomerCreditSaleDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteCustomerPaymentDto {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub folio: String,
+    #[serde(default)]
     pub amount_cents: i64,
+    #[serde(default)]
     pub method: String,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerRemoteMovementsDto {
+    #[serde(default)]
     pub current_balance_cents: i64,
+    #[serde(default)]
     pub credit_limit_cents: i64,
+    #[serde(default)]
     pub is_credit_blocked: bool,
+    #[serde(default)]
     pub credit_sales: Vec<RemoteCustomerCreditSaleDto>,
+    #[serde(default)]
     pub payments: Vec<RemoteCustomerPaymentDto>,
 }
 
@@ -128,15 +145,25 @@ pub struct CustomerPaymentDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomerSaleItemDto {
+    #[serde(default)]
     pub id: i64,
+    #[serde(default)]
     pub product_id: Option<i64>,
+    #[serde(default)]
     pub sku: Option<String>,
+    #[serde(default)]
     pub barcode: Option<String>,
+    #[serde(default)]
     pub unit: Option<String>,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub quantity: f64,
+    #[serde(default)]
     pub unit_price_cents: i64,
+    #[serde(default)]
     pub discount_cents: i64,
+    #[serde(default)]
     pub total_cents: i64,
 }
 
@@ -613,6 +640,45 @@ pub async fn get_customer_payments(
     for r in rows {
         list.push(r.map_err(|e| e.to_string())?);
     }
+
+    let customer_name: String = conn
+        .query_row("SELECT name FROM customers WHERE id = ?1", params![customer_id], |r| r.get(0))
+        .unwrap_or_default();
+
+    let cache_key = format!("customer_remote_movements_{}", customer_id);
+    if let Some(cached_str) = get_setting(&conn, &cache_key) {
+        if let Ok(cached_val) = serde_json::from_str::<serde_json::Value>(&cached_str) {
+            if let Some(remote_payments) = cached_val["payments"].as_array() {
+                let mut seen_folios: std::collections::HashSet<String> =
+                    list.iter().map(|p| p.folio.clone()).collect();
+                for rp_val in remote_payments {
+                    if let Ok(rp) = serde_json::from_value::<RemoteCustomerPaymentDto>(rp_val.clone()) {
+                        if !rp.folio.is_empty() && !seen_folios.contains(&rp.folio) {
+                            seen_folios.insert(rp.folio.clone());
+                            list.push(CustomerPaymentDto {
+                                id: -((list.len() as i64) + 1),
+                                folio: rp.folio,
+                                customer_id,
+                                customer_name: customer_name.clone(),
+                                session_id: None,
+                                user_id: 0,
+                                payment_method_id: None,
+                                method: Some(if rp.method.is_empty() { "Efectivo".to_string() } else { rp.method }),
+                                amount_cents: rp.amount_cents,
+                                previous_balance_cents: 0,
+                                new_balance_cents: 0,
+                                reference: Some("Sincronizado ERP".to_string()),
+                                notes: rp.notes,
+                                created_at: rp.created_at,
+                            });
+                        }
+                    }
+                }
+                list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            }
+        }
+    }
+
     Ok(list)
 }
 
@@ -641,15 +707,25 @@ pub fn get_customer_credit_sales_in_conn(
                     COALESCE(datetime(s.created_at, 'localtime'), s.created_at), \
                     (SELECT COUNT(*) FROM sale_items si WHERE si.sale_id = s.id) as items_count, \
                     (SELECT COALESCE(SUM(p.amount_cents), 0) FROM payments p \
-                     WHERE p.sale_id = s.id AND (LOWER(p.method) LIKE '%credit%' OR LOWER(p.method) LIKE '%crédit%' OR LOWER(p.method) LIKE '%credito%')) as credit_cents \
+                     LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method \
+                     WHERE p.sale_id = s.id AND ( \
+                         LOWER(p.method) LIKE '%credit%' OR LOWER(p.method) LIKE '%crédit%' OR LOWER(p.method) LIKE '%credito%' \
+                         OR LOWER(p.method) LIKE '%fiar%' OR LOWER(p.method) LIKE '%cartera%' \
+                         OR UPPER(COALESCE(pm.type, '')) = 'CREDITO' OR UPPER(COALESCE(pm.erp_code, '')) LIKE '%CREDITO%' \
+                     )) as credit_cents \
              FROM sales s \
              LEFT JOIN users u ON u.id = s.user_id \
              WHERE s.customer_id = ?1 \
                AND s.status = 'completed' \
                AND EXISTS ( \
                    SELECT 1 FROM payments p \
+                   LEFT JOIN payment_methods pm ON pm.id = p.payment_method_id OR pm.code = p.method \
                    WHERE p.sale_id = s.id \
-                     AND (LOWER(p.method) LIKE '%credit%' OR LOWER(p.method) LIKE '%crédit%' OR LOWER(p.method) LIKE '%credito%') \
+                     AND ( \
+                         LOWER(p.method) LIKE '%credit%' OR LOWER(p.method) LIKE '%crédit%' OR LOWER(p.method) LIKE '%credito%' \
+                         OR LOWER(p.method) LIKE '%fiar%' OR LOWER(p.method) LIKE '%cartera%' \
+                         OR UPPER(COALESCE(pm.type, '')) = 'CREDITO' OR UPPER(COALESCE(pm.erp_code, '')) LIKE '%CREDITO%' \
+                     ) \
                ) \
              ORDER BY s.id DESC \
              LIMIT ?2",
@@ -761,6 +837,42 @@ pub fn get_customer_credit_sales_in_conn(
         });
     }
 
+    let cache_key = format!("customer_remote_movements_{}", customer_id);
+    if let Some(cached_str) = get_setting(conn, &cache_key) {
+        if let Ok(cached_val) = serde_json::from_str::<serde_json::Value>(&cached_str) {
+            if let Some(remote_sales) = cached_val["creditSales"].as_array() {
+                let mut seen_folios: std::collections::HashSet<String> =
+                    sales.iter().map(|s| s.folio.clone()).collect();
+                for rs_val in remote_sales {
+                    if let Ok(rs) = serde_json::from_value::<RemoteCustomerCreditSaleDto>(rs_val.clone()) {
+                        if !rs.folio.is_empty() && !seen_folios.contains(&rs.folio) {
+                            seen_folios.insert(rs.folio.clone());
+                            let items_len = rs.items.len() as i64;
+                            sales.push(CustomerCreditSaleDto {
+                                id: -((sales.len() as i64) + 1),
+                                folio: rs.folio,
+                                customer_id,
+                                cashier_name: Some("Otra Caja / ERP".to_string()),
+                                subtotal_cents: rs.total_cents,
+                                discount_cents: 0,
+                                tax_cents: 0,
+                                total_cents: rs.total_cents,
+                                credit_amount_cents: rs.credit_amount_cents,
+                                other_payments_cents: (rs.total_cents - rs.credit_amount_cents).max(0),
+                                return_status: "none".to_string(),
+                                returned_cents: 0,
+                                created_at: rs.created_at,
+                                items_count: if rs.items_count > 0 { rs.items_count } else { items_len },
+                                items: rs.items,
+                            });
+                        }
+                    }
+                }
+                sales.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            }
+        }
+    }
+
     Ok(sales)
 }
 
@@ -860,12 +972,15 @@ pub async fn get_customer_remote_movements(
     erp_id: String,
 ) -> Result<CustomerRemoteMovementsDto, String> {
     let mut resolved_erp_id = erp_id.trim().to_string();
+    let mut resolved_local_id: Option<i64> = None;
+
     if resolved_erp_id.starts_with("local:") {
         let local_id: i64 = resolved_erp_id
             .trim_start_matches("local:")
             .parse()
             .unwrap_or(0);
         if local_id > 0 {
+            resolved_local_id = Some(local_id);
             let existing_erp: Option<String> = {
                 let conn = db.conn().map_err(|e| e.to_string())?;
                 conn.query_row(
@@ -898,7 +1013,53 @@ pub async fn get_customer_remote_movements(
     }
 
     let trimmed = resolved_erp_id.trim();
+    if resolved_local_id.is_none() && !trimmed.is_empty() {
+        if let Ok(conn) = db.conn() {
+            resolved_local_id = conn
+                .query_row(
+                    "SELECT id FROM customers WHERE erp_id = ?1 LIMIT 1",
+                    params![trimmed],
+                    |r| r.get(0),
+                )
+                .ok();
+        }
+    }
+
+    let fallback_from_cache = |local_id_opt: Option<i64>| -> Option<CustomerRemoteMovementsDto> {
+        let lid = local_id_opt?;
+        let conn = db.conn().ok()?;
+        let cache_key = format!("customer_remote_movements_{}", lid);
+        let cached_str = get_setting(&conn, &cache_key)?;
+        let cached_val: serde_json::Value = serde_json::from_str(&cached_str).ok()?;
+        let credit_sales = cached_val["creditSales"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| serde_json::from_value::<RemoteCustomerCreditSaleDto>(item.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let payments = cached_val["payments"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| serde_json::from_value::<RemoteCustomerPaymentDto>(item.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(CustomerRemoteMovementsDto {
+            current_balance_cents: cached_val["currentBalanceCents"].as_i64().unwrap_or(0),
+            credit_limit_cents: cached_val["creditLimitCents"].as_i64().unwrap_or(0),
+            is_credit_blocked: cached_val["isCreditBlocked"].as_bool().unwrap_or(false),
+            credit_sales,
+            payments,
+        })
+    };
+
     if trimmed.is_empty() {
+        if let Some(cached) = fallback_from_cache(resolved_local_id) {
+            return Ok(cached);
+        }
         return Err("Cliente sin erpId".to_string());
     }
 
@@ -912,12 +1073,15 @@ pub async fn get_customer_remote_movements(
     };
 
     if token.is_empty() {
+        if let Some(cached) = fallback_from_cache(resolved_local_id) {
+            return Ok(cached);
+        }
         return Err("Terminal no vinculada".to_string());
     }
 
     let client = reqwest::Client::builder()
         .user_agent("Metahabi-POS/0.2 (Windows; Desktop)")
-        .timeout(std::time::Duration::from_secs(8))
+        .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -926,22 +1090,36 @@ pub async fn get_customer_remote_movements(
         erp_url.trim_end_matches('/'),
         trimmed
     );
-    let resp = client
+    let resp = match client
         .get(&url)
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .await
-        .map_err(|e| format!("Sin conexión al consultar movimientos remotos: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Error HTTP {} al consultar movimientos remotos", resp.status()));
-    }
+    {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            if let Some(cached) = fallback_from_cache(resolved_local_id) {
+                return Ok(cached);
+            }
+            return Err(format!("Error HTTP {} al consultar movimientos remotos", r.status()));
+        }
+        Err(e) => {
+            if let Some(cached) = fallback_from_cache(resolved_local_id) {
+                return Ok(cached);
+            }
+            return Err(format!("Sin conexión al consultar movimientos remotos: {}", e));
+        }
+    };
 
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     let data = &json["data"];
     let cust = &data["customer"];
 
-    let credit_sales = data["creditSales"]
+    let current_balance_cents = cust["currentBalanceCents"].as_i64().unwrap_or(0);
+    let credit_limit_cents = cust["creditLimitCents"].as_i64().unwrap_or(0);
+    let is_credit_blocked = cust["isCreditBlocked"].as_bool().unwrap_or(false);
+
+    let credit_sales: Vec<RemoteCustomerCreditSaleDto> = data["creditSales"]
         .as_array()
         .map(|arr| {
             arr.iter()
@@ -950,7 +1128,7 @@ pub async fn get_customer_remote_movements(
         })
         .unwrap_or_default();
 
-    let payments = data["payments"]
+    let payments: Vec<RemoteCustomerPaymentDto> = data["payments"]
         .as_array()
         .map(|arr| {
             arr.iter()
@@ -959,10 +1137,27 @@ pub async fn get_customer_remote_movements(
         })
         .unwrap_or_default();
 
+    if let Some(lid) = resolved_local_id {
+        if let Ok(conn) = db.conn() {
+            let cache_key = format!("customer_remote_movements_{}", lid);
+            let cache_val = serde_json::json!({
+                "currentBalanceCents": current_balance_cents,
+                "creditLimitCents": credit_limit_cents,
+                "isCreditBlocked": is_credit_blocked,
+                "creditSales": &credit_sales,
+                "payments": &payments,
+            });
+            let _ = conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![cache_key, cache_val.to_string()],
+            );
+        }
+    }
+
     Ok(CustomerRemoteMovementsDto {
-        current_balance_cents: cust["currentBalanceCents"].as_i64().unwrap_or(0),
-        credit_limit_cents: cust["creditLimitCents"].as_i64().unwrap_or(0),
-        is_credit_blocked: cust["isCreditBlocked"].as_bool().unwrap_or(false),
+        current_balance_cents,
+        credit_limit_cents,
+        is_credit_blocked,
         credit_sales,
         payments,
     })
