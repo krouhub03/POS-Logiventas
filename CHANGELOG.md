@@ -5,6 +5,17 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.20] - 2026-11-19
+### Agregado
+- Motor matemático puro de precios y rentabilidad (`src/lib/pricing.ts`) en centavos enteros y puntos base: cálculo de costo unitario por caja/paca/canasta, margen, markup, desglose de IVA y valoración de inventario.
+- Calculadora avanzada de precios, utilidad y rentabilidad integrada directamente en el catálogo de productos (`ProductsPage.tsx`).
+
+### Cambiado
+- Mejoras en el diálogo de confirmación (`ConfirmModal.tsx`), módulo de clientes (`CustomerModal.tsx`) y estación de ventas (`SalesStationPage.tsx`).
+- Sincronización bidireccional de productos locales pendientes (`needs_erp_upload = 1`) ahora incluye `erp_id` y `updated_at` para evitar colisiones y preservar referencias exactas con el ERP (`sync.rs`).
+
+---
+
 ## [0.2.19] - 2026-11-16
 ### Corregido
 - Sincronización horaria exacta con el reloj del computador: conversión unificada `COALESCE(datetime(col, 'localtime'), col)` en listado de últimas ventas, turnos de caja, kardex e historial de abonos.

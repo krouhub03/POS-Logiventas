@@ -1,6 +1,16 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { api } from "../services/api";
 import { formatCents, toCents } from "../lib/money";
+import {
+  calcAutoWholesaleCents,
+  calcBaseFromPvpWithTax,
+  calcInventoryValuation,
+  calcPriceFromMarkup,
+  calcProfitability,
+  calcPvpFromBaseWithTax,
+  calcUnitCostFromPack,
+  centsToInputStr,
+} from "../lib/pricing";
 import { useModals } from "../contexts/ModalContext";
 import type {
   Product,
@@ -175,7 +185,13 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
   const [formPriceStr, setFormPriceStr] = useState("");
   const [formWholesalePriceStr, setFormWholesalePriceStr] = useState("");
   const [formCostStr, setFormCostStr] = useState("");
+  const [formMarkupStr, setFormMarkupStr] = useState("");
   const [formTaxRateBp, setFormTaxRateBp] = useState<number>(0);
+  const [formTaxMode, setFormTaxMode] = useState<"base" | "included">("base");
+  const [isPackCalcOpen, setIsPackCalcOpen] = useState(false);
+  const [packCostStr, setPackCostStr] = useState("");
+  const [packUnitsStr, setPackUnitsStr] = useState("12");
+  const [packApplyStock, setPackApplyStock] = useState(false);
   const [formUnit, setFormUnit] = useState("pza");
   const [formStock, setFormStock] = useState<number>(0);
   const [formMinStock, setFormMinStock] = useState<number>(5);
@@ -297,6 +313,122 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
       0
     );
   }, [formIsBundle, formComponents]);
+
+  // Cálculos financieros en vivo del formulario (centavos enteros exactos)
+  const formEffectiveCostCents = useMemo(
+    () => (formIsBundle ? bundleTotalCostCents : toCents(formCostStr || "0")),
+    [formIsBundle, bundleTotalCostCents, formCostStr]
+  );
+
+  const formEffectiveBasePriceCents = useMemo(() => {
+    const rawCents = toCents(formPriceStr || "0");
+    if (formTaxRateBp > 0 && formTaxMode === "included") {
+      return calcBaseFromPvpWithTax(rawCents, formTaxRateBp);
+    }
+    return rawCents;
+  }, [formPriceStr, formTaxRateBp, formTaxMode]);
+
+  const formTaxBreakdown = useMemo(
+    () => calcPvpFromBaseWithTax(formEffectiveBasePriceCents, formTaxRateBp),
+    [formEffectiveBasePriceCents, formTaxRateBp]
+  );
+
+  const formProfitability = useMemo(
+    () => calcProfitability(formEffectiveCostCents, formEffectiveBasePriceCents),
+    [formEffectiveCostCents, formEffectiveBasePriceCents]
+  );
+
+  const formInventoryValuation = useMemo(
+    () =>
+      calcInventoryValuation(
+        formEffectiveCostCents,
+        formEffectiveBasePriceCents,
+        formIsService || formIsBundle ? 0 : formStock
+      ),
+    [formEffectiveCostCents, formEffectiveBasePriceCents, formIsService, formIsBundle, formStock]
+  );
+
+  const packPreviewUnitCostCents = useMemo(
+    () => calcUnitCostFromPack(toCents(packCostStr || "0"), Number(packUnitsStr) || 0),
+    [packCostStr, packUnitsStr]
+  );
+
+  const applyMarkupToFormPrice = useCallback(
+    (markupPct: number, overrideCostCents?: number) => {
+      const costCents = overrideCostCents !== undefined ? overrideCostCents : formEffectiveCostCents;
+      setFormMarkupStr(markupPct.toFixed(1));
+      if (costCents <= 0) return;
+      const baseCents = calcPriceFromMarkup(costCents, markupPct);
+      const displayCents =
+        formTaxRateBp > 0 && formTaxMode === "included"
+          ? calcPvpFromBaseWithTax(baseCents, formTaxRateBp).pvpCents
+          : baseCents;
+      setFormPriceStr(centsToInputStr(displayCents));
+    },
+    [formEffectiveCostCents, formTaxRateBp, formTaxMode]
+  );
+
+  const handleFormCostChange = (nextVal: string) => {
+    if (formIsBundle) return;
+    setFormCostStr(nextVal);
+    const nextCostCents = toCents(nextVal || "0");
+    const parsedMarkup = parseFloat(formMarkupStr);
+    if (nextCostCents > 0 && formMarkupStr.trim() !== "" && Number.isFinite(parsedMarkup)) {
+      const baseCents = calcPriceFromMarkup(nextCostCents, parsedMarkup);
+      const displayCents =
+        formTaxRateBp > 0 && formTaxMode === "included"
+          ? calcPvpFromBaseWithTax(baseCents, formTaxRateBp).pvpCents
+          : baseCents;
+      setFormPriceStr(centsToInputStr(displayCents));
+    } else if (nextCostCents > 0 && formEffectiveBasePriceCents > 0) {
+      const nextProf = calcProfitability(nextCostCents, formEffectiveBasePriceCents);
+      setFormMarkupStr(nextProf.markupPct.toFixed(1));
+    }
+  };
+
+  const handleFormMarkupChange = (nextVal: string) => {
+    setFormMarkupStr(nextVal);
+    const parsed = parseFloat(nextVal);
+    if (Number.isFinite(parsed) && formEffectiveCostCents > 0) {
+      const baseCents = calcPriceFromMarkup(formEffectiveCostCents, parsed);
+      const displayCents =
+        formTaxRateBp > 0 && formTaxMode === "included"
+          ? calcPvpFromBaseWithTax(baseCents, formTaxRateBp).pvpCents
+          : baseCents;
+      setFormPriceStr(centsToInputStr(displayCents));
+    }
+  };
+
+  const handleFormPriceChange = (nextVal: string) => {
+    setFormPriceStr(nextVal);
+    if (formEffectiveCostCents > 0) {
+      const rawCents = toCents(nextVal || "0");
+      const baseCents =
+        formTaxRateBp > 0 && formTaxMode === "included"
+          ? calcBaseFromPvpWithTax(rawCents, formTaxRateBp)
+          : rawCents;
+      const nextProf = calcProfitability(formEffectiveCostCents, baseCents);
+      setFormMarkupStr(nextProf.markupPct.toFixed(1));
+    }
+  };
+
+  const handleApplyPackCalculator = () => {
+    const units = Math.max(1, Math.floor(Number(packUnitsStr) || 0));
+    const unitCents = calcUnitCostFromPack(toCents(packCostStr || "0"), units);
+    if (unitCents <= 0) return;
+    setFormCostStr(centsToInputStr(unitCents));
+    if (packApplyStock && !formIsService && !formIsBundle) {
+      setFormStock(units);
+    }
+    const parsedMarkup = parseFloat(formMarkupStr);
+    if (formMarkupStr.trim() !== "" && Number.isFinite(parsedMarkup) && parsedMarkup > 0) {
+      applyMarkupToFormPrice(parsedMarkup, unitCents);
+    } else if (formEffectiveBasePriceCents > 0) {
+      const nextProf = calcProfitability(unitCents, formEffectiveBasePriceCents);
+      setFormMarkupStr(nextProf.markupPct.toFixed(1));
+    }
+    setIsPackCalcOpen(false);
+  };
 
   // Estado del formulario de ajuste de stock (Multimodo: Entrada +, Conteo =, Salida -)
   const [adjustMode, setAdjustMode] = useState<"add" | "set" | "sub">("add");
@@ -857,7 +989,13 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
     setFormPriceStr("");
     setFormWholesalePriceStr("");
     setFormCostStr("");
+    setFormMarkupStr("");
     setFormTaxRateBp(0);
+    setFormTaxMode("base");
+    setIsPackCalcOpen(false);
+    setPackCostStr("");
+    setPackUnitsStr("12");
+    setPackApplyStock(false);
     setFormUnit(asService ? "serv" : "pza");
     setFormStock(asService || asBundle ? 0 : 1);
     setFormMinStock(asService ? 0 : 5);
@@ -882,7 +1020,18 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
     setFormPriceStr((p.priceCents / 100).toFixed(2));
     setFormWholesalePriceStr(((p.wholesalePriceCents ?? 0) / 100).toFixed(2));
     setFormCostStr((p.costCents / 100).toFixed(2));
+    if (p.costCents > 0 && p.priceCents > 0) {
+      const initialProf = calcProfitability(p.costCents, p.priceCents);
+      setFormMarkupStr(initialProf.markupPct.toFixed(1));
+    } else {
+      setFormMarkupStr("");
+    }
     setFormTaxRateBp(p.taxRateBp);
+    setFormTaxMode("base");
+    setIsPackCalcOpen(false);
+    setPackCostStr("");
+    setPackUnitsStr("12");
+    setPackApplyStock(false);
     setFormUnit(p.unit);
     setFormStock(p.stock);
     setFormMinStock(p.minStock);
@@ -953,7 +1102,7 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
       return;
     }
 
-    const priceCents = toCents(formPriceStr);
+    const priceCents = formEffectiveBasePriceCents;
     const wholesalePriceCents = toCents(formWholesalePriceStr || "0");
     const costCents = formIsBundle ? bundleTotalCostCents : toCents(formCostStr);
 
@@ -1092,8 +1241,21 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
 
       setIsFormOpen(false);
       loadProducts();
-      // Subir producto nuevo al ERP y refrescar
-      api.sync.syncCatalog().then(() => loadProducts()).catch(console.warn);
+      // Sincronizar inmediatamente hacia el ERP ("ERP First") y notificar estado real al operador
+      api.sync
+        .syncCatalog()
+        .then(() => {
+          loadProducts();
+          showNotification(
+            `☁️ "${formName}" sincronizado con el ERP y propagado a las demás cajas.`
+          );
+        })
+        .catch((syncErr: unknown) => {
+          console.warn("Sincronización diferida de producto:", syncErr);
+          showNotification(
+            `⚠️ "${formName}" guardado localmente. Se sincronizará con el ERP al restablecer conexión.`
+          );
+        });
     } catch (err: unknown) {
       modalAlert({
         title: "Error al Guardar",
@@ -3208,105 +3370,6 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
                       </div>
                     </div>
 
-                    {/* PRECIO DE VENTA, MAYOREO Y COSTO */}
-                    <div className="space-y-2">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        <div>
-                          <label className="block text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-                            Precio Venta ($) *
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : "0"}
-                            required
-                            placeholder="0.00"
-                            value={formPriceStr}
-                            onChange={(e) => setFormPriceStr(e.target.value)}
-                            className={`w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border text-xs font-mono font-black focus:outline-none focus:ring-2 ${
-                              formIsBundle &&
-                              formComponents.length > 0 &&
-                              toCents(formPriceStr || "0") < bundleTotalCostCents
-                                ? "border-rose-500 text-rose-600 dark:text-rose-400 focus:ring-rose-500"
-                                : "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 focus:ring-emerald-500"
-                            }`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                            P. Mayoreo ($)
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            value={formWholesalePriceStr}
-                            onChange={(e) => setFormWholesalePriceStr(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                            {formIsBundle ? "Costo Combo (Auto)" : "Costo ($)"}
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            readOnly={formIsBundle}
-                            value={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : formCostStr}
-                            onChange={(e) => {
-                              if (!formIsBundle) setFormCostStr(e.target.value);
-                            }}
-                            title={
-                              formIsBundle
-                                ? "El costo de un combo se calcula automáticamente sumando el costo de sus insumos"
-                                : undefined
-                            }
-                            className={`w-full px-3 py-2 rounded-xl border text-xs font-mono font-bold focus:outline-none ${
-                              formIsBundle
-                                ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-800 text-purple-800 dark:text-purple-200 cursor-not-allowed"
-                                : "bg-slate-50 dark:bg-slate-950 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
-                            }`}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                            IVA (Impuesto)
-                          </label>
-                          <select
-                            value={formTaxRateBp}
-                            onChange={(e) => setFormTaxRateBp(Number(e.target.value))}
-                            className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          >
-                            <option value={0}>0% (Exento)</option>
-                            <option value={500}>5% (Reducido)</option>
-                            <option value={1600}>16% (IVA)</option>
-                            <option value={1900}>19% (General)</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      {formIsBundle && formComponents.length > 0 && toCents(formPriceStr || "0") < bundleTotalCostCents && (
-                        <div className="px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-[11px] font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between">
-                          <span>
-                            ⚠️ El Precio de Venta no puede ser menor al Costo Total de Insumos ({formatCents(bundleTotalCostCents)}).
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setFormPriceStr((bundleRetailSumCents / 100).toFixed(2))}
-                            className="underline text-purple-700 dark:text-purple-300 hover:opacity-80 ml-2 shrink-0 cursor-pointer"
-                          >
-                            Usar sugerido ({formatCents(bundleRetailSumCents)})
-                          </button>
-                        </div>
-                      )}
-                    </div>
                   </div>
 
                   {/* COLUMNA DERECHA: EXISTENCIAS / RECETA DE COMBO / ETIQUETAS (lg:col-span-6) */}
@@ -3692,6 +3755,372 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
                       </div>
                     </div>
                   </div>
+                </div>
+
+                {/* SECCIÓN FINANCIERA INTELIGENTE: COSTOS, MÁRGENES Y PRECIOS AUTOMÁTICOS */}
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200 dark:border-slate-800 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-black uppercase tracking-wide text-slate-700 dark:text-slate-200">
+                      💰 Costos, Márgenes y Precios Automáticos
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-slate-500 dark:text-slate-400 mr-1">
+                        Utilidad rápida:
+                      </span>
+                      {[15, 20, 25, 30, 50].map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => applyMarkupToFormPrice(pct)}
+                          disabled={formEffectiveCostCents <= 0}
+                          className="px-2.5 py-1 rounded-lg text-xs font-bold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-600 hover:text-white hover:border-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                        >
+                          +{pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Mini-calculadora desplegable de Costo por Caja / Paca */}
+                  {isPackCalcOpen && !formIsBundle && !formIsService && (
+                    <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-700 shadow-xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                          📦 Calculadora de Costo por Caja / Paca / Canasta
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsPackCalcOpen(false)}
+                          className="text-xs font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        >
+                          Cerrar ✕
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                        <div className="sm:col-span-4">
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                            Costo Total Caja/Paca ($)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="Ej. 89784"
+                            value={packCostStr}
+                            onChange={(e) => setPackCostStr(e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div className="sm:col-span-3">
+                          <label className="block text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">
+                            Unidades que trae
+                          </label>
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            placeholder="Ej. 24"
+                            value={packUnitsStr}
+                            onChange={(e) => setPackUnitsStr(e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div className="sm:col-span-3 pb-1.5">
+                          <label className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={packApplyStock}
+                              onChange={(e) => setPackApplyStock(e.target.checked)}
+                              className="rounded border-slate-300 dark:border-slate-700 accent-indigo-600"
+                            />
+                            <span>Aplicar a Existencia</span>
+                          </label>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <button
+                            type="button"
+                            onClick={handleApplyPackCalculator}
+                            disabled={packPreviewUnitCostCents <= 0}
+                            className="w-full px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-40 transition-colors cursor-pointer"
+                          >
+                            Aplicar
+                          </button>
+                        </div>
+                      </div>
+                      <div className="pt-1.5 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                        <span>
+                          Costo unitario calculado:{" "}
+                          <strong className="font-mono text-slate-900 dark:text-white">
+                            {formatCents(packPreviewUnitCostCents)}
+                          </strong>
+                        </span>
+                        <span className="hidden sm:inline">
+                          Divide el costo de factura entre las unidades del paquete
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fila Principal de 5 Campos Financieros */}
+                  <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5">
+                    {/* 1. Costo ($) */}
+                    <div className="col-span-1 sm:col-span-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          {formIsBundle ? "Costo Combo" : "Costo ($)"}
+                        </label>
+                        {!formIsBundle && !formIsService && (
+                          <button
+                            type="button"
+                            onClick={() => setIsPackCalcOpen((prev) => !prev)}
+                            className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                          >
+                            📦 Por paca
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        readOnly={formIsBundle}
+                        value={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : formCostStr}
+                        onChange={(e) => handleFormCostChange(e.target.value)}
+                        title={
+                          formIsBundle
+                            ? "El costo de un combo se calcula automáticamente sumando el costo de sus insumos"
+                            : undefined
+                        }
+                        className={`w-full px-3 py-2 rounded-xl border text-xs font-mono font-bold focus:outline-none ${
+                          formIsBundle
+                            ? "bg-purple-50 dark:bg-purple-950/50 border-purple-300 dark:border-purple-800 text-purple-800 dark:text-purple-200 cursor-not-allowed"
+                            : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500"
+                        }`}
+                      />
+                    </div>
+
+                    {/* 2. Utilidad (%) */}
+                    <div className="col-span-1 sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Utilidad (%)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.1"
+                          placeholder="0.0"
+                          value={formMarkupStr}
+                          onChange={(e) => handleFormMarkupChange(e.target.value)}
+                          disabled={formEffectiveCostCents <= 0}
+                          className="w-full pl-3 pr-7 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                        />
+                        <span className="absolute right-2.5 top-2 text-xs font-bold text-slate-400">
+                          %
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 3. Precio Venta ($) * */}
+                    <div className="col-span-2 sm:col-span-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                          Precio Venta ($) *
+                        </label>
+                        <span className="text-xs text-slate-400">
+                          {formTaxRateBp > 0
+                            ? formTaxMode === "included"
+                              ? "PVP c/IVA"
+                              : "Base + IVA"
+                            : "Exento"}
+                        </span>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={formIsBundle ? (bundleTotalCostCents / 100).toFixed(2) : "0"}
+                        required
+                        placeholder="0.00"
+                        value={formPriceStr}
+                        onChange={(e) => handleFormPriceChange(e.target.value)}
+                        className={`w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border-2 text-xs font-mono font-black focus:outline-none focus:ring-2 ${
+                          (formIsBundle &&
+                            formComponents.length > 0 &&
+                            formEffectiveBasePriceCents < bundleTotalCostCents) ||
+                          (formEffectiveCostCents > 0 &&
+                            formEffectiveBasePriceCents > 0 &&
+                            formEffectiveBasePriceCents < formEffectiveCostCents)
+                            ? "border-rose-500 text-rose-600 dark:text-rose-400 focus:ring-rose-500"
+                            : "border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 focus:ring-emerald-500"
+                        }`}
+                      />
+                    </div>
+
+                    {/* 4. P. Mayoreo ($) */}
+                    <div className="col-span-1 sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          P. Mayoreo ($)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const auto = calcAutoWholesaleCents(
+                              formEffectiveCostCents,
+                              formEffectiveBasePriceCents
+                            );
+                            if (auto > 0) setFormWholesalePriceStr(centsToInputStr(auto));
+                          }}
+                          disabled={formEffectiveBasePriceCents <= 0}
+                          title="Calcular 10% debajo de Precio Venta (nunca menor al costo)"
+                          className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-40 cursor-pointer"
+                        >
+                          Auto
+                        </button>
+                      </div>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formWholesalePriceStr}
+                        onChange={(e) => setFormWholesalePriceStr(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+
+                    {/* 5. IVA (Impuesto) */}
+                    <div className="col-span-1 sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        IVA (Impuesto)
+                      </label>
+                      <select
+                        value={formTaxRateBp}
+                        onChange={(e) => {
+                          const nextBp = Number(e.target.value);
+                          setFormTaxRateBp(nextBp);
+                          if (nextBp === 0) setFormTaxMode("base");
+                        }}
+                        className="w-full px-2.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value={0}>0% (Exento)</option>
+                        <option value={500}>5% (Reducido)</option>
+                        <option value={1600}>16% (IVA)</option>
+                        <option value={1900}>19% (General)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Sub-barra de IVA (solo visible cuando IVA > 0%) */}
+                  {formTaxRateBp > 0 && (
+                    <div className="px-3 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold text-slate-700 dark:text-slate-300">
+                          Modo Precio:
+                        </span>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
+                          <input
+                            type="radio"
+                            name="posFormTaxMode"
+                            checked={formTaxMode === "base"}
+                            onChange={() => setFormTaxMode("base")}
+                            className="accent-indigo-600"
+                          />
+                          <span>Más IVA (Base)</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
+                          <input
+                            type="radio"
+                            name="posFormTaxMode"
+                            checked={formTaxMode === "included"}
+                            onChange={() => setFormTaxMode("included")}
+                            className="accent-indigo-600"
+                          />
+                          <span>PVP con IVA incluido</span>
+                        </label>
+                      </div>
+                      <div className="font-mono text-slate-700 dark:text-slate-200">
+                        Base: <strong>{formatCents(formTaxBreakdown.baseCents)}</strong> + IVA:{" "}
+                        <strong>{formatCents(formTaxBreakdown.taxCents)}</strong> = PVP Caja:{" "}
+                        <strong className="text-indigo-600 dark:text-indigo-400">
+                          {formatCents(formTaxBreakdown.pvpCents)}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alerta de Combo con precio menor al costo */}
+                  {formIsBundle &&
+                    formComponents.length > 0 &&
+                    formEffectiveBasePriceCents < bundleTotalCostCents && (
+                      <div className="px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between">
+                        <span>
+                          ⚠️ El Precio de Venta no puede ser menor al Costo Total de Insumos (
+                          {formatCents(bundleTotalCostCents)}).
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleFormPriceChange((bundleRetailSumCents / 100).toFixed(2))}
+                          className="underline text-purple-700 dark:text-purple-300 hover:opacity-80 ml-2 shrink-0 cursor-pointer"
+                        >
+                          Usar sugerido ({formatCents(bundleRetailSumCents)})
+                        </button>
+                      </div>
+                    )}
+
+                  {/* Barra Resumen Financiera (Semáforo + Rentabilidad + Valor Inventario) */}
+                  {(formEffectiveCostCents > 0 || formEffectiveBasePriceCents > 0) && (
+                    <div
+                      className={`px-3.5 py-2 rounded-lg border flex flex-wrap items-center justify-between gap-2 text-xs ${
+                        formProfitability.health === "loss"
+                          ? "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 text-rose-800 dark:text-rose-200"
+                          : formProfitability.health === "low"
+                          ? "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200"
+                          : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-black">
+                          {formProfitability.health === "loss"
+                            ? "🔴 Vendiendo a pérdida"
+                            : formProfitability.health === "low"
+                            ? "🟡 Margen bajo (<10%)"
+                            : "🟢 Rentabilidad saludable"}
+                        </span>
+                        <span>•</span>
+                        <span>
+                          Ganancia/u:{" "}
+                          <strong className="font-mono">
+                            {formProfitability.profitCents >= 0 ? "+" : ""}
+                            {formatCents(formProfitability.profitCents)}
+                          </strong>
+                        </span>
+                        <span>•</span>
+                        <span>
+                          Margen bruto:{" "}
+                          <strong className="font-mono">
+                            {formProfitability.marginPct.toFixed(1)}%
+                          </strong>
+                        </span>
+                      </div>
+                      {!formIsService && !formIsBundle && formStock > 0 && (
+                        <div className="flex items-center gap-2 font-mono">
+                          <span>
+                            Inv. Costo:{" "}
+                            <strong>{formatCents(formInventoryValuation.totalCostCents)}</strong>
+                          </span>
+                          <span>|</span>
+                          <span>
+                            Utilidad Proy.:{" "}
+                            <strong>
+                              {formInventoryValuation.projectedProfitCents >= 0 ? "+" : ""}
+                              {formatCents(formInventoryValuation.projectedProfitCents)}
+                            </strong>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

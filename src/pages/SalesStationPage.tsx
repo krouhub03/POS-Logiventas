@@ -671,9 +671,9 @@ export function SalesStationPage({
         message: target.customer
           ? `¿Desea vaciar los productos y desvincular al cliente ${target.customer.name} de ${target.name}?`
           : `¿Desea vaciar los productos de ${target.name}? Esta acción no se puede deshacer.`,
-        variant: "warning",
-        confirmText: "Sí, Vaciar Ticket",
-        cancelText: "Mantener Ticket",
+        variant: "primary",
+        confirmText: "Sí",
+        cancelText: "No",
       });
       if (ok) {
         setTickets((prev) =>
@@ -693,9 +693,9 @@ export function SalesStationPage({
       message: hasItems
         ? `¿Desea cancelar y eliminar ${target.name} con sus ${target.lines.length} producto(s)?`
         : `¿Desea cerrar la pestaña de ${target.name}?`,
-      variant: hasItems ? "danger" : "primary",
-      confirmText: hasItems ? "Sí, Cancelar y Eliminar" : "Cerrar Ticket",
-      cancelText: "Volver",
+      variant: "primary",
+      confirmText: "Sí",
+      cancelText: "No",
     });
 
     if (ok) {
@@ -1047,9 +1047,9 @@ export function SalesStationPage({
         const ok = await confirm({
           title: "Eliminar Producto #1",
           message: `¿Desea eliminar el Producto 1 ("${target.description}") del ticket de venta?`,
-          variant: "warning",
-          confirmText: "Sí, Eliminar Producto",
-          cancelText: "Mantener en Ticket",
+          variant: "primary",
+          confirmText: "Sí",
+          cancelText: "No",
         });
         if (!ok) {
           focusInput();
@@ -1168,9 +1168,9 @@ export function SalesStationPage({
       const ok = await confirm({
         title: "Eliminar Producto #1",
         message: `¿Desea eliminar el Producto 1 ("${item.description}") del ticket de venta?`,
-        variant: "warning",
-        confirmText: "Sí, Eliminar Producto",
-        cancelText: "Mantener en Ticket",
+        variant: "primary",
+        confirmText: "Sí",
+        cancelText: "No",
       });
       if (!ok) {
         focusInput();

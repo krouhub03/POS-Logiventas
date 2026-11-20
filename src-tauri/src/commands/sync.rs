@@ -364,46 +364,68 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
     let _ = sync_warehouses_internal(db).await;
 
     // 1. Extraer productos creados o modificados localmente en el POS para subir al ERP
+    struct UnsyncedProductRow {
+        id: i64,
+        erp_id: Option<String>,
+        sku: String,
+        barcode: Option<String>,
+        name: String,
+        unit: String,
+        is_service: i64,
+        price_cents: i64,
+        cost_cents: i64,
+        tax_rate_bp: i64,
+        stock: f64,
+        min_stock: f64,
+        tags: String,
+        is_bundle: i64,
+        category_name: String,
+        active: i64,
+        updated_at: Option<String>,
+    }
+
     let unsynced_products: Vec<serde_json::Value> = {
         let conn = db.conn()?;
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.sku, p.barcode, p.name, p.unit, p.is_service, p.price_cents, p.cost_cents, \
-                    p.tax_rate_bp, p.stock, p.min_stock, p.tags, p.is_bundle, COALESCE(c.name, 'General'), p.active \
+            "SELECT p.id, p.erp_id, p.sku, p.barcode, p.name, p.unit, p.is_service, p.price_cents, p.cost_cents, \
+                    p.tax_rate_bp, p.stock, p.min_stock, p.tags, p.is_bundle, COALESCE(c.name, 'General'), p.active, p.updated_at \
              FROM products p \
              LEFT JOIN categories c ON c.id = p.category_id \
              WHERE p.needs_erp_upload = 1",
         )?;
-        let rows: Vec<(i64, String, Option<String>, String, String, i64, i64, i64, i64, f64, f64, String, i64, String, i64)> = stmt
+        let rows: Vec<UnsyncedProductRow> = stmt
             .query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                    r.get(6)?,
-                    r.get(7)?,
-                    r.get(8)?,
-                    r.get(9)?,
-                    r.get(10)?,
-                    r.get::<_, Option<String>>(11)?.unwrap_or_default(),
-                    r.get::<_, i64>(12).unwrap_or(0),
-                    r.get::<_, String>(13).unwrap_or_else(|_| "General".to_string()),
-                    r.get::<_, i64>(14).unwrap_or(1),
-                ))
+                Ok(UnsyncedProductRow {
+                    id: r.get(0)?,
+                    erp_id: r.get(1)?,
+                    sku: r.get(2)?,
+                    barcode: r.get(3)?,
+                    name: r.get(4)?,
+                    unit: r.get(5)?,
+                    is_service: r.get(6)?,
+                    price_cents: r.get(7)?,
+                    cost_cents: r.get(8)?,
+                    tax_rate_bp: r.get(9)?,
+                    stock: r.get(10)?,
+                    min_stock: r.get(11)?,
+                    tags: r.get::<_, Option<String>>(12)?.unwrap_or_default(),
+                    is_bundle: r.get::<_, i64>(13).unwrap_or(0),
+                    category_name: r.get::<_, String>(14).unwrap_or_else(|_| "General".to_string()),
+                    active: r.get::<_, i64>(15).unwrap_or(1),
+                    updated_at: r.get(16)?,
+                })
             })?
             .filter_map(|r| r.ok())
             .collect();
 
         let mut list = Vec::new();
-        for (id, sku, barcode, name, unit, is_service, price_cents, cost_cents, tax_rate_bp, stock, min_stock, tags, is_bundle, category_name, active) in rows {
+        for row in rows {
             let mut components_json = Vec::new();
-            if is_bundle == 1 {
+            if row.is_bundle == 1 {
                 if let Ok(mut c_stmt) = conn.prepare(
                     "SELECT p.sku, pc.quantity FROM product_components pc JOIN products p ON p.id = pc.child_product_id WHERE pc.parent_product_id = ?1 ORDER BY pc.order_index ASC",
                 ) {
-                    if let Ok(c_rows) = c_stmt.query_map(params![id], |cr| {
+                    if let Ok(c_rows) = c_stmt.query_map(params![row.id], |cr| {
                         Ok(serde_json::json!({
                             "sku": cr.get::<_, String>(0)?,
                             "quantity": cr.get::<_, f64>(1)?,
@@ -415,20 +437,22 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
             }
 
             list.push(serde_json::json!({
-                "sku": sku,
-                "barcode": barcode,
-                "name": name,
-                "category": category_name,
-                "unit": unit,
-                "is_service": is_service,
-                "is_bundle": is_bundle,
-                "price_cents": price_cents,
-                "cost_cents": cost_cents,
-                "tax_rate_bp": tax_rate_bp,
-                "stock": stock,
-                "min_stock": min_stock,
-                "tags": tags,
-                "active": active,
+                "erpId": row.erp_id,
+                "sku": row.sku,
+                "barcode": row.barcode,
+                "name": row.name,
+                "category": row.category_name,
+                "unit": row.unit,
+                "is_service": row.is_service,
+                "is_bundle": row.is_bundle,
+                "price_cents": row.price_cents,
+                "cost_cents": row.cost_cents,
+                "tax_rate_bp": row.tax_rate_bp,
+                "stock": row.stock,
+                "min_stock": row.min_stock,
+                "tags": row.tags,
+                "active": row.active,
+                "updatedAt": row.updated_at,
                 "components": components_json,
             }));
         }
@@ -468,9 +492,18 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
                                         continue;
                                     }
                                     let erp_id = item["erpId"].as_str().unwrap_or_default();
-                                    if !sku.is_empty() && !erp_id.is_empty() {
+                                    if !erp_id.is_empty() || !sku.is_empty() {
+                                        if status == "conflicto_erp_mas_reciente" {
+                                            if let Some(erp_price) = item["price_cents"].as_i64() {
+                                                let _ = conn.execute(
+                                                    "UPDATE products SET erp_id = ?1, price_cents = ?2, needs_erp_upload = 0 WHERE erp_id = ?1 OR sku = ?3",
+                                                    params![erp_id, erp_price, sku],
+                                                );
+                                                continue;
+                                            }
+                                        }
                                         let _ = conn.execute(
-                                            "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE sku = ?2",
+                                            "UPDATE products SET erp_id = ?1, needs_erp_upload = 0 WHERE erp_id = ?1 OR sku = ?2",
                                             params![erp_id, sku],
                                         );
                                     }
@@ -659,20 +692,28 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
         let erp_image_url = p["image_url"].as_str().map(str::trim).filter(|s| !s.is_empty());
         let erp_image_hash = p["image_hash"].as_str().map(str::trim).filter(|s| !s.is_empty());
 
-        let (current_img_hash, current_local_path, current_sync_status, local_needs_upload, local_stock): (Option<String>, Option<String>, Option<String>, i64, f64) = if let Some(lid) = local_match {
+        let (
+            current_img_hash,
+            current_local_path,
+            current_sync_status,
+            local_needs_upload,
+            local_stock,
+            local_price_cents,
+            local_cost_cents,
+        ): (Option<String>, Option<String>, Option<String>, i64, f64, i64, i64) = if let Some(lid) = local_match {
             tx.query_row(
-                "SELECT image_hash, image_local_path, image_sync_status, COALESCE(needs_erp_upload, 0), COALESCE(stock, 0) FROM products WHERE id = ?1",
+                "SELECT image_hash, image_local_path, image_sync_status, COALESCE(needs_erp_upload, 0), COALESCE(stock, 0), COALESCE(price_cents, 0), COALESCE(cost_cents, 0) FROM products WHERE id = ?1",
                 params![lid],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
             )
-            .unwrap_or((None, None, None, 0, 0.0))
+            .unwrap_or((None, None, None, 0, 0.0, price_cents, cost_cents))
         } else {
-            (None, None, None, 0, 0.0)
+            (None, None, None, 0, 0.0, price_cents, cost_cents)
         };
 
         // Si el producto aún tiene cambios locales pendientes de subir al ERP (needs_erp_upload == 1),
-        // o si acabamos de subir un ajuste de stock positivo en este ciclo pero el ERP aún reporta 0,
-        // preservamos el stock local ajustado por el usuario para jamás perder su conteo.
+        // preservamos por fila su precio, costo y stock locales para jamás revertir ediciones del cajero
+        // ante un fallo temporal de red, sin bloquear la descarga del resto del catálogo.
         let (final_stock, final_needs_upload) = if local_needs_upload == 1 {
             (local_stock, 1_i64)
         } else if let Some(&just_uploaded_stock) = uploaded_stocks_by_sku.get(sku) {
@@ -684,6 +725,9 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
         } else {
             (effective_stock, 0_i64)
         };
+
+        let final_price_cents = if local_needs_upload == 1 { local_price_cents } else { price_cents };
+        let final_cost_cents = if local_needs_upload == 1 { local_cost_cents } else { cost_cents };
 
         let (final_img_url, final_local_path, final_img_hash, final_sync_status) = if current_sync_status.as_deref() == Some("pending_upload") {
             (None, current_local_path, current_img_hash, current_sync_status)
@@ -724,7 +768,7 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
                     image_local_path = ?21,
                     image_hash = ?22,
                     image_sync_status = ?23,
-                    updated_at = datetime('now')
+                    updated_at = CASE WHEN ?13 = 1 THEN updated_at ELSE datetime('now') END
                  WHERE id = ?24",
             )?
             .execute(params![
@@ -734,8 +778,8 @@ pub async fn sync_catalog_internal_mode(db: &Db, force_full: bool) -> AppResult<
                 name,
                 unit,
                 is_service,
-                price_cents,
-                cost_cents,
+                final_price_cents,
+                final_cost_cents,
                 tax_rate_bp,
                 final_stock,
                 min_stock,

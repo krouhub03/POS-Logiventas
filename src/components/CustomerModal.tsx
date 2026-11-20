@@ -1037,61 +1037,111 @@ export function CustomerModal({
                         </div>
 
                         {/* DETALLE EXPANDIBLE DE PRODUCTOS COMPRADOS */}
-                        {isExpanded && (
-                          <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 p-3 space-y-2">
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-left text-[11px]">
-                                <thead>
-                                  <tr className="text-slate-400 uppercase text-[9px] border-b border-slate-200 dark:border-slate-800">
-                                    <th className="pb-1 font-semibold">Cant.</th>
-                                    <th className="pb-1 font-semibold">Descripción del Producto</th>
-                                    <th className="pb-1 font-semibold text-right">P. Unit</th>
-                                    <th className="pb-1 font-semibold text-right">Total</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono">
-                                  {sale.items.map((item) => (
-                                    <tr key={item.id}>
-                                      <td className="py-1 text-slate-600 dark:text-slate-300 font-bold">
-                                        {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(2)} {item.unit || "und"}
+                        {isExpanded && (() => {
+                          const itemsSumCents = sale.items.reduce((acc, it) => acc + it.totalCents, 0);
+                          const diffCents = sale.totalCents - itemsSumCents;
+                          return (
+                            <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 p-3 space-y-2">
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-left text-[11px]">
+                                  <thead>
+                                    <tr className="text-slate-400 uppercase text-[9px] border-b border-slate-200 dark:border-slate-800">
+                                      <th className="pb-1 font-semibold">Cant.</th>
+                                      <th className="pb-1 font-semibold">Descripción del Producto</th>
+                                      <th className="pb-1 font-semibold text-right">P. Unit</th>
+                                      <th className="pb-1 font-semibold text-right">Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono">
+                                    {sale.items.map((item) => (
+                                      <tr key={item.id}>
+                                        <td className="py-1 text-slate-600 dark:text-slate-300 font-bold">
+                                          {item.quantity % 1 === 0 ? item.quantity : item.quantity.toFixed(2)} {item.unit || "und"}
+                                        </td>
+                                        <td className="py-1 text-slate-800 dark:text-slate-200 font-sans font-medium">
+                                          {item.description}
+                                        </td>
+                                        <td className="py-1 text-right text-slate-500">
+                                          {formatCents(item.unitPriceCents)}
+                                        </td>
+                                        <td className="py-1 text-right font-bold text-slate-900 dark:text-slate-100">
+                                          {formatCents(item.totalCents)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    {diffCents !== 0 && (
+                                      <tr className="bg-amber-50/60 dark:bg-amber-950/20">
+                                        <td className="py-1 text-amber-700 dark:text-amber-300 font-bold">
+                                          1 und
+                                        </td>
+                                        <td className="py-1 text-amber-800 dark:text-amber-200 font-sans italic">
+                                          {diffCents > 0
+                                            ? "Otros ítems / venta libre / servicio (sin detalle en servidor)"
+                                            : "Descuento / ajuste por precio histórico"}
+                                        </td>
+                                        <td className="py-1 text-right text-amber-700 dark:text-amber-300">
+                                          {formatCents(diffCents)}
+                                        </td>
+                                        <td className="py-1 text-right font-bold text-amber-800 dark:text-amber-200">
+                                          {formatCents(diffCents)}
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                  <tfoot className="border-t border-slate-200 dark:border-slate-700 font-mono">
+                                    <tr>
+                                      <td colSpan={3} className="pt-1.5 text-right text-[10px] uppercase font-sans font-bold text-slate-500">
+                                        Total Ticket:
                                       </td>
-                                      <td className="py-1 text-slate-800 dark:text-slate-200 font-sans font-medium">
-                                        {item.description}
-                                      </td>
-                                      <td className="py-1 text-right text-slate-500">
-                                        {formatCents(item.unitPriceCents)}
-                                      </td>
-                                      <td className="py-1 text-right font-bold text-slate-900 dark:text-slate-100">
-                                        {formatCents(item.totalCents)}
+                                      <td className="pt-1.5 text-right font-black text-slate-900 dark:text-white">
+                                        {formatCents(sale.totalCents)}
                                       </td>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                    {sale.otherPaymentsCents > 0 && (
+                                      <tr>
+                                        <td colSpan={3} className="pt-0.5 text-right text-[10px] uppercase font-sans font-bold text-emerald-600 dark:text-emerald-400">
+                                          Abonado de contado en caja:
+                                        </td>
+                                        <td className="pt-0.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                                          -{formatCents(sale.otherPaymentsCents)}
+                                        </td>
+                                      </tr>
+                                    )}
+                                    <tr>
+                                      <td colSpan={3} className="pt-0.5 text-right text-[10px] uppercase font-sans font-black text-amber-700 dark:text-amber-400">
+                                        Saldo Fiado:
+                                      </td>
+                                      <td className="pt-0.5 text-right font-black text-amber-700 dark:text-amber-400">
+                                        {formatCents(sale.creditAmountCents)}
+                                      </td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              </div>
 
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800 text-[11px]">
-                              <span className="text-slate-500">
-                                Folio Ticket: <strong className="font-mono text-slate-800 dark:text-slate-200">{sale.folio}</strong>
-                              </span>
-                              {sale.id > 0 ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleReprintSaleTicket(sale.id, e)}
-                                  disabled={printingTicketId === sale.id}
-                                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                                >
-                                  <span>🖨️</span>
-                                  <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
-                                </button>
-                              ) : (
-                                <span className="text-[10px] font-mono text-slate-400">
-                                  Sincronizado de otra caja
+                              <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                                <span className="text-slate-500">
+                                  Folio Ticket: <strong className="font-mono text-slate-800 dark:text-slate-200">{sale.folio}</strong>
                                 </span>
-                              )}
+                                {sale.id > 0 ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleReprintSaleTicket(sale.id, e)}
+                                    disabled={printingTicketId === sale.id}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                  >
+                                    <span>🖨️</span>
+                                    <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] font-mono text-slate-400">
+                                    Sincronizado de otra caja
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     );
                   })
