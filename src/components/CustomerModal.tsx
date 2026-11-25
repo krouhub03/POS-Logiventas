@@ -14,16 +14,20 @@ interface CustomerModalProps {
   isOpen: boolean;
   currentCustomer?: Customer | null;
   currentUserId?: number;
+  canDirectCharge?: boolean;
   onClose: () => void;
   onSelect: (customer: Customer | null) => void;
+  onConfirmCharge?: (customer: Customer) => void;
 }
 
 export function CustomerModal({
   isOpen,
   currentCustomer,
   currentUserId,
+  canDirectCharge = false,
   onClose,
   onSelect,
+  onConfirmCharge,
 }: CustomerModalProps) {
   const [mode, setMode] = useState<"search" | "details" | "create" | "payment">("search");
   const [search, setSearch] = useState("");
@@ -366,11 +370,14 @@ export function CustomerModal({
         e.preventDefault();
         onSelect(detailCustomer);
         onClose();
+        if (canDirectCharge) {
+          onConfirmCharge?.(detailCustomer);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, mode, customers, selectedIndex, detailCustomer, onClose, onSelect]);
+  }, [isOpen, mode, customers, selectedIndex, detailCustomer, canDirectCharge, onClose, onSelect, onConfirmCharge]);
 
   // Manejador de teclado en modo búsqueda
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1316,25 +1323,14 @@ export function CustomerModal({
                   onClick={() => {
                     onSelect(detailCustomer);
                     onClose();
+                    if (canDirectCharge) {
+                      onConfirmCharge?.(detailCustomer);
+                    }
                   }}
-                  className={`flex-1 py-2.5 px-5 rounded-xl font-bold text-xs uppercase tracking-wide shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 ${
-                    currentCustomer?.id === detailCustomer.id
-                      ? "bg-emerald-100 dark:bg-emerald-900/70 text-emerald-800 dark:text-emerald-200 border border-emerald-400 dark:border-emerald-600"
-                      : "bg-emerald-600 hover:bg-emerald-500 text-white"
-                  }`}
+                  className="flex-1 py-2.5 px-5 rounded-xl font-bold text-xs uppercase tracking-wide shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white"
                 >
-                  <span>
-                    {currentCustomer?.id === detailCustomer.id
-                      ? "✓ Seleccionado en el Ticket"
-                      : "✓ Seleccionar Cliente"}
-                  </span>
-                  <kbd
-                    className={`px-1.5 py-0.5 rounded text-[0.7rem] font-mono ${
-                      currentCustomer?.id === detailCustomer.id
-                        ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100"
-                        : "bg-emerald-800/60 text-emerald-100"
-                    }`}
-                  >
+                  <span>{canDirectCharge ? "✓ Cobrar" : "✓ Seleccionar Cliente"}</span>
+                  <kbd className="px-1.5 py-0.5 rounded text-[0.7rem] font-mono bg-emerald-800/60 text-emerald-100">
                     Enter
                   </kbd>
                 </button>

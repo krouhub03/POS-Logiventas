@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, SyncStatus, CashShift, Customer, SaleReceipt } from "../types";
+import { Product, CashierUser, TerminalStatus, CartItemInput, PaymentInput, PaymentMethod, SyncStatus, CashShift, Customer, SaleReceipt } from "../types";
 import { api } from "../services/api";
 import { formatCents, calculateTaxCents } from "../lib/money";
+import { resolvePaymentMethodVisual } from "../lib/paymentMethodVisuals";
 import { useTheme } from "../contexts/ThemeContext";
 import { useModals } from "../contexts/ModalContext";
 import { playScanSuccess, playStockWarning, playScanError } from "../lib/sound";
@@ -399,6 +400,7 @@ export function SalesStationPage({
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [isRecentSalesOpen, setIsRecentSalesOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<SaleReceipt | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [saleSuccessData, setSaleSuccessData] = useState<SaleSuccessData | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
@@ -418,7 +420,7 @@ export function SalesStationPage({
     }
   };
 
-  // Cargar la última venta registrada al montar la estación
+  // Cargar la última venta registrada y medios de pago al montar la estación
   useEffect(() => {
     let isMounted = true;
     api.sales.getLast()
@@ -430,6 +432,11 @@ export function SalesStationPage({
       .catch((err) => {
         console.error("Error al cargar última venta inicial:", err);
       });
+    api.sync.getPaymentMethods()
+      .then((methods) => {
+        if (isMounted) setPaymentMethods(methods);
+      })
+      .catch(() => {});
     return () => {
       isMounted = false;
     };
@@ -1337,8 +1344,9 @@ export function SalesStationPage({
       playScanSuccess();
       api.sync
         .getPaymentMethods()
-        .catch(() => [])
+        .catch(() => paymentMethods)
         .then((methods) => {
+          setPaymentMethods(methods);
           setSaleSuccessData({
             receipt,
             paymentMethods: methods,
@@ -2818,11 +2826,52 @@ export function SalesStationPage({
               <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
 
               <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
-                <span className="font-bold text-[10px] sm:text-xs">Cambio:</span>
+                <span className="font-bold text-[0.7rem] sm:text-xs">Cambio:</span>
                 <span className="font-mono font-black text-emerald-600 dark:text-emerald-300 text-xs sm:text-base">
                   {lastReceipt ? formatCents(lastReceipt.changeCents) : "$ 0"}
                 </span>
               </div>
+
+              {lastReceipt && lastReceipt.payments && lastReceipt.payments.length > 0 && (() => {
+                const isMixedLast = lastReceipt.payments.length > 1;
+                const firstPay = lastReceipt.payments[0];
+                const pmObj = paymentMethods.find(
+                  (pm) =>
+                    pm.code.toLowerCase() === firstPay.method.toLowerCase() ||
+                    pm.erpCode.toLowerCase() === firstPay.method.toLowerCase()
+                );
+                const visual = resolvePaymentMethodVisual({
+                  code: firstPay.method,
+                  erpCode: pmObj?.erpCode,
+                  name: pmObj?.name,
+                  type: pmObj?.type,
+                  color: pmObj?.color,
+                  isMixed: isMixedLast,
+                });
+                const label = isMixedLast
+                  ? `Pago Mixto (${lastReceipt.payments.length})`
+                  : pmObj?.name || firstPay.method;
+                return (
+                  <>
+                    <div className="w-px h-4 bg-slate-200 dark:bg-slate-700" />
+                    <span
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[0.7rem] sm:text-xs font-bold border max-w-[160px] truncate"
+                      style={{
+                        backgroundColor: visual.bgTint,
+                        borderColor: visual.borderTint,
+                        color: visual.color,
+                      }}
+                      title={`Método de pago: ${label}`}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: visual.color }}
+                      />
+                      <span className="truncate">{label}</span>
+                    </span>
+                  </>
+                );
+              })()}
             </div>
 
             {/* Botón Reimpresión Ticket */}
@@ -2906,18 +2955,64 @@ export function SalesStationPage({
         isOpen={isCustomerModalOpen}
         currentCustomer={currentTicket?.customer || null}
         currentUserId={cashier.id}
+        canDirectCharge={cartLines.length > 0}
         onClose={() => {
           setIsCustomerModalOpen(false);
           focusInput();
         }}
         onSelect={(selected) => {
           updateCurrentTicketCustomer(selected);
-          if (selected) {
+          if (selected && cartLines.length === 0) {
             showFeedback(`👤 Cliente asignado: ${selected.name}`, "success");
-          } else {
+          } else if (!selected) {
             showFeedback("👤 Ticket asignado a Consumidor Final", "info");
           }
           focusInput();
+        }}
+        onConfirmCharge={async (selected) => {
+          if (cartLines.length === 0) return;
+          const availableCredit = Math.max(
+            0,
+            (selected.creditLimitCents || 0) - (selected.currentBalanceCents || 0)
+          );
+          const canChargeCredit =
+            !selected.isCreditBlocked &&
+            (selected.creditLimitCents || 0) > 0 &&
+            availableCredit >= totalCents;
+
+          if (!canChargeCredit) {
+            // Si no tiene cupo suficiente o está bloqueado, abrir CobroModal para elegir otro medio o ver el aviso
+            setIsCobroOpen(true);
+            return;
+          }
+
+          try {
+            const methods = await api.sync.getPaymentMethods().catch(() => []);
+            const creditMethod = methods.find(
+              (m) =>
+                m.active === 1 &&
+                m.terminalEnabled === 1 &&
+                (m.type === "CREDITO" ||
+                  m.code.toLowerCase().includes("credito") ||
+                  m.code.toLowerCase().includes("credit") ||
+                  m.code.toLowerCase().includes("fiar"))
+            );
+            const methodCode = creditMethod?.code || "credito_cliente";
+            let shouldPrint = true;
+            try {
+              const saved = localStorage.getItem("pos_print_sale_ticket");
+              if (saved !== null) shouldPrint = saved === "true";
+            } catch {
+              // ignore
+            }
+            await handleProcessSale(
+              [{ method: methodCode, amountCents: totalCents }],
+              selected.id,
+              shouldPrint
+            );
+          } catch {
+            setIsCobroOpen(true);
+          }
         }}
       />
 

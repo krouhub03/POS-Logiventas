@@ -345,32 +345,37 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
   };
 
   // Enviar confirmación de cobro con blindaje anti-duplicados
-  const handleSubmit = async (e?: React.FormEvent) => {
+  const handleSubmit = async (e?: React.FormEvent, overrideCustomer?: Customer) => {
     if (e) e.preventDefault();
     if (loading || isSubmittingRef.current) return;
     setError(null);
 
+    const activeCustomer = overrideCustomer ?? customer;
+    const activeAvailableCreditCents = activeCustomer
+      ? Math.max(0, (activeCustomer.creditLimitCents || 0) - (activeCustomer.currentBalanceCents || 0))
+      : 0;
+
     // Validación de Venta a Crédito: Requiere Cliente Titular de la Cartera
-    if (requiresCustomer && !customer) {
+    if (requiresCustomer && !activeCustomer) {
       setError("⚠️ Esta venta incluye Crédito Comercial. Debes asignar el cliente titular de la cuenta por cobrar (CxC).");
       setIsCustomerModalOpen(true);
       return;
     }
 
-    if (requiresCustomer && customer) {
-      if (customer.isCreditBlocked) {
-        setError(`🔒 El cliente "${customer.name}" se encuentra bloqueado para compras a crédito.`);
+    if (requiresCustomer && activeCustomer) {
+      if (activeCustomer.isCreditBlocked) {
+        setError(`🔒 El cliente "${activeCustomer.name}" se encuentra bloqueado para compras a crédito.`);
         return;
       }
-      if ((customer.creditLimitCents || 0) <= 0) {
+      if ((activeCustomer.creditLimitCents || 0) <= 0) {
         setError(
-          `❌ El cliente "${customer.name}" no tiene cupo de crédito autorizado ($0.00). No es posible registrar ventas a crédito sin cupo.`
+          `❌ El cliente "${activeCustomer.name}" no tiene cupo de crédito autorizado ($0.00). No es posible registrar ventas a crédito sin cupo.`
         );
         return;
       }
-      if (creditAmountToChargeCents > customerAvailableCreditCents) {
+      if (creditAmountToChargeCents > activeAvailableCreditCents) {
         setError(
-          `❌ Cupo insuficiente para "${customer.name}". Cupo disponible: ${formatCents(customerAvailableCreditCents)} (Cupo total: ${formatCents(customer.creditLimitCents)} | Deuda actual: ${formatCents(customer.currentBalanceCents || 0)}) y se requieren ${formatCents(creditAmountToChargeCents)} a crédito.`
+          `❌ Cupo insuficiente para "${activeCustomer.name}". Cupo disponible: ${formatCents(activeAvailableCreditCents)} (Cupo total: ${formatCents(activeCustomer.creditLimitCents)} | Deuda actual: ${formatCents(activeCustomer.currentBalanceCents || 0)}) y se requieren ${formatCents(creditAmountToChargeCents)} a crédito.`
         );
         return;
       }
@@ -410,7 +415,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       isSubmittingRef.current = true;
       setLoading(true);
       try {
-        await onConfirm(paymentsToSend, customer?.id, autoPrint);
+        await onConfirm(paymentsToSend, activeCustomer?.id, autoPrint);
         onClose();
       } catch (err: unknown) {
         setError(String(err));
@@ -441,7 +446,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
           amountCents: pagoCents,
           reference: refInput.trim() || undefined,
         },
-      ], customer?.id, autoPrint);
+      ], activeCustomer?.id, autoPrint);
       onClose();
     } catch (err: unknown) {
       setError(String(err));
@@ -1171,6 +1176,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       <CustomerModal
         isOpen={isCustomerModalOpen}
         currentCustomer={customer}
+        canDirectCharge={true}
         onClose={() => {
           setIsCustomerModalOpen(false);
           setTimeout(() => inputRef.current?.focus(), 50);
@@ -1178,6 +1184,11 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
         onSelect={(selected) => {
           setCustomer(selected);
           setError(null);
+        }}
+        onConfirmCharge={(selected) => {
+          setCustomer(selected);
+          setError(null);
+          void handleSubmit(undefined, selected);
         }}
       />
     </div>
