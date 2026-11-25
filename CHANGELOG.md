@@ -5,6 +5,17 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.22] - 2026-11-25
+### Agregado
+- Auto-scroll sincronizado con las teclas `↑` / `↓` y listado completo sin recortes en Gestión de Clientes y Cartera (`CustomerModal` / `customers.rs`).
+- Borrado instantáneo del buscador de Productos (Catálogo y Existencias) mediante la tecla **Suprimir (`Delete`)** y limpieza automática al guardar cambios de un producto.
+
+### Cambiado
+- Impresión de ticket desactivada por defecto en cada venta (`Ticket: NO`): solo imprime cuando el cajero selecciona manualmente **`Ticket: SÍ`** (`Ctrl+P`) para esa venta, manteniendo intacta la apertura automática del cajón monedero.
+- El buscador de productos ahora reemplaza automáticamente el código anterior al escanear un nuevo código de barras, evitando concatenaciones.
+
+---
+
 ## [0.2.21] - 2026-11-25
 ### Agregado
 - Nueva notificación central de confirmación de venta **Sello Heroico** (`SaleSuccessOverlay`): aparece en el centro de la pantalla durante 3 segundos con barra de progreso animada en el color del medio de pago, total tabular, cambio o cargo a crédito, y cierre instantáneo al escanear o presionar cualquier tecla.
