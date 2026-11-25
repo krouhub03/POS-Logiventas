@@ -5,6 +5,19 @@ El formato se basa en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/
 
 ---
 
+## [0.2.21] - 2026-11-25
+### Agregado
+- Nueva notificación central de confirmación de venta **Sello Heroico** (`SaleSuccessOverlay`): aparece en el centro de la pantalla durante 3 segundos con barra de progreso animada en el color del medio de pago, total tabular, cambio o cargo a crédito, y cierre instantáneo al escanear o presionar cualquier tecla.
+- Sincronización de color e imagen/logo de medios de pago desde Metahabi ERP (migración SQLite `0039_payment_methods_color_and_image.sql`), con logos vectoriales por defecto offline para Efectivo, Nequi, Daviplata, Datáfono/Tarjetas, Transferencia, Crédito Directo y Pago Mixto.
+- Indicador visual del método de pago de la última venta en la barra inferior de la estación de caja, con el color sincronizado del medio utilizado.
+
+### Cambiado
+- `CobroModal`: los botones de selección de medio de pago ahora muestran el logo y el color configurados desde el ERP (solo lectura en caja).
+- Flujo de cobro a crédito en un solo paso: al confirmar **`✓ Cobrar [Enter]`** desde la ficha del cliente (`CustomerModal`) con productos en el carrito, la venta se registra directamente sin volver a pedir confirmación en `CobroModal`.
+- Estandarización tipográfica en unidades `rem` en Gestión de Clientes y Cartera (`CustomerModal`) para respetar de forma uniforme el tamaño de letra configurado en el POS.
+
+---
+
 ## [0.2.20] - 2026-11-19
 ### Agregado
 - Motor matemático puro de precios y rentabilidad (`src/lib/pricing.ts`) en centavos enteros y puntos base: cálculo de costo unitario por caja/paca/canasta, margen, markup, desglose de IVA y valoración de inventario.
