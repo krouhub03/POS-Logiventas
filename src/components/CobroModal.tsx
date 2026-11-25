@@ -25,26 +25,11 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Impresión opcional de ticket persistida
-  const [autoPrint, setAutoPrint] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("pos_print_sale_ticket");
-      return saved !== null ? saved === "true" : true;
-    } catch {
-      return true;
-    }
-  });
+  // Impresión opcional de ticket (apagada por defecto en cada venta; solo imprime si se selecciona)
+  const [autoPrint, setAutoPrint] = useState<boolean>(false);
 
   const handleToggleAutoPrint = () => {
-    setAutoPrint((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("pos_print_sale_ticket", String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+    setAutoPrint((prev) => !prev);
   };
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,6 +55,7 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
       setIsCustomerModalOpen(false);
       setPagoInput((totalCents / 100).toString());
       setRefInput("");
+      setAutoPrint(false);
       setIsSplitMode(false);
       isSplitModeRef.current = false;
       setSplitMap({});

@@ -82,6 +82,8 @@ export function CustomerModal({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const newNameInputRef = useRef<HTMLInputElement>(null);
   const paymentAmountInputRef = useRef<HTMLInputElement>(null);
+  const customerRowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const isKeyboardNavRef = useRef(false);
 
   const reloadCustomers = () => {
     setLoading(true);
@@ -349,7 +351,16 @@ export function CustomerModal({
     return () => clearTimeout(t);
   }, [search, isOpen, mode]);
 
-  // Atajos de teclado globales para Escape y Enter
+  // Auto-scroll al cliente seleccionado al navegar con ↑ / ↓
+  useEffect(() => {
+    if (!isOpen || mode !== "search") return;
+    const row = customerRowRefs.current[selectedIndex];
+    if (row) {
+      row.scrollIntoView({ block: "nearest", behavior: "auto" });
+    }
+  }, [selectedIndex, mode, isOpen, customers.length]);
+
+  // Atajos de teclado globales para Escape, Flechas y Enter
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -360,6 +371,18 @@ export function CustomerModal({
           setTimeout(() => searchInputRef.current?.focus(), 50);
         } else {
           onClose();
+        }
+      } else if (e.key === "ArrowDown" && mode === "search") {
+        if (customers.length > 0) {
+          e.preventDefault();
+          isKeyboardNavRef.current = true;
+          setSelectedIndex((prev) => Math.min(prev + 1, customers.length - 1));
+        }
+      } else if (e.key === "ArrowUp" && mode === "search") {
+        if (customers.length > 0) {
+          e.preventDefault();
+          isKeyboardNavRef.current = true;
+          setSelectedIndex((prev) => Math.max(prev - 1, 0));
         }
       } else if (e.key === "Enter" && mode === "search") {
         if (customers[selectedIndex]) {
@@ -379,36 +402,12 @@ export function CustomerModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, mode, customers, selectedIndex, detailCustomer, canDirectCharge, onClose, onSelect, onConfirmCharge]);
 
-  // Manejador de teclado en modo búsqueda
+  // Manejador de teclado en modo búsqueda (atajos locales adicionales)
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
+    if (mode === "search" && (e.key === "F2" || (e.ctrlKey && e.key.toLowerCase() === "n"))) {
       e.preventDefault();
-      if (mode !== "search") {
-        setMode("search");
-        setTimeout(() => searchInputRef.current?.focus(), 50);
-      } else {
-        onClose();
-      }
-      return;
-    }
-
-    if (mode === "search") {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, customers.length - 1));
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.max(prev - 1, 0));
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (customers[selectedIndex]) {
-          handleOpenDetails(customers[selectedIndex]);
-        }
-      } else if (e.key === "F2" || (e.ctrlKey && e.key.toLowerCase() === "n")) {
-        e.preventDefault();
-        setMode("create");
-        setTimeout(() => newNameInputRef.current?.focus(), 50);
-      }
+      setMode("create");
+      setTimeout(() => newNameInputRef.current?.focus(), 50);
     }
   };
 
@@ -653,7 +652,12 @@ export function CustomerModal({
             </div>
 
             {/* LISTA DE CLIENTES */}
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[260px] max-h-[380px]">
+            <div
+              onMouseMove={() => {
+                isKeyboardNavRef.current = false;
+              }}
+              className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[16rem] max-h-[55vh]"
+            >
               {customers.length === 0 && !loading ? (
                 <div className="py-10 text-center space-y-3">
                   <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -681,8 +685,15 @@ export function CustomerModal({
                   return (
                     <div
                       key={c.id}
+                      ref={(el) => {
+                        customerRowRefs.current[idx] = el;
+                      }}
                       onClick={() => handleOpenDetails(c)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
+                      onMouseEnter={() => {
+                        if (!isKeyboardNavRef.current) {
+                          setSelectedIndex(idx);
+                        }
+                      }}
                       className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
                         isSelected
                           ? "bg-emerald-50 dark:bg-emerald-950/50 border-emerald-400 dark:border-emerald-600 shadow-xs"

@@ -214,7 +214,7 @@ fn map_customer(row: &rusqlite::Row<'_>) -> rusqlite::Result<CustomerDto> {
 pub async fn get_customers(db: State<'_, Db>) -> Result<Vec<CustomerDto>, String> {
     let conn = db.conn().map_err(|e| e.to_string())?;
     let sql = format!(
-        "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE active = 1 ORDER BY name ASC LIMIT 100"
+        "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE active = 1 ORDER BY name ASC"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], map_customer).map_err(|e| e.to_string())?;
@@ -236,7 +236,7 @@ pub async fn search_customers(
     let sql = format!(
         "SELECT {CUSTOMER_COLUMNS} FROM customers \
          WHERE active = 1 AND (name LIKE ?1 OR tax_id LIKE ?1 OR phone LIKE ?1) \
-         ORDER BY name ASC LIMIT 30"
+         ORDER BY name ASC"
     );
 
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;

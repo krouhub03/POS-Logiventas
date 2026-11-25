@@ -56,6 +56,7 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
   const [activeTab, setActiveTab] = useState<"catalog" | "inventory" | "kardex">(initialTab);
   const [search, setSearch] = useState("");
   const inventorySearchInputRef = useRef<HTMLInputElement>(null);
+  const replaceSearchOnNextKeyRef = useRef(false);
   const [catalogTypeFilter, setCatalogTypeFilter] = useState<"all" | "products" | "services" | "bundles">("all");
   const [selectedTagsFilter, setSelectedTagsFilter] = useState<string[]>([]);
   const [isTagFilterOpen, setIsTagFilterOpen] = useState(false);
@@ -1240,12 +1241,14 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
       }
 
       setIsFormOpen(false);
-      loadProducts();
+      replaceSearchOnNextKeyRef.current = false;
+      setSearch("");
+      loadProducts("");
       // Sincronizar inmediatamente hacia el ERP ("ERP First") y notificar estado real al operador
       api.sync
         .syncCatalog()
         .then(() => {
-          loadProducts();
+          loadProducts("");
           showNotification(
             `☁️ "${formName}" sincronizado con el ERP y propagado a las demás cajas.`
           );
@@ -1447,12 +1450,26 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
         } else if (isTagsModalOpen) {
           setIsTagsModalOpen(false);
           handleCancelEditTag();
-        } else if (search.trim().length > 0 && activeTab === "inventory") {
+        } else if (search.trim().length > 0 && (activeTab === "inventory" || activeTab === "catalog")) {
+          replaceSearchOnNextKeyRef.current = false;
           setSearch("");
-          focusInventorySearch();
+          if (activeTab === "inventory") focusInventorySearch();
         } else if (onBackToSales) {
           onBackToSales();
         }
+      } else if (
+        e.key === "Delete" &&
+        !isFormOpen &&
+        !adjustingProduct &&
+        !isTagsModalOpen &&
+        !isExcelModalOpen &&
+        (activeTab === "inventory" || activeTab === "catalog") &&
+        search.length > 0
+      ) {
+        e.preventDefault();
+        replaceSearchOnNextKeyRef.current = false;
+        setSearch("");
+        if (activeTab === "inventory") focusInventorySearch();
       } else if (e.key === "F1" && onBackToSales) {
         e.preventDefault();
         onBackToSales();
@@ -1649,6 +1666,38 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
                 placeholder="Buscar en catálogo por nombre, SKU, código de barras o #tag… (Esc para limpiar)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onClick={() => {
+                  replaceSearchOnNextKeyRef.current = false;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = true;
+                    e.currentTarget.select();
+                    return;
+                  }
+                  if (e.key === "Escape" || e.key === "Delete") {
+                    e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = false;
+                    setSearch("");
+                    return;
+                  }
+                  if (
+                    replaceSearchOnNextKeyRef.current &&
+                    e.key.length === 1 &&
+                    !e.ctrlKey &&
+                    !e.metaKey &&
+                    !e.altKey
+                  ) {
+                    e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = false;
+                    setSearch(e.key);
+                    return;
+                  }
+                  if (e.key === "Backspace" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    replaceSearchOnNextKeyRef.current = false;
+                  }
+                }}
                 className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
               />
               {search && (
@@ -1862,9 +1911,35 @@ export function ProductsPage({ cashier, initialTab = "catalog", onBackToSales }:
                 placeholder="Buscar existencias por SKU o nombre de producto…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onClick={() => {
+                  replaceSearchOnNextKeyRef.current = false;
+                }}
                 onKeyDown={async (e) => {
+                  if (e.key === "Delete") {
+                    e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = false;
+                    setSearch("");
+                    return;
+                  }
+                  if (
+                    replaceSearchOnNextKeyRef.current &&
+                    e.key.length === 1 &&
+                    !e.ctrlKey &&
+                    !e.metaKey &&
+                    !e.altKey
+                  ) {
+                    e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = false;
+                    setSearch(e.key);
+                    return;
+                  }
+                  if (e.key === "Backspace" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                    replaceSearchOnNextKeyRef.current = false;
+                  }
                   if (e.key === "Enter") {
                     e.preventDefault();
+                    replaceSearchOnNextKeyRef.current = true;
+                    e.currentTarget.select();
                     const clean = search.trim();
                     if (!clean) return;
 

@@ -1277,7 +1277,7 @@ export function SalesStationPage({
   const handleProcessSale = async (
     payments: PaymentInput[],
     customerId?: number,
-    shouldPrint: boolean = true
+    shouldPrint: boolean = false
   ) => {
     if (isProcessingSaleRef.current || cartLines.length === 0) return;
     isProcessingSaleRef.current = true;
@@ -1360,7 +1360,6 @@ export function SalesStationPage({
         .getAll()
         .then(async (sets) => {
           const printerEnabled = sets.printer_enabled !== "false";
-          const printerAutoPrint = sets.printer_auto_print !== "false";
           const drawerEnabled = sets.drawer_enabled !== "false";
           const drawerOpenOnSale = sets.drawer_open_on_sale !== "false";
           const drawerOpenOnPrint = sets.drawer_open_on_print !== "false";
@@ -1375,8 +1374,8 @@ export function SalesStationPage({
 
           let ticketPrinted = false;
 
-          // Si se solicitó imprimir ticket y la impresora está habilitada
-          if (shouldPrint && printerEnabled && printerAutoPrint) {
+          // Si se solicitó explícitamente imprimir ticket y la impresora está habilitada
+          if (shouldPrint && printerEnabled) {
             try {
               await api.printers.printSaleTicket(receipt.id);
               ticketPrinted = true;
@@ -2998,17 +2997,10 @@ export function SalesStationPage({
                   m.code.toLowerCase().includes("fiar"))
             );
             const methodCode = creditMethod?.code || "credito_cliente";
-            let shouldPrint = true;
-            try {
-              const saved = localStorage.getItem("pos_print_sale_ticket");
-              if (saved !== null) shouldPrint = saved === "true";
-            } catch {
-              // ignore
-            }
             await handleProcessSale(
               [{ method: methodCode, amountCents: totalCents }],
               selected.id,
-              shouldPrint
+              false
             );
           } catch {
             setIsCobroOpen(true);
