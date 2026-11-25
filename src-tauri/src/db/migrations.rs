@@ -43,6 +43,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0036_warehouses_and_kardex_enhancement.sql"),
     include_str!("../../migrations/0037_kardex_pos_terminals_filter.sql"),
     include_str!("../../migrations/0038_sync_warehouse_code_conflict_fix.sql"),
+    include_str!("../../migrations/0039_payment_methods_color_and_image.sql"),
 ];
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {

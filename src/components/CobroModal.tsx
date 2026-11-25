@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatCents, toCents } from "../lib/money";
 import { api } from "../services/api";
+import { resolvePaymentMethodVisual } from "../lib/paymentMethodVisuals";
 import type { PaymentInput, PaymentMethod, Customer } from "../types";
 import { CustomerModal } from "./CustomerModal";
 
@@ -608,18 +609,51 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
             >
               {availableMethods.map((pm) => {
                 const isSelected = !isSplitMode && selectedMethodCode === pm.code;
+                const visual = resolvePaymentMethodVisual({
+                  code: pm.code,
+                  erpCode: pm.erpCode,
+                  name: pm.name,
+                  type: pm.type,
+                  color: pm.color,
+                  imageUrl: pm.imageUrl,
+                });
                 return (
                   <button
                     key={pm.id}
                     type="button"
                     onClick={() => activateSingleMethod(pm.code)}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 border cursor-pointer ${
+                    style={
                       isSelected
-                        ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-700/20 scale-[1.02] ring-2 ring-emerald-400/40"
+                        ? {
+                            backgroundColor: visual.color,
+                            borderColor: visual.color,
+                            boxShadow: `0 6px 18px -6px ${visual.color}`,
+                          }
+                        : undefined
+                    }
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1.5 border cursor-pointer ${
+                      isSelected
+                        ? "text-white scale-[1.02] ring-2 ring-white/40"
                         : "bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
                     }`}
                   >
-                    <span className="text-xl">{getMethodIcon(pm.type, pm.code)}</span>
+                    <span
+                      className={`w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden ${
+                        isSelected ? "bg-white/95 p-0.5 shadow-2xs" : "bg-white dark:bg-slate-900/70 p-0.5"
+                      }`}
+                    >
+                      <img
+                        src={visual.logoSrc}
+                        alt={pm.name}
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (target.src !== visual.fallbackLogoSrc) {
+                            target.src = visual.fallbackLogoSrc;
+                          }
+                        }}
+                        className="w-full h-full object-contain rounded-md"
+                      />
+                    </span>
                     <span className="truncate max-w-[130px] text-center">{pm.name}</span>
                   </button>
                 );
@@ -629,14 +663,33 @@ export function CobroModal({ totalCents, isOpen, initialCustomer, onClose, onCon
               <button
                 type="button"
                 onClick={() => (isSplitMode ? activateSingleMethod(availableMethods[0]?.code || "cash") : activateSplitMode())}
-                className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 border cursor-pointer ${
+                style={
                   isSplitMode
-                    ? "bg-amber-600 text-white border-amber-500 shadow-md shadow-amber-700/20 scale-[1.02] ring-2 ring-amber-400/40"
+                    ? {
+                        backgroundColor: "#0d9488",
+                        borderColor: "#0d9488",
+                        boxShadow: "0 6px 18px -6px #0d9488",
+                      }
+                    : undefined
+                }
+                className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col items-center justify-center gap-1.5 border cursor-pointer ${
+                  isSplitMode
+                    ? "text-white scale-[1.02] ring-2 ring-white/40"
                     : "bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
                 }`}
                 title="Dividir el total entre múltiples medios de pago"
               >
-                <span className="text-xl">🔄</span>
+                <span
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden ${
+                    isSplitMode ? "bg-white/95 p-0.5 shadow-2xs" : "bg-white dark:bg-slate-900/70 p-0.5"
+                  }`}
+                >
+                  <img
+                    src="/payment-methods/mixto.svg"
+                    alt="Pago Mixto"
+                    className="w-full h-full object-contain rounded-md"
+                  />
+                </span>
                 <span className="truncate max-w-[130px] text-center">Pago Mixto</span>
               </button>
             </div>

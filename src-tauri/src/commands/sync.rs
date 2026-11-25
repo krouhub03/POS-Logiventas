@@ -1035,6 +1035,8 @@ pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
         let erp_code = pm["erp_code"].as_str().unwrap_or_default();
         let name = pm["name"].as_str().unwrap_or_default();
         let pm_type = pm["type"].as_str().unwrap_or_default();
+        let color = pm["color"].as_str();
+        let image_url = pm["image_url"].as_str();
         let puc_code = pm["puc_code"].as_str();
         let puc_account_id = pm["puc_account_id"].as_str();
         let puc_account_name = pm["puc_account_name"].as_str();
@@ -1042,13 +1044,15 @@ pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
 
         if !code.is_empty() {
             tx.execute(
-                "INSERT INTO payment_methods (id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))
+                "INSERT INTO payment_methods (id, code, erp_code, name, type, color, image_url, puc_code, puc_account_id, puc_account_name, active, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))
                  ON CONFLICT(code) DO UPDATE SET
                     id = excluded.id,
                     erp_code = excluded.erp_code,
                     name = excluded.name,
                     type = excluded.type,
+                    color = excluded.color,
+                    image_url = excluded.image_url,
                     puc_code = excluded.puc_code,
                     puc_account_id = excluded.puc_account_id,
                     puc_account_name = excluded.puc_account_name,
@@ -1060,6 +1064,8 @@ pub async fn sync_payment_methods_internal(db: &Db) -> AppResult<usize> {
                     erp_code,
                     name,
                     pm_type,
+                    color,
+                    image_url,
                     puc_code,
                     puc_account_id,
                     puc_account_name,
@@ -1107,7 +1113,7 @@ pub async fn sync_payment_methods(db: State<'_, Db>) -> AppResult<usize> {
 pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMethodDto>> {
     let conn = db.conn()?;
     let mut stmt = conn.prepare(
-        "SELECT id, code, erp_code, name, type, puc_code, puc_account_id, puc_account_name, active, terminal_enabled
+        "SELECT id, code, erp_code, name, type, color, image_url, puc_code, puc_account_id, puc_account_name, active, terminal_enabled
          FROM payment_methods
          ORDER BY name ASC",
     )?;
@@ -1119,11 +1125,13 @@ pub async fn get_payment_methods(db: State<'_, Db>) -> AppResult<Vec<PaymentMeth
             erp_code: r.get(2)?,
             name: r.get(3)?,
             r#type: r.get(4)?,
-            puc_code: r.get(5)?,
-            puc_account_id: r.get(6)?,
-            puc_account_name: r.get(7)?,
-            active: r.get(8)?,
-            terminal_enabled: r.get(9)?,
+            color: r.get(5)?,
+            image_url: r.get(6)?,
+            puc_code: r.get(7)?,
+            puc_account_id: r.get(8)?,
+            puc_account_name: r.get(9)?,
+            active: r.get(10)?,
+            terminal_enabled: r.get(11)?,
         })
     })?;
 

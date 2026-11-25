@@ -45,6 +45,8 @@ pub struct PaymentMethodDto {
     pub erp_code: String,
     pub name: String,
     pub r#type: String,
+    pub color: Option<String>,
+    pub image_url: Option<String>,
     pub puc_code: Option<String>,
     pub puc_account_id: Option<String>,
     pub puc_account_name: Option<String>,

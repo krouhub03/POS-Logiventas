@@ -14,6 +14,7 @@ import { ImageLightboxModal } from "../components/ImageLightboxModal";
 import { ReceiptModal } from "../components/ReceiptModal";
 import { RecentSalesModal } from "../components/RecentSalesModal";
 import { UserProfileSettingsModal } from "../components/UserProfileSettingsModal";
+import { SaleSuccessOverlay, type SaleSuccessData } from "../components/SaleSuccessOverlay";
 import { toAssetUrl, resolveProductImageSrc, getDefaultProductImage } from "../lib/images";
 
 interface CartLine {
@@ -398,6 +399,7 @@ export function SalesStationPage({
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [isRecentSalesOpen, setIsRecentSalesOpen] = useState(false);
   const [lastReceipt, setLastReceipt] = useState<SaleReceipt | null>(null);
+  const [saleSuccessData, setSaleSuccessData] = useState<SaleSuccessData | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
 
@@ -1331,8 +1333,17 @@ export function SalesStationPage({
       }
       setSelectedLineIndex(-1);
       setLastReceipt(receipt);
-      showFeedback(`✅ Venta #${receipt.folio} cobrada con éxito. Cambio: ${formatCents(receipt.changeCents)}`);
       setIsCobroOpen(false);
+      playScanSuccess();
+      api.sync
+        .getPaymentMethods()
+        .catch(() => [])
+        .then((methods) => {
+          setSaleSuccessData({
+            receipt,
+            paymentMethods: methods,
+          });
+        });
       refreshCatalogMap();
       focusInput();
 
@@ -2881,6 +2892,14 @@ export function SalesStationPage({
         initialCustomer={currentTicket?.customer || null}
         onClose={handleCloseCobro}
         onConfirm={(payments, customerId, shouldPrint) => handleProcessSale(payments, customerId, shouldPrint)}
+      />
+
+      <SaleSuccessOverlay
+        data={saleSuccessData}
+        onDismiss={() => {
+          setSaleSuccessData(null);
+          focusInput();
+        }}
       />
 
       <CustomerModal

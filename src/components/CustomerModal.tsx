@@ -564,12 +564,12 @@ export function CustomerModal({
               <h2 className="text-base font-bold flex items-center gap-2">
                 <span>Gestión de Clientes y Cartera (CxC)</span>
                 {currentCustomer && (
-                  <span className="text-[11px] bg-emerald-500/30 text-emerald-100 px-2 py-0.5 rounded-full font-mono">
+                  <span className="text-xs bg-emerald-500/30 text-emerald-100 px-2 py-0.5 rounded-full font-mono">
                     Actual: {currentCustomer.name}
                   </span>
                 )}
               </h2>
-              <p className="text-[11px] text-emerald-100/80">
+              <p className="text-xs text-emerald-100/80">
                 Selecciona titular para venta a crédito, consulta saldos y recibe abonos en mostrador
               </p>
             </div>
@@ -698,12 +698,12 @@ export function CustomerModal({
                               {c.name}
                             </span>
                             {hasDebt && (
-                              <span className="text-[10px] font-mono bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 px-2 py-0.2 rounded font-bold">
+                              <span className="text-[0.7rem] font-mono bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 px-2 py-0.2 rounded font-bold">
                                 Deuda: {formatCents(c.currentBalanceCents)}
                               </span>
                             )}
                             {hasCreditLimit && (
-                              <span className="text-[10px] font-mono bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 px-1.5 py-0.2 rounded">
+                              <span className="text-[0.7rem] font-mono bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 px-1.5 py-0.2 rounded">
                                 Cupo Disp: {formatCents(Math.max(0, c.creditLimitCents - (c.currentBalanceCents || 0)))}
                               </span>
                             )}
@@ -737,7 +737,7 @@ export function CustomerModal({
                         >
                           <span>Detalles</span>
                           {isSelected && (
-                            <span className="hidden sm:inline-block text-[9px] font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-1 py-0.2 rounded">
+                            <span className="hidden sm:inline-block text-[0.65rem] font-mono font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-1 py-0.2 rounded">
                               Enter
                             </span>
                           )}
@@ -773,11 +773,11 @@ export function CustomerModal({
             </div>
 
             {/* AYUDA / ATAJOS */}
-            <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between text-xs text-slate-400 dark:text-slate-500 pt-1 border-t border-slate-100 dark:border-slate-800">
               <div className="flex gap-4">
-                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10px]">↑↓</kbd> Navegar</span>
-                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10px]">Enter</kbd> Ver Detalles</span>
-                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[10px]">Esc</kbd> Cerrar</span>
+                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[0.7rem]">↑↓</kbd> Navegar</span>
+                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[0.7rem]">Enter</kbd> Ver Detalles</span>
+                <span><kbd className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded text-[0.7rem]">Esc</kbd> Cerrar</span>
               </div>
               <span className="font-mono">{customers.length} cliente(s)</span>
             </div>
@@ -798,16 +798,16 @@ export function CustomerModal({
                       {detailCustomer.name}
                     </h3>
                     {currentCustomer?.id === detailCustomer.id && (
-                      <span className="text-[10px] font-mono bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                      <span className="text-[0.7rem] font-mono bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-full font-bold">
                         ✓ Seleccionado en el Ticket
                       </span>
                     )}
                     {detailCustomer.isCreditBlocked ? (
-                      <span className="text-[10px] font-mono bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-full font-bold">
+                      <span className="text-[0.7rem] font-mono bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 px-2 py-0.5 rounded-full font-bold">
                         🔒 Crédito Bloqueado
                       </span>
                     ) : (
-                      <span className="text-[10px] font-mono bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 px-2 py-0.5 rounded-full font-semibold">
+                      <span className="text-[0.7rem] font-mono bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 px-2 py-0.5 rounded-full font-semibold">
                         Crédito Activo
                       </span>
                     )}
@@ -841,7 +841,7 @@ export function CustomerModal({
             {/* KPIs FINANCIEROS DE CARTERA */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase tracking-wider font-bold text-slate-400 block">
                   Saldo Deudor
                 </span>
                 <span
@@ -856,7 +856,7 @@ export function CustomerModal({
               </div>
 
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase tracking-wider font-bold text-slate-400 block">
                   Cupo Autorizado
                 </span>
                 <span className="text-sm font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">
@@ -867,7 +867,7 @@ export function CustomerModal({
               </div>
 
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase tracking-wider font-bold text-slate-400 block">
                   Cupo Disponible
                 </span>
                 <span className="text-sm font-mono font-bold text-blue-600 dark:text-blue-400 mt-0.5 block">
@@ -884,7 +884,7 @@ export function CustomerModal({
               </div>
 
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase tracking-wider font-bold text-slate-400 block">
                   Plazo Autorizado
                 </span>
                 <span className="text-sm font-mono font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">
@@ -896,7 +896,7 @@ export function CustomerModal({
             {/* DATOS DE CONTACTO Y UBICACIÓN */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase font-bold text-slate-400 block">
                   📞 Teléfono / WhatsApp
                 </span>
                 <span className="font-mono font-semibold text-slate-800 dark:text-slate-200 mt-0.5 block">
@@ -905,7 +905,7 @@ export function CustomerModal({
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase font-bold text-slate-400 block">
                   ✉️ Correo Electrónico
                 </span>
                 <span className="font-medium text-slate-800 dark:text-slate-200 mt-0.5 block truncate">
@@ -914,7 +914,7 @@ export function CustomerModal({
               </div>
 
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                <span className="text-[0.7rem] uppercase font-bold text-slate-400 block">
                   📍 Dirección
                 </span>
                 <span className="font-medium text-slate-800 dark:text-slate-200 mt-0.5 block truncate">
@@ -935,7 +935,7 @@ export function CustomerModal({
                 }`}
               >
                 <span>🛍️ Compras Anotadas</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                <span className="text-[0.7rem] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                   {creditSales.length}
                 </span>
               </button>
@@ -950,7 +950,7 @@ export function CustomerModal({
                 }`}
               >
                 <span>💵 Historial de Abonos</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                <span className="text-[0.7rem] px-1.5 py-0.2 rounded-full font-mono bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                   {customerPayments.length}
                 </span>
               </button>
@@ -1004,16 +1004,16 @@ export function CustomerModal({
                                 <span className="font-mono font-bold text-xs text-slate-900 dark:text-white">
                                   {sale.folio}
                                 </span>
-                                <span className="text-[11px] text-slate-400">
+                                <span className="text-xs text-slate-400">
                                   {sale.createdAt}
                                 </span>
                                 {sale.cashierName && (
-                                  <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.2 rounded font-mono">
+                                  <span className="text-[0.7rem] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.2 rounded font-mono">
                                     Cajero: {sale.cashierName}
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-slate-500 mt-0.5">
+                              <div className="text-xs text-slate-500 mt-0.5">
                                 {sale.itemsCount} producto(s)
                                 {sale.otherPaymentsCents > 0 && (
                                   <span className="ml-2 text-emerald-600 dark:text-emerald-400 font-mono">
@@ -1029,7 +1029,7 @@ export function CustomerModal({
                               Fiado: {formatCents(sale.creditAmountCents)}
                             </span>
                             {sale.totalCents !== sale.creditAmountCents && (
-                              <span className="text-[10px] font-mono text-slate-400 block">
+                              <span className="text-[0.7rem] font-mono text-slate-400 block">
                                 Total ticket: {formatCents(sale.totalCents)}
                               </span>
                             )}
@@ -1043,9 +1043,9 @@ export function CustomerModal({
                           return (
                             <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 p-3 space-y-2">
                               <div className="overflow-x-auto">
-                                <table className="w-full text-left text-[11px]">
+                                <table className="w-full text-left text-xs">
                                   <thead>
-                                    <tr className="text-slate-400 uppercase text-[9px] border-b border-slate-200 dark:border-slate-800">
+                                    <tr className="text-slate-400 uppercase text-[0.65rem] border-b border-slate-200 dark:border-slate-800">
                                       <th className="pb-1 font-semibold">Cant.</th>
                                       <th className="pb-1 font-semibold">Descripción del Producto</th>
                                       <th className="pb-1 font-semibold text-right">P. Unit</th>
@@ -1090,7 +1090,7 @@ export function CustomerModal({
                                   </tbody>
                                   <tfoot className="border-t border-slate-200 dark:border-slate-700 font-mono">
                                     <tr>
-                                      <td colSpan={3} className="pt-1.5 text-right text-[10px] uppercase font-sans font-bold text-slate-500">
+                                      <td colSpan={3} className="pt-1.5 text-right text-[0.7rem] uppercase font-sans font-bold text-slate-500">
                                         Total Ticket:
                                       </td>
                                       <td className="pt-1.5 text-right font-black text-slate-900 dark:text-white">
@@ -1099,7 +1099,7 @@ export function CustomerModal({
                                     </tr>
                                     {sale.otherPaymentsCents > 0 && (
                                       <tr>
-                                        <td colSpan={3} className="pt-0.5 text-right text-[10px] uppercase font-sans font-bold text-emerald-600 dark:text-emerald-400">
+                                        <td colSpan={3} className="pt-0.5 text-right text-[0.7rem] uppercase font-sans font-bold text-emerald-600 dark:text-emerald-400">
                                           Abonado de contado en caja:
                                         </td>
                                         <td className="pt-0.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
@@ -1108,7 +1108,7 @@ export function CustomerModal({
                                       </tr>
                                     )}
                                     <tr>
-                                      <td colSpan={3} className="pt-0.5 text-right text-[10px] uppercase font-sans font-black text-amber-700 dark:text-amber-400">
+                                      <td colSpan={3} className="pt-0.5 text-right text-[0.7rem] uppercase font-sans font-black text-amber-700 dark:text-amber-400">
                                         Saldo Fiado:
                                       </td>
                                       <td className="pt-0.5 text-right font-black text-amber-700 dark:text-amber-400">
@@ -1119,7 +1119,7 @@ export function CustomerModal({
                                 </table>
                               </div>
 
-                              <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                              <div className="flex items-center justify-between pt-1 border-t border-slate-200 dark:border-slate-800 text-xs">
                                 <span className="text-slate-500">
                                   Folio Ticket: <strong className="font-mono text-slate-800 dark:text-slate-200">{sale.folio}</strong>
                                 </span>
@@ -1128,13 +1128,13 @@ export function CustomerModal({
                                     type="button"
                                     onClick={(e) => handleReprintSaleTicket(sale.id, e)}
                                     disabled={printingTicketId === sale.id}
-                                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                    className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
                                   >
                                     <span>🖨️</span>
                                     <span>{printingTicketId === sale.id ? "Imprimiendo..." : "Reimprimir Ticket"}</span>
                                   </button>
                                 ) : (
-                                  <span className="text-[10px] font-mono text-slate-400">
+                                  <span className="text-[0.7rem] font-mono text-slate-400">
                                     Sincronizado de otra caja
                                   </span>
                                 )}
@@ -1171,11 +1171,11 @@ export function CustomerModal({
                             <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
                               {pay.folio}
                             </span>
-                            <span className="text-[10px] bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.2 rounded font-semibold">
+                            <span className="text-[0.7rem] bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.2 rounded font-semibold">
                               {pay.method || "Efectivo"}
                             </span>
                           </div>
-                          <span className="text-slate-400 text-[11px] block mt-0.5">
+                          <span className="text-slate-400 text-xs block mt-0.5">
                             {pay.createdAt} {pay.reference ? `• Ref: ${pay.reference}` : ""} {pay.notes ? `• ${pay.notes}` : ""}
                           </span>
                         </div>
@@ -1183,7 +1183,7 @@ export function CustomerModal({
                           <span className="font-bold text-emerald-600 dark:text-emerald-400 block">
                             +{formatCents(pay.amountCents)}
                           </span>
-                          <span className="text-[10px] text-slate-400 block">
+                          <span className="text-[0.7rem] text-slate-400 block">
                             Saldo: {formatCents(pay.newBalanceCents)}
                           </span>
                         </div>
@@ -1245,11 +1245,11 @@ export function CustomerModal({
                               <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
                                 {mov.folio}
                               </span>
-                              <span className="text-[11px] text-slate-500 font-sans">
+                              <span className="text-xs text-slate-500 font-sans">
                                 {mov.description}
                               </span>
                             </div>
-                            <span className="text-[10px] text-slate-400 font-mono">
+                            <span className="text-[0.7rem] text-slate-400 font-mono">
                               {mov.date}
                             </span>
                           </div>
@@ -1329,7 +1329,7 @@ export function CustomerModal({
                       : "✓ Seleccionar Cliente"}
                   </span>
                   <kbd
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                    className={`px-1.5 py-0.5 rounded text-[0.7rem] font-mono ${
                       currentCustomer?.id === detailCustomer.id
                         ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100"
                         : "bg-emerald-800/60 text-emerald-100"
@@ -1418,7 +1418,7 @@ export function CustomerModal({
                     <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
                       Medio de Recaudo (Sincronizado con ERP) <span className="text-rose-500">*</span>
                     </label>
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
+                    <span className="text-[0.7rem] text-emerald-600 dark:text-emerald-400 font-semibold font-mono">
                       {availableMethods.length > 0
                         ? `${availableMethods.length} medios disponibles`
                         : "Cargando..."}

@@ -88,12 +88,12 @@ El POS está diseñado para operar en sucursales con conectividad inestable o si
 ### 3.2. Mecanismo Outbox Local (`sync_queue`)
 - Cada evento transaccional local genera un registro en la tabla `sync_queue` con:
   - `id`: Autoincremental local.
-  - `entity_type`: `'sale' | 'cash_session' | 'inventory_movement' | 'customer'`.
+  - `entity_type`: `'customer' | 'sale' | 'customer_payment' | 'sale_return' | 'user_pin' | 'inventory_movement' | 'cash_session'`.
   - `entity_id`: ID local de la entidad.
   - `payload`: JSON serializado con los datos de la operación.
   - `status`: `'pending' | 'in_flight' | 'synced' | 'failed'`.
   - `attempts`: Contador de reintentos y `last_error`.
-- Un demonio asíncrono en Rust (`start_sync_daemon` en `src-tauri/src/commands/sync.rs`) se ejecuta cada 15 segundos para despachar la cola pendiente, subir productos creados en caja (`needs_erp_upload = 1`) y descargar actualizaciones de catálogo, deltas de stock y medios de pago.
+- Un demonio asíncrono en Rust (`start_sync_daemon` en `src-tauri/src/commands/sync.rs`) se ejecuta cada **10 segundos** (tras una pausa inicial de 3 segundos) para despachar la cola pendiente, subir productos creados en caja (`needs_erp_upload = 1`), descargar actualizaciones de catálogo, deltas de stock, bodegas, clientes, imágenes y medios de pago.
 
 ### 3.3. Control de Turnos Locales (`cash_sessions`) y Medios de Pago (`payment_methods`)
 - Ningún cajero puede facturar sin haber abierto un turno de caja activo (`status = 'open'`) con su base inicial (`opening_cents`).
@@ -114,7 +114,7 @@ El POS está diseñado para operar en sucursales con conectividad inestable o si
    - En pruebas unitarias (`cargo test`), se utilizan bases de datos en memoria (`:memory:`).
 
 2. **Inmutabilidad de Migraciones**:
-   - Los scripts SQL residen en `src-tauri/migrations/000N_nombre.sql` (actualmente de `0001_initial.sql` a `0029_fix_user_permission_audit_trigger.sql`).
+   - Los scripts SQL residen en `src-tauri/migrations/000N_nombre.sql` (actualmente de `0001_initial.sql` a `0038_sync_warehouse_code_conflict_fix.sql`).
    - **PROHIBIDO MODIFICAR** un archivo de migración existente que ya haya sido commiteado o ejecutado.
    - Cualquier cambio de esquema requiere crear un nuevo archivo `00(N+1)_descripcion.sql` y registrarlo al final del arreglo `MIGRATIONS` en `src-tauri/src/db/migrations.rs`.
 

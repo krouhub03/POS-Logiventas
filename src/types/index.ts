@@ -484,6 +484,8 @@ export interface PaymentMethod {
   erpCode: string;
   name: string;
   type: string;
+  color?: string | null;
+  imageUrl?: string | null;
   pucCode: string | null;
   pucAccountId: string | null;
   pucAccountName: string | null;
